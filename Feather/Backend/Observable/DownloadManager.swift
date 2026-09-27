@@ -34,6 +34,7 @@ class Download: ObservableObject, Identifiable, @unchecked Sendable {
 	var stagedFileName: String?
 
 	let id: String
+	let importIdentifier: String
 	let url: URL
 	let fileName: String
 	let onlyArchiving: Bool
@@ -46,9 +47,11 @@ class Download: ObservableObject, Identifiable, @unchecked Sendable {
 		sourceProvenance: SourceAppProvenance? = nil,
 		state: State? = nil,
 		fileName: String? = nil,
-		stagedFileName: String? = nil
+		stagedFileName: String? = nil,
+		importIdentifier: String? = nil
 	) {
 		self.id = id
+		self.importIdentifier = importIdentifier ?? UUID().uuidString
 		self.url = url
 		self.onlyArchiving = onlyArchiving
 		self.sourceProvenance = sourceProvenance
@@ -126,9 +129,9 @@ class DownloadManager: NSObject, ObservableObject {
 		id: String = UUID().uuidString,
 		sourceProvenance: SourceAppProvenance? = nil
 	) -> Download {
-		let requestHasSourceProvenance = sourceProvenance != nil
 		if let existingDownload = downloads.first(where: {
-			$0.url == url && ($0.sourceProvenance != nil) == requestHasSourceProvenance
+			$0.url == url
+				&& $0.sourceProvenance?.sourceVersionID == sourceProvenance?.sourceVersionID
 		}) {
 			switch existingDownload.state {
 			case .paused, .failed:
@@ -224,6 +227,12 @@ class DownloadManager: NSObject, ObservableObject {
 		_stopContinuedTask(for: download, success: false)
 		_endProcessingBackgroundTime(for: download.id)
 		_store.cleanupArtifacts(for: download)
+		let importIdentifier = download.importIdentifier
+		Task.detached(priority: .utility) {
+			await AppFileHandler.removeUncommittedImport(
+				transactionIdentifier: importIdentifier
+			)
+		}
 
 		if let index = downloads.firstIndex(where: { $0.id == download.id }) {
 			downloads.remove(at: index)
@@ -260,7 +269,11 @@ class DownloadManager: NSObject, ObservableObject {
 		_persistDownloads()
 		_beginProcessingBackgroundTime(for: dl)
 
-		FR.handlePackageFile(url, download: dl) { [weak self] error in
+		FR.handlePackageFile(
+			url,
+			download: dl,
+			transactionIdentifier: dl.importIdentifier
+		) { [weak self] error in
 			guard let self else { return }
 			if let error {
 				let generator = UINotificationFeedbackGenerator()
@@ -329,10 +342,19 @@ class DownloadManager: NSObject, ObservableObject {
 						{
 							downloadsToProcess.append((download, stagingURL))
 						} else {
-							self._fail(
-								download: download,
-								error: DownloadRecoveryError.missingStagedFile
-							)
+							FR.recoverPackageImport(download: download) { result in
+								switch result {
+								case .success(true):
+									self._complete(download: download)
+								case .success(false):
+									self._fail(
+										download: download,
+										error: DownloadRecoveryError.missingStagedFile
+									)
+								case .failure(let error):
+									self._fail(download: download, error: error)
+								}
+							}
 						}
 					default:
 						break

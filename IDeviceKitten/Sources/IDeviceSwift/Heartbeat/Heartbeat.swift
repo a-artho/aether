@@ -38,6 +38,10 @@ public class HeartbeatManager {
 	public var restartWorkItem: DispatchWorkItem?
 	public var firstRun = false
 
+	let rsdConnectionLock = NSLock()
+	var rsdAdapter: AdapterHandle?
+	var rsdHandshake: RsdHandshakeHandle?
+
 	public var cancellable: AnyCancellable? // Combine
 
 	// One important note is that if a user gets `InvalidHostID -9` from heartbeat

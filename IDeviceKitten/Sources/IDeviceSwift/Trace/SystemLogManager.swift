@@ -33,19 +33,16 @@ public class SystemLogManager: NSObject {
 
 	private func _connect() async throws {
 		guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
-			throw IDeviceSwiftError(message: "Missing Pairing")
+			throw IDeviceConnectionError.pairingFileMissing
 		}
 
 		if !self._heartbeat.isRsd {
-			guard self._heartbeat.checkSocketConnection().isConnected else {
-				throw IDeviceSwiftError(message: "Missing Pairing")
+			let connection = self._heartbeat.checkSocketConnection()
+			guard connection.isConnected else {
+				throw IDeviceConnectionError.legacyEndpointUnavailable(connection.error)
 			}
 			guard (self._heartbeat.provider != nil) else {
-				throw IDeviceSwiftError(message: "Missing Pairing")
-			}
-		} else {
-			guard self._heartbeat.ensureRSDTunnel() else {
-				throw IDeviceSwiftError(message: "Missing Pairing")
+				throw IDeviceConnectionError.tcpProviderUnavailable
 			}
 		}
 	}
@@ -54,24 +51,21 @@ public class SystemLogManager: NSObject {
 	public func syslog_relay() async throws {
 		try await Task.detached(priority: .utility) {
 			try await self._connect()
+			defer {
+				if let client = self.syslogClient {
+					syslog_relay_client_free(client)
+					self.syslogClient = nil
+				}
+				self.isStreaming = false
+			}
 
 			if self._heartbeat.isRsd {
-				guard let adapter = self._heartbeat.adapter else {
-					throw IDeviceSwiftError(message: "Cannot find RSD adapter")
-				}
-
-				guard let handshake = self._heartbeat.handshake else {
-					throw IDeviceSwiftError(message: "Cannot find RSD handshake")
-				}
-
-				let syslog_relay_connect_tcp_result = syslog_relay_connect_rsd(adapter, handshake, &self.syslogClient)
-				guard syslog_relay_connect_tcp_result == nil else {
-					throw IDeviceSwiftError(syslog_relay_connect_tcp_result)
+				try self._heartbeat.withRSDServiceConnection { adapter, handshake in
+					syslog_relay_connect_rsd(adapter, handshake, &self.syslogClient)
 				}
 			} else {
-				let syslog_relay_connect_tcp_result = syslog_relay_connect_tcp(self._heartbeat.provider, &self.syslogClient)
-				guard syslog_relay_connect_tcp_result == nil else {
-					throw IDeviceSwiftError(syslog_relay_connect_tcp_result)
+				if let error = syslog_relay_connect_tcp(self._heartbeat.provider, &self.syslogClient) {
+					throw IDeviceSwiftError(error)
 				}
 			}
 
@@ -95,46 +89,46 @@ public class SystemLogManager: NSObject {
 					} else {
 						idevice_string_free(logLinePointer)
 					}
-				} else if result != nil {
+				} else if let result {
+					_ = IDeviceSwiftError(result)
 					break
 				}
 			}
 
-			if let syslogClient = self.syslogClient {
-				syslog_relay_client_free(syslogClient)
-				self.syslogClient = nil
-			}
-
-			self.isStreaming = false
 		}.value
 	}
 	/// Connects to os trace relay, this is the backbone of our app
 	public func os_trace_relay() async throws {
 		try await Task.detached(priority: .utility) {
 			try await self._connect()
+			defer {
+				if let receiver = self.osTraceReceiverClient {
+					os_trace_relay_receiver_free(receiver)
+					self.osTraceReceiverClient = nil
+				}
+				if let client = self.osTraceRelayClient {
+					os_trace_relay_free(client)
+					self.osTraceRelayClient = nil
+				}
+				self.isStreaming = false
+			}
 
 			if self._heartbeat.isRsd {
-				guard let adapter = self._heartbeat.adapter else {
-					throw IDeviceSwiftError(message: "Cannot find RSD adapter")
-				}
-
-				guard let handshake = self._heartbeat.handshake else {
-					throw IDeviceSwiftError(message: "Cannot find RSD handshake")
-				}
-				let os_trace_relay_connect_rsd_result = os_trace_relay_connect_rsd(adapter, handshake, &self.osTraceRelayClient)
-				guard os_trace_relay_connect_rsd_result == nil else {
-					throw IDeviceSwiftError(os_trace_relay_connect_rsd_result)
+				try self._heartbeat.withRSDServiceConnection { adapter, handshake in
+					os_trace_relay_connect_rsd(adapter, handshake, &self.osTraceRelayClient)
 				}
 			} else {
-				let os_trace_relay_connect_result = os_trace_relay_connect(self._heartbeat.provider, &self.osTraceRelayClient)
-				guard os_trace_relay_connect_result == nil else {
-					throw IDeviceSwiftError(os_trace_relay_connect_result)
+				if let error = os_trace_relay_connect(self._heartbeat.provider, &self.osTraceRelayClient) {
+					throw IDeviceSwiftError(error)
 				}
 			}
 
-			let os_trace_relay_start_trace_result = os_trace_relay_start_trace(self.osTraceRelayClient, &self.osTraceReceiverClient, nil)
-			guard os_trace_relay_start_trace_result == nil else {
-				throw IDeviceSwiftError(os_trace_relay_start_trace_result)
+			if let error = os_trace_relay_start_trace(
+				self.osTraceRelayClient,
+				&self.osTraceReceiverClient,
+				nil
+			) {
+				throw IDeviceSwiftError(error)
 			}
 
 			self.isStreaming = true
@@ -152,18 +146,12 @@ public class SystemLogManager: NSObject {
 					let model = LogEntry(logCopy)
 					self.delegate?.activityStream(didRecieveEntry: model)
 					os_trace_relay_free_log(oslogg)
-				} else if result != nil {
+				} else if let result {
+					_ = IDeviceSwiftError(result)
 					break
 				}
 			}
 
-			self.isStreaming = false
-
-			if let recClient = self.osTraceReceiverClient {
-				os_trace_relay_receiver_free(recClient)
-				self.osTraceRelayClient = nil
-				self.osTraceReceiverClient = nil
-			}
 		}.value
 	}
 	/// Stops streaming

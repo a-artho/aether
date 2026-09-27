@@ -10,21 +10,6 @@ import IDevice
 
 // MARK: - Class extension: start
 extension HeartbeatManager {
-	// MARK: - RSD State
-
-	private static var _adapter: AdapterHandle?
-	private static var _handshake: RsdHandshakeHandle?
-
-	var adapter: AdapterHandle? {
-		get { Self._adapter }
-		set { Self._adapter = newValue }
-	}
-
-	var handshake: RsdHandshakeHandle? {
-		get { Self._handshake }
-		set { Self._handshake = newValue }
-	}
-
 	// MARK: - Start
 
 	public func start(_ forceRestart: Bool = false) {
@@ -48,9 +33,6 @@ extension HeartbeatManager {
 		if forceRestart {
 			sessionId = arc4random()
 			Logger.heartbeat.info("Forcing heartbeat restart with new session ID")
-
-			adapter = nil
-			handshake = nil
 		} else if existingThreadIsActive {
 			Logger.heartbeat.info("Heartbeat thread already running")
 			return
@@ -72,7 +54,7 @@ extension HeartbeatManager {
 				defer { self.restartLock.unlock() }
 
 				if let error = error {
-					Logger.heartbeat.error("Heartbeat error: \(error.message.pointee)")
+					Logger.heartbeat.error("Heartbeat error: \(error.localizedDescription)")
 					self._scheduleRestart()
 				} else {
 					self.restartBackoffTime = 1.0
@@ -117,19 +99,24 @@ extension HeartbeatManager {
 	// MARK: - Establish
 
 	func _establishHeartbeat(
-		completion: @escaping (IdeviceFfiError?) -> Void
+		completion: @escaping (Error?) -> Void
 	) {
-		guard let pairingFile = getPairing() else {
-			completion(nil)
+		let pairingFile: IdevicePairingFile
+		do {
+			pairingFile = try getPairing()
+		} catch {
+			completion(error)
 			return
 		}
 
 		sessionId = arc4random()
 
 		if !isRsd {
-			guard checkSocketConnection().isConnected else {
+			let connection = checkSocketConnection()
+			guard connection.isConnected else {
 				Logger.heartbeat.error("Socket connection failed")
-				completion(nil)
+				idevice_pairing_file_free(pairingFile)
+				completion(IDeviceConnectionError.legacyEndpointUnavailable(connection.error))
 				return
 			}
 		}
@@ -145,18 +132,44 @@ extension HeartbeatManager {
 	// MARK: - RSD Tunnel
 
 	internal func ensureRSDTunnel() -> Bool {
-		guard !isRestartInProgress else {
+		rsdConnectionLock.lock()
+		defer { rsdConnectionLock.unlock() }
+
+		do {
+			try _ensureRSDTunnelLocked()
 			return true
-		}
-
-		isRestartInProgress = true
-		restartLock.lock()
-		defer { restartLock.unlock() }
-
-		guard let pairingFile = getPairingRsd() else {
-			Logger.heartbeat.error("RSD pairing file not found")
+		} catch {
+			Logger.heartbeat.error("RSD establishment failed: \(error.localizedDescription)")
 			return false
 		}
+	}
+
+	func withRSDServiceConnection(
+		_ connect: (AdapterHandle, RsdHandshakeHandle) -> UnsafeMutablePointer<IdeviceFfiError>?
+	) throws {
+		rsdConnectionLock.lock()
+		defer { rsdConnectionLock.unlock() }
+
+		try _ensureRSDTunnelLocked()
+		guard let adapter = rsdAdapter, let handshake = rsdHandshake else {
+			throw IDeviceConnectionError.rsdTunnelUnavailable("The adapter or handshake is missing.")
+		}
+
+		if let errorPointer = connect(adapter, handshake) {
+			let error = IDeviceSwiftError(errorPointer)
+			_invalidateRSDTunnelLocked()
+			throw error
+		}
+	}
+
+	private func _ensureRSDTunnelLocked() throws {
+		if rsdAdapter != nil, rsdHandshake != nil {
+			return
+		}
+
+		_invalidateRSDTunnelLocked()
+		let pairingFile = try getPairingRsd()
+		defer { rp_pairing_file_free(pairingFile) }
 
 		var addr = sockaddr_in()
 		memset(&addr, 0, MemoryLayout.size(ofValue: addr))
@@ -164,14 +177,11 @@ extension HeartbeatManager {
 		addr.sin_port = CFSwapInt16HostToBig(port_rsd)
 
 		guard inet_pton(AF_INET, ipAddress, &addr.sin_addr) == 1 else {
-			Logger.heartbeat.error("Invalid IP address")
-			return false
+			throw IDeviceConnectionError.rsdEndpointInvalid
 		}
 
 		var newAdapter: AdapterHandle?
 		var newHandshake: RsdHandshakeHandle?
-
-		print("h")
 
 		let result = withUnsafePointer(to: &addr) {
 			$0.withMemoryRebound(to: idevice_sockaddr.self, capacity: 1) { ptr in
@@ -188,27 +198,32 @@ extension HeartbeatManager {
 			}
 		}
 
-		if let err = result {
-			let error = IDeviceSwiftError(err)
-			Logger.heartbeat.error("\(error): \(err.pointee.code)")
-			return false
+		if let result {
+			if let newHandshake { rsd_handshake_free(newHandshake) }
+			if let newAdapter { adapter_free(newAdapter) }
+			let error = IDeviceSwiftError(result)
+			throw IDeviceConnectionError.rsdTunnelUnavailable(error.localizedDescription)
 		}
 
-		if let oldHandshake = handshake {
-			rsd_handshake_free(oldHandshake)
+		guard let newAdapter, let newHandshake else {
+			if let newHandshake { rsd_handshake_free(newHandshake) }
+			if let newAdapter { adapter_free(newAdapter) }
+			throw IDeviceConnectionError.rsdTunnelUnavailable("The tunnel returned incomplete handles.")
 		}
-		if let oldAdapter = adapter {
-			adapter_free(oldAdapter)
+
+		rsdAdapter = newAdapter
+		rsdHandshake = newHandshake
+	}
+
+	private func _invalidateRSDTunnelLocked() {
+		if let rsdHandshake {
+			rsd_handshake_free(rsdHandshake)
 		}
-
-		adapter = newAdapter
-		handshake = newHandshake
-
-		rp_pairing_file_free(pairingFile)
-
-		isRestartInProgress = false
-
-		return true
+		if let rsdAdapter {
+			adapter_free(rsdAdapter)
+		}
+		rsdHandshake = nil
+		rsdAdapter = nil
 	}
 
 	// MARK: - Start Heartbeat
@@ -217,7 +232,7 @@ extension HeartbeatManager {
 		pairingFile: IdevicePairingFile,
 		provider: inout TcpProviderHandle?,
 		sessionId: UInt32?,
-		completion: @escaping (IdeviceFfiError?) -> Void
+		completion: @escaping (Error?) -> Void
 	) {
 		let currentSession = sessionId
 
@@ -228,7 +243,8 @@ extension HeartbeatManager {
 
 		guard inet_pton(AF_INET, ipAddress, &addr.sin_addr) == 1 else {
 			Logger.heartbeat.error("Invalid IP address")
-			completion(nil)
+			idevice_pairing_file_free(pairingFile)
+			completion(IDeviceConnectionError.legacyEndpointUnavailable("Invalid IP address."))
 			return
 		}
 
@@ -240,7 +256,8 @@ extension HeartbeatManager {
 
 		if result != nil {
 			Logger.heartbeat.error("Failed to create TCP provider")
-			completion(result?.pointee)
+			idevice_pairing_file_free(pairingFile)
+			completion(IDeviceSwiftError(result))
 			return
 		}
 
@@ -249,14 +266,18 @@ extension HeartbeatManager {
 
 		if hbConnectResult != nil {
 			Logger.heartbeat.error("Failed to start heartbeat client")
-			completion(nil)
+			completion(IDeviceSwiftError(hbConnectResult))
+			return
+		}
+		guard let heartbeatClient else {
+			completion(IDeviceConnectionError.tcpProviderUnavailable)
 			return
 		}
 
 		completion(nil)
 
 		_runHeartbeatLoop(
-			heartbeatClient: heartbeatClient!,
+			heartbeatClient: heartbeatClient,
 			currentSession: currentSession,
 			sessionId: sessionId
 		)
@@ -285,7 +306,8 @@ extension HeartbeatManager {
 			)
 
 			if marcoResult != nil {
-				Logger.heartbeat.error("heartbeat_get_marco failed")
+				let error = IDeviceSwiftError(marcoResult)
+				Logger.heartbeat.error("heartbeat_get_marco failed: \(error.localizedDescription)")
 				heartbeat_client_free(heartbeatClient)
 				return
 			}
@@ -299,7 +321,8 @@ extension HeartbeatManager {
 			let poloResult = heartbeat_send_polo(heartbeatClient)
 
 			if poloResult != nil {
-				Logger.heartbeat.error("heartbeat_send_polo failed")
+				let error = IDeviceSwiftError(poloResult)
+				Logger.heartbeat.error("heartbeat_send_polo failed: \(error.localizedDescription)")
 				heartbeat_client_free(heartbeatClient)
 				return
 			}

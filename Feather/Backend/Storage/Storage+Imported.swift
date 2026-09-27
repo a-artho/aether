@@ -10,6 +10,7 @@ import UIKit.UIImpactFeedbackGenerator
 
 // MARK: - Class extension: Imported Apps
 extension Storage {
+	@MainActor
 	func addImported(
 		uuid: String,
 		source: URL? = nil,
@@ -21,21 +22,57 @@ extension Storage {
 		
 		completion: @escaping (Error?) -> Void
 	) {
-		let generator = UIImpactFeedbackGenerator(style: .light)
-		
-		let new = Imported(context: context)
-		
-		new.uuid = uuid
-		new.source = source
-		new.date = Date()
-		// could possibly be nil, but thats fine.
-		new.identifier = appIdentifier
-		new.name = appName
-		new.icon = appIcon
-		new.version = appVersion
-		
-		saveContext()
-		generator.impactOccurred()
-		completion(nil)
+		do {
+			try upsertImported(
+				uuid: uuid,
+				source: source,
+				appName: appName,
+				appIdentifier: appIdentifier,
+				appVersion: appVersion,
+				appIcon: appIcon
+			)
+			UIImpactFeedbackGenerator(style: .light).impactOccurred()
+			completion(nil)
+		} catch {
+			completion(error)
+		}
+	}
+
+	@MainActor
+	func upsertImported(
+		uuid: String,
+		source: URL? = nil,
+		appName: String? = nil,
+		appIdentifier: String? = nil,
+		appVersion: String? = nil,
+		appIcon: String? = nil
+	) throws {
+		let request: NSFetchRequest<Imported> = Imported.fetchRequest()
+		request.predicate = NSPredicate(format: "uuid == %@", uuid)
+		let matches = try context.fetch(request)
+		let imported = matches.first ?? Imported(context: context)
+		for duplicate in matches.dropFirst() {
+			context.delete(duplicate)
+		}
+
+		imported.uuid = uuid
+		imported.source = source
+		imported.date = imported.date ?? Date()
+		imported.identifier = appIdentifier
+		imported.name = appName
+		imported.icon = appIcon
+		imported.version = appVersion
+
+		if context.hasChanges {
+			try context.save()
+		}
+	}
+
+	@MainActor
+	func importedExists(uuid: String) throws -> Bool {
+		let request: NSFetchRequest<Imported> = Imported.fetchRequest()
+		request.fetchLimit = 1
+		request.predicate = NSPredicate(format: "uuid == %@", uuid)
+		return try context.count(for: request) > 0
 	}
 }

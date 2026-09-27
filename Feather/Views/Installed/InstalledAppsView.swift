@@ -43,14 +43,21 @@ struct InstalledAppsView: View {
 					}
 				}
 			}
+			.refreshable {
+				guard loadsApps else { return }
+				await store.refresh()
+			}
 			.overlay {
-				if store.isLoading {
+				if store.isLoading && store.apps.isEmpty {
 					ProgressView()
-				} else if let errorMessage = store.errorMessage {
+				} else if let errorMessage = store.errorMessage, store.apps.isEmpty {
 					_statusView(
 						title: .localized("Unable to Load Installed Apps"),
 						description: errorMessage,
-						systemImage: "iphone.slash"
+						systemImage: "iphone.slash",
+						retry: {
+							Task { await store.refresh() }
+						}
 					)
 				} else if store.apps.isEmpty {
 					_statusView(
@@ -67,7 +74,12 @@ struct InstalledAppsView: View {
 		}
 	}
 
-	private func _statusView(title: String, description: String, systemImage: String) -> some View {
+	private func _statusView(
+		title: String,
+		description: String,
+		systemImage: String,
+		retry: (() -> Void)? = nil
+	) -> some View {
 		VStack(spacing: 10) {
 			Image(systemName: systemImage)
 				.font(.largeTitle)
@@ -78,6 +90,10 @@ struct InstalledAppsView: View {
 				.font(.subheadline)
 				.foregroundStyle(.secondary)
 				.multilineTextAlignment(.center)
+			if let retry {
+				Button(.localized("Retry"), action: retry)
+					.buttonStyle(.borderedProminent)
+			}
 		}
 		.padding()
 	}

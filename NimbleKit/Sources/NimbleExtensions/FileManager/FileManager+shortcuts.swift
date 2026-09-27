@@ -7,6 +7,29 @@
 
 import Foundation.NSFileManager
 
+public struct MaterializedExternalFile: Sendable {
+	public let fileURL: URL
+	public let directoryURL: URL
+
+	public func cleanup() {
+		try? FileManager.default.removeItem(at: directoryURL)
+	}
+}
+
+public enum ExternalFileMaterializationError: LocalizedError {
+	case unsupportedFileType
+	case copyFailed(Error)
+
+	public var errorDescription: String? {
+		switch self {
+		case .unsupportedFileType:
+			return "The selected file is not an IPA or TIPA archive."
+		case .copyFailed(let error):
+			return "The selected file could not be copied into Feather: \(error.localizedDescription)"
+		}
+	}
+}
+
 extension FileManager {
 	public func getPath(in directory: URL, for pathExtension: String) -> URL? {
 		guard let contents = try? contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
@@ -28,6 +51,59 @@ extension FileManager {
 		}
 		
 		return false
+	}
+
+	public func materializePackageForImport(at sourceURL: URL) throws -> MaterializedExternalFile {
+		let pathExtension = sourceURL.pathExtension.lowercased()
+		guard pathExtension == "ipa" || pathExtension == "tipa" else {
+			throw ExternalFileMaterializationError.unsupportedFileType
+		}
+
+		let directoryURL = temporaryDirectory.appendingPathComponent(
+			"FeatherImport_\(UUID().uuidString)",
+			isDirectory: true
+		)
+		let fileName = sourceURL.lastPathComponent.isEmpty
+			? "Import.\(pathExtension)"
+			: sourceURL.lastPathComponent
+		let destinationURL = directoryURL.appendingPathComponent(fileName)
+		let accessedSecurityScope = sourceURL.startAccessingSecurityScopedResource()
+		defer {
+			if accessedSecurityScope {
+				sourceURL.stopAccessingSecurityScopedResource()
+			}
+		}
+
+		do {
+			try createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+			var coordinationError: NSError?
+			var copyError: Error?
+			NSFileCoordinator().coordinate(
+				readingItemAt: sourceURL,
+				options: [],
+				error: &coordinationError
+			) { readableURL in
+				do {
+					try self.copyItem(at: readableURL, to: destinationURL)
+				} catch {
+					copyError = error
+				}
+			}
+
+			if let copyError { throw copyError }
+			if let coordinationError { throw coordinationError }
+			guard fileExists(atPath: destinationURL.path) else {
+				throw CocoaError(.fileNoSuchFile)
+			}
+			return MaterializedExternalFile(
+				fileURL: destinationURL,
+				directoryURL: directoryURL
+			)
+		} catch {
+			try? removeItem(at: directoryURL)
+			throw ExternalFileMaterializationError.copyFailed(error)
+		}
 	}
 	
 	public func removeFileIfNeeded(at url: URL) throws {

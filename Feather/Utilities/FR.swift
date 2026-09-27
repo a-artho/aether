@@ -13,20 +13,51 @@ import AltSourceKit
 import IDeviceSwift
 
 enum FR {
+	static func recoverPackageImport(
+		download: Download,
+		completion: @escaping (Result<Bool, Error>) -> Void
+	) {
+		Task.detached {
+			let handler = AppFileHandler(
+				file: download.url,
+				download: download,
+				transactionIdentifier: download.importIdentifier
+			)
+			do {
+				let recovered = try await handler.recoverCommittedImport()
+				await MainActor.run {
+					completion(.success(recovered))
+				}
+			} catch {
+				await MainActor.run {
+					completion(.failure(error))
+				}
+			}
+		}
+	}
+
 	static func handlePackageFile(
 		_ ipa: URL,
 		download: Download? = nil,
 		sourceProvenance: SourceAppProvenance? = nil,
+		transactionIdentifier: String? = nil,
 		completion: @escaping (Error?) -> Void
 	) {
 		Task.detached {
 			let handler = AppFileHandler(
 				file: ipa,
 				download: download,
-				sourceProvenance: sourceProvenance
+				sourceProvenance: sourceProvenance,
+				transactionIdentifier: transactionIdentifier
 			)
 			
 			do {
+				if try await handler.recoverCommittedImport() {
+					await MainActor.run {
+						completion(nil)
+					}
+					return
+				}
 				try await handler.copy()
 				try await handler.extract()
 				try await handler.move()

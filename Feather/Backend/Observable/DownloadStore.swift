@@ -15,6 +15,7 @@ struct StoredDownload: Codable {
 	}
 
 	let id: String
+	let importIdentifier: String?
 	let url: URL
 	let fileName: String
 	let sourceProvenance: SourceAppProvenance?
@@ -24,6 +25,7 @@ struct StoredDownload: Codable {
 
 	init(download: Download) {
 		self.id = download.id
+		self.importIdentifier = download.importIdentifier
 		self.url = download.url
 		self.fileName = download.fileName
 		self.sourceProvenance = download.sourceProvenance
@@ -92,7 +94,8 @@ final class DownloadStore {
 				sourceProvenance: record.sourceProvenance,
 				state: record.state,
 				fileName: record.fileName,
-				stagedFileName: record.stagedFileName
+				stagedFileName: record.stagedFileName,
+				importIdentifier: record.importIdentifier ?? storageKey(for: record.id)
 			)
 			download.resumeData = loadResumeData(for: record.id)
 			return download

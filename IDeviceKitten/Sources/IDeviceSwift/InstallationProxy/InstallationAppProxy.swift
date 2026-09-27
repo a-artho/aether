@@ -13,164 +13,284 @@ public class InstallationAppProxy: NSObject {
 	private let _heartbeat = HeartbeatManager.shared
 
 	typealias InstallationProxyClientHandle = OpaquePointer
+	typealias MisagentClientHandle = OpaquePointer
 	typealias SpringBoardServicesClientHandle = OpaquePointer
 
 	public weak var delegate: InstallationProxyAppsDelegate?
 
 	public func listApps(applicationType: String? = nil) async throws {
-		var installproxy: InstallationProxyClientHandle?
+		let apps = try await fetchApps(applicationType: applicationType)
+		await MainActor.run {
+			self.delegate?.updateApplications(with: apps)
+		}
+	}
 
-		let allApps = try await Task.detached(priority: .userInitiated) { () -> [AppInfo] in
-			guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
-				throw IDeviceSwiftError(message: "Missing Pairing")
-			}
-
-			if !self._heartbeat.isRsd {
-				guard self._heartbeat.checkSocketConnection().isConnected else {
-					throw IDeviceSwiftError(message: "Missing Pairing")
-				}
-			} else {
-				guard self._heartbeat.ensureRSDTunnel() else {
-					throw IDeviceSwiftError(message: "Missing Pairing")
-				}
-			}
-
-			if self._heartbeat.isRsd {
-				let installation_proxy_connect_tcp_result = installation_proxy_connect_rsd(self._heartbeat.adapter, self._heartbeat.handshake, &installproxy)
-				guard installation_proxy_connect_tcp_result == nil else {
-					throw IDeviceSwiftError(installation_proxy_connect_tcp_result)
-				}
-			} else {
-
-				let installation_proxy_connect_tcp_result = installation_proxy_connect(self._heartbeat.provider, &installproxy)
-				guard installation_proxy_connect_tcp_result == nil else {
-					throw IDeviceSwiftError(installation_proxy_connect_tcp_result)
-				}
-			}
+	public func fetchApps(applicationType: String? = nil) async throws -> [AppInfo] {
+		try await Task.detached(priority: .userInitiated) {
+			var installproxy: InstallationProxyClientHandle?
+			try self._connectInstallationProxy(client: &installproxy)
 			defer { installation_proxy_client_free(installproxy) }
 
 			var outResult: UnsafeMutableRawPointer?
 			var outResultLen: Int = 0
-
-			let installation_proxy_get_apps_result: UnsafeMutablePointer<IdeviceFfiError>?
+			let getAppsError: UnsafeMutablePointer<IdeviceFfiError>?
 			if let applicationType {
-				installation_proxy_get_apps_result = applicationType.withCString { type in
-					installation_proxy_get_apps(installproxy, type, nil, 0, &outResult, &outResultLen)
+				getAppsError = applicationType.withCString { type in
+					installation_proxy_get_apps(
+						installproxy,
+						type,
+						nil,
+						0,
+						&outResult,
+						&outResultLen
+					)
 				}
 			} else {
-				installation_proxy_get_apps_result = installation_proxy_get_apps(installproxy, nil, nil, 0, &outResult, &outResultLen)
+				getAppsError = installation_proxy_get_apps(
+					installproxy,
+					nil,
+					nil,
+					0,
+					&outResult,
+					&outResultLen
+				)
 			}
-			guard installation_proxy_get_apps_result == nil else {
-				throw IDeviceSwiftError(installation_proxy_get_apps_result)
+			if let getAppsError {
+				throw IDeviceSwiftError(getAppsError)
 			}
 
-			var appInfos: [AppInfo] = []
+			guard let outResult else { return [] }
+			let plistBuffer = outResult.bindMemory(
+				to: UnsafeMutableRawPointer?.self,
+				capacity: outResultLen
+			)
+			defer {
+				idevice_plist_array_free(plistBuffer, UInt(outResultLen))
+				idevice_outer_slice_free(outResult, UInt(outResultLen))
+			}
+
 			let decoder = PropertyListDecoder()
+			return UnsafeBufferPointer(start: plistBuffer, count: outResultLen).compactMap { plist in
+				guard let plist else { return nil }
 
-			if let outResult = outResult {
-				let buffer = outResult.bindMemory(to: OpaquePointer?.self, capacity: outResultLen)
-				let pointerBuffer = UnsafeBufferPointer(start: buffer, count: outResultLen)
+				var xml: UnsafeMutablePointer<CChar>?
+				var length: UInt32 = 0
+				plist_to_xml(plist, &xml, &length)
+				guard let xml else { return nil }
+				defer { free(xml) }
 
-				let appPlists = Array(pointerBuffer)
-				for plist in appPlists {
-					guard let plist = plist else { continue }
-
-					var xml: UnsafeMutablePointer<CChar>?
-					var length: UInt32 = 0
-
-					plist_to_xml(UnsafeMutableRawPointer(plist), &xml, &length)
-
-					if let xml = xml {
-						let data = Data(bytes: xml, count: Int(length))
-
-						do {
-							let appInfo = try decoder.decode(AppInfo.self, from: data)
-							appInfos.append(appInfo)
-						} catch {
-							print("Failed to decode AppInfo plist: \(error)")
-						}
-						free(xml)
-					}
+				do {
+					return try decoder.decode(
+						AppInfo.self,
+						from: Data(bytes: xml, count: Int(length))
+					)
+				} catch {
+					print("Failed to decode AppInfo plist: \(error)")
+					return nil
 				}
 			}
-
-			return appInfos
 		}.value
+	}
 
-		await MainActor.run {
-			self.delegate?.updateApplications(with: allApps)
-		}
+	public func provisioningProfiles() async throws -> [ProvisioningProfileInfo] {
+		try await Task.detached(priority: .userInitiated) {
+			var client: MisagentClientHandle?
+			try self._connectMisagent(client: &client)
+			defer { misagent_client_free(client) }
+
+			var profilePointers: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>?
+			var profileLengths: UnsafeMutablePointer<Int>?
+			var profileCount = 0
+			if let error = misagent_copy_all(
+				client,
+				&profilePointers,
+				&profileLengths,
+				&profileCount
+			) {
+				throw IDeviceSwiftError(error)
+			}
+
+			guard let profilePointers, let profileLengths else { return [] }
+			defer { misagent_free_profiles(profilePointers, profileLengths, profileCount) }
+
+			return (0..<profileCount).compactMap { index in
+				guard let bytes = profilePointers[index] else { return nil }
+				return ProvisioningProfileInfo(
+					data: Data(bytes: bytes, count: profileLengths[index])
+				)
+			}
+		}.value
 	}
 
 	static public func deleteApp(for id: String) async throws {
-		var installproxy: InstallationProxyClientHandle?
+		try await Task.detached(priority: .userInitiated) {
+			let heartbeat = HeartbeatManager.shared
+			var installproxy: InstallationProxyClientHandle?
+			try Self._requirePairingFile()
 
-		return try await Task.detached(priority: .userInitiated) {
-			let installation_proxy_connect_result = installation_proxy_connect(HeartbeatManager.shared.provider, &installproxy)
-			guard installation_proxy_connect_result == nil else {
-				throw IDeviceSwiftError(installation_proxy_connect_result)
+			if heartbeat.isRsd {
+				do {
+					try heartbeat.withRSDServiceConnection { adapter, handshake in
+						installation_proxy_connect_rsd(adapter, handshake, &installproxy)
+					}
+				} catch {
+					throw IDeviceConnectionError.installationProxyConnectionFailed(
+						error.localizedDescription
+					)
+				}
+			} else {
+				guard let provider = heartbeat.provider else {
+					throw IDeviceConnectionError.tcpProviderUnavailable
+				}
+				if let error = installation_proxy_connect(provider, &installproxy) {
+					let reason = IDeviceSwiftError(error).localizedDescription
+					throw IDeviceConnectionError.installationProxyConnectionFailed(reason)
+				}
 			}
+			defer { installation_proxy_client_free(installproxy) }
 
-			let installation_proxy_uninstall_result = installation_proxy_uninstall(installproxy, id, nil)
-			guard installation_proxy_uninstall_result == nil else {
-				throw IDeviceSwiftError(installation_proxy_uninstall_result)
+			if let error = installation_proxy_uninstall(installproxy, id, nil) {
+				throw IDeviceSwiftError(error)
 			}
 		}.value
+	}
+
+	private func _connectInstallationProxy(
+		client: inout InstallationProxyClientHandle?
+	) throws {
+		try Self._requirePairingFile()
+
+		if _heartbeat.isRsd {
+			do {
+				try _heartbeat.withRSDServiceConnection { adapter, handshake in
+					installation_proxy_connect_rsd(adapter, handshake, &client)
+				}
+			} catch {
+				throw IDeviceConnectionError.installationProxyConnectionFailed(
+					error.localizedDescription
+				)
+			}
+		} else {
+			let connection = _heartbeat.checkSocketConnection()
+			guard connection.isConnected else {
+				throw IDeviceConnectionError.legacyEndpointUnavailable(connection.error)
+			}
+			guard let provider = _heartbeat.provider else {
+				throw IDeviceConnectionError.tcpProviderUnavailable
+			}
+			if let error = installation_proxy_connect(provider, &client) {
+				let reason = IDeviceSwiftError(error).localizedDescription
+				throw IDeviceConnectionError.installationProxyConnectionFailed(reason)
+			}
+		}
+	}
+
+	private func _connectMisagent(client: inout MisagentClientHandle?) throws {
+		try Self._requirePairingFile()
+
+		if _heartbeat.isRsd {
+			do {
+				try _heartbeat.withRSDServiceConnection { adapter, handshake in
+					misagent_connect_rsd(adapter, handshake, &client)
+				}
+			} catch {
+				throw IDeviceConnectionError.misagentConnectionFailed(error.localizedDescription)
+			}
+		} else {
+			guard let provider = _heartbeat.provider else {
+				throw IDeviceConnectionError.tcpProviderUnavailable
+			}
+			if let error = misagent_connect(provider, &client) {
+				let reason = IDeviceSwiftError(error).localizedDescription
+				throw IDeviceConnectionError.misagentConnectionFailed(reason)
+			}
+		}
+	}
+
+	private static func _requirePairingFile() throws {
+		guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
+			throw IDeviceConnectionError.pairingFileMissing
+		}
 	}
 }
 
 extension InstallationAppProxy {
 	private static var iconCache: [String: UIImage] = [:]
-	private static let iconCacheQueue = DispatchQueue(label: "iconCacheQueue")
+	private static var iconRequests: [String: Task<UIImage?, Error>] = [:]
+	private static let iconCacheQueue = DispatchQueue(label: "InstallationAppProxy.iconCache")
 
 	static public func getAppIconCached(for id: String) async throws -> UIImage? {
 		if let cached = iconCacheQueue.sync(execute: { iconCache[id] }) {
 			return cached
 		}
-		let image = try await getAppIcon(for: id)
-		if let img = image {
-			iconCacheQueue.async {
-				iconCache[id] = img
+
+		let request = iconCacheQueue.sync { () -> Task<UIImage?, Error> in
+			if let existing = iconRequests[id] {
+				return existing
 			}
+			let request = Task.detached(priority: .userInitiated) {
+				try await getAppIcon(for: id)
+			}
+			iconRequests[id] = request
+			return request
 		}
-		return image
+
+		do {
+			let image = try await request.value
+			iconCacheQueue.sync {
+				iconRequests[id] = nil
+				if let image { iconCache[id] = image }
+			}
+			return image
+		} catch {
+			_ = iconCacheQueue.sync { iconRequests.removeValue(forKey: id) }
+			throw error
+		}
 	}
 
 	static public func getAppIcon(for id: String) async throws -> UIImage? {
-		var springServices: SpringBoardServicesClientHandle?
+		try await Task.detached(priority: .userInitiated) {
+			let heartbeat = HeartbeatManager.shared
+			var springServices: SpringBoardServicesClientHandle?
 
-		return try await Task.detached(priority: .userInitiated) {
-
-			if HeartbeatManager.shared.isRsd {
-				let springboard_services_connect_result = springboard_services_connect_rsd(HeartbeatManager.shared.adapter, HeartbeatManager.shared.handshake, &springServices)
-				guard springboard_services_connect_result == nil else {
-					throw IDeviceSwiftError(springboard_services_connect_result)
+			if heartbeat.isRsd {
+				do {
+					try heartbeat.withRSDServiceConnection { adapter, handshake in
+						springboard_services_connect_rsd(adapter, handshake, &springServices)
+					}
+				} catch {
+					throw IDeviceConnectionError.springboardServicesConnectionFailed(
+						error.localizedDescription
+					)
 				}
 			} else {
-				let springboard_services_connect_result = springboard_services_connect(HeartbeatManager.shared.provider, &springServices)
-				guard springboard_services_connect_result == nil else {
-					throw IDeviceSwiftError(springboard_services_connect_result)
+				guard let provider = heartbeat.provider else {
+					throw IDeviceConnectionError.tcpProviderUnavailable
+				}
+				if let error = springboard_services_connect(provider, &springServices) {
+					let reason = IDeviceSwiftError(error).localizedDescription
+					throw IDeviceConnectionError.springboardServicesConnectionFailed(reason)
 				}
 			}
+			defer { springboard_services_free(springServices) }
 
 			var outResult: UnsafeMutableRawPointer?
-			var outResultLen: Int = 0
-
-			let springboard_services_get_icon_result = springboard_services_get_icon(springServices, id, &outResult, &outResultLen)
-			guard springboard_services_get_icon_result == nil else {
-				throw IDeviceSwiftError(springboard_services_get_icon_result)
+			var outResultLen = 0
+			if let error = springboard_services_get_icon(
+				springServices,
+				id,
+				&outResult,
+				&outResultLen
+			) {
+				throw IDeviceSwiftError(error)
 			}
 
-
-			guard let iconPtr = outResult else {
-				throw IDeviceSwiftError(message: "Missing Pointer")
+			guard let iconPointer = outResult else {
+				throw IDeviceSwiftError(message: "SpringBoard returned an empty icon buffer.")
 			}
-
-			let iconData = Data(bytes: iconPtr, count: outResultLen)
-
-			springboard_services_free(springServices)
-
-			return UIImage(data: iconData)
+			let bytes = iconPointer.assumingMemoryBound(to: UInt8.self)
+			defer { idevice_data_free(bytes, UInt(outResultLen)) }
+			return UIImage(data: Data(bytes: bytes, count: outResultLen))
 		}.value
 	}
 }

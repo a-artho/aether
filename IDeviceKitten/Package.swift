@@ -27,5 +27,9 @@ let package = Package(
 			name: "IDeviceSwift",
 			dependencies: ["IDevice"]
 		),
+		.testTarget(
+			name: "IDeviceSwiftTests",
+			dependencies: ["IDeviceSwift"]
+		),
 	]
 )

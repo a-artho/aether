@@ -8,6 +8,7 @@
 import SwiftUI
 import Nuke
 import IDeviceSwift
+import NimbleExtensions
 import OSLog
 
 @main
@@ -130,15 +131,38 @@ struct FeatherApp: App {
 				)
 			}
 		} else {
-			if url.pathExtension == "ipa" || url.pathExtension == "tipa" {
-				if FileManager.default.isFileFromFileProvider(at: url) {
-					guard url.startAccessingSecurityScopedResource() else { return }
-					FR.handlePackageFile(url) { _ in }
-				} else {
-					FR.handlePackageFile(url) { _ in }
-				}
-
+			let pathExtension = url.pathExtension.lowercased()
+			if pathExtension == "ipa" || pathExtension == "tipa" {
+				_importExternalPackage(from: url)
 				return
+			}
+		}
+	}
+
+	private func _importExternalPackage(from externalURL: URL) {
+		Task.detached(priority: .utility) {
+			do {
+				let materializedFile = try FileManager.default.materializePackageForImport(
+					at: externalURL
+				)
+				await MainActor.run {
+					FR.handlePackageFile(materializedFile.fileURL) { error in
+						materializedFile.cleanup()
+						if let error {
+							UIAlertController.showAlertWithOk(
+								title: .localized("Import Failed"),
+								message: error.localizedDescription
+							)
+						}
+					}
+				}
+			} catch {
+				await MainActor.run {
+					UIAlertController.showAlertWithOk(
+						title: .localized("Import Failed"),
+						message: error.localizedDescription
+					)
+				}
 			}
 		}
 	}
