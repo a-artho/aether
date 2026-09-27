@@ -146,11 +146,21 @@ extension ResetView {
 	static func clearWorkCache() {
 		let fileManager = FileManager.default
 		let tmpDirectory = fileManager.temporaryDirectory
-		
-		if let files = try? fileManager.contentsOfDirectory(atPath: tmpDirectory.path()) {
-			for file in files {
-				try? fileManager.removeItem(atPath: tmpDirectory.appendingPathComponent(file).path())
-			}
+		let featherScratchPrefixes = [
+			"FeatherDownloads",
+			"FeatherImport_",
+			"FeatherInstall_",
+			"FeatherSigning_",
+			"FeatherTweak_"
+		]
+
+		guard let files = try? fileManager.contentsOfDirectory(
+			at: tmpDirectory,
+			includingPropertiesForKeys: nil
+		) else { return }
+
+		for file in files where featherScratchPrefixes.contains(where: file.lastPathComponent.hasPrefix) {
+			try? fileManager.removeItem(at: file)
 		}
 	}
 	

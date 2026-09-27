@@ -152,8 +152,22 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 		_createPipeline()
 		_createDocumentsDirectories()
 		ResetView.clearWorkCache()
+		DownloadManager.shared.prepareForBackgroundEvents()
 		_addDefaultCertificates()
 		return true
+	}
+
+	func application(
+		_ application: UIApplication,
+		handleEventsForBackgroundURLSession identifier: String,
+		completionHandler: @escaping () -> Void
+	) {
+		guard identifier == DownloadManager.backgroundSessionIdentifier else {
+			completionHandler()
+			return
+		}
+
+		DownloadManager.shared.setBackgroundEventsCompletionHandler(completionHandler)
 	}
 
 	private func _createPipeline() {
