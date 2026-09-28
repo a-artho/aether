@@ -9,9 +9,12 @@ import SwiftUI
 
 @MainActor
 struct InstalledAppsView: View {
+	@AppStorage("Feather.installationMethod") private var installationMethod = 0
 	@StateObject private var store: InstalledAppsStore
 	@ObservedObject private var installationManager = AppInstallationManager.shared
-	@StateObject private var localDevVPN = LocalDevVPNConnectionMonitor()
+	@ObservedObject private var connection = DeviceConnectionManager.shared
+	@ObservedObject private var tabManager = AppTabManager.shared
+	@State private var topCardMaxY: CGFloat = 160
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
 
@@ -33,62 +36,90 @@ struct InstalledAppsView: View {
 
 	var body: some View {
 		NBNavigationView(.localized("Device"), displayMode: .inline) {
-			VStack(spacing: 0) {
-				DeviceConnectionStatusCard(connection: localDevVPN)
-					.padding(.horizontal)
-					.padding(.top, 8)
-					.padding(.bottom, 6)
+			ZStack(alignment: .top) {
+				ScrollViewReader { scrollProxy in
+					List {
+						Section {
+							_modeVpnCard
+								.listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+								.listRowBackground(Color.clear)
+								.listRowSeparator(.hidden)
+								.background {
+									if installationManager.activeApp == nil {
+										GeometryReader { geo in
+											Color.clear.preference(
+												key: CardBottomPreferenceKey.self,
+												value: geo.frame(in: .named("DeviceTabRoot")).maxY
+											)
+										}
+									}
+								}
+						}
+						.listSectionSeparator(.hidden)
 
-				if let activeApp = installationManager.activeApp, let vm = installationManager.viewModel {
-					ActiveInstallationHeroCard(app: activeApp, viewModel: vm)
-						.padding(.horizontal)
-						.padding(.top, 8)
-						.padding(.bottom, 6)
-						.transition(.move(edge: .top).combined(with: .opacity))
-				}
+						if let activeApp = installationManager.activeApp, let vm = installationManager.viewModel {
+							Section {
+								ActiveInstallationHeroCard(app: activeApp, viewModel: vm)
+									.listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
+									.listRowBackground(Color.clear)
+									.listRowSeparator(.hidden)
+									.background {
+										GeometryReader { geo in
+											Color.clear.preference(
+												key: CardBottomPreferenceKey.self,
+												value: geo.frame(in: .named("DeviceTabRoot")).maxY
+											)
+										}
+									}
+							}
+							.listSectionSeparator(.hidden)
+						}
 
-				NBListAdaptable {
-					NBSection(.localized("Sideloaded")) {
-						ForEach(store.apps) { app in
-							InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+						if !store.apps.isEmpty {
+							NBSection(
+								.localized("Sideloaded"),
+								secondary: store.apps.count.description
+							) {
+								ForEach(store.apps) { app in
+									InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+										.id(app.id)
+								}
+							}
 						}
 					}
-				}
-				.refreshable {
-					guard loadsApps else { return }
-					await store.refresh()
-				}
-				.overlay {
-					if store.isLoading && store.apps.isEmpty {
-						ProgressView()
-					} else if !localDevVPN.hasPairingFile && store.apps.isEmpty {
-						_statusView(
-							title: .localized("Pairing File Missing"),
-							description: .localized("Import a pairing file in Installation settings, then turn on LocalDevVPN to view sideloaded apps on this device."),
-							systemImage: "key.slash"
-						)
-					} else if !localDevVPN.isConnected && store.apps.isEmpty {
-						_statusView(
-							title: .localized("LocalDevVPN Is Off"),
-							description: .localized("Turn it on to view sideloaded apps on this device."),
-							systemImage: "network.slash"
-						)
-					} else if let errorMessage = store.errorMessage, store.apps.isEmpty {
-						_statusView(
-							title: .localized("Unable to Load Installed Apps"),
-							description: errorMessage,
-							systemImage: "iphone.slash",
-							retry: {
-								Task { await store.refresh() }
-							}
-						)
-					} else if store.apps.isEmpty {
-						_statusView(
-							title: .localized("No Sideloaded Apps"),
-							description: .localized("No sideloaded applications were found on this device."),
-							systemImage: "square.stack.3d.up.slash"
-						)
+					.listStyle(.plain)
+					.refreshable {
+						guard loadsApps else { return }
+						await store.refresh()
 					}
+					#if DEBUG
+					.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.testScrollDevice"))) { _ in
+						withAnimation {
+							scrollProxy.scrollTo("com.example.app15", anchor: .top)
+						}
+					}
+					#endif
+				}
+
+				if store.apps.isEmpty {
+					GeometryReader { rootGeo in
+						let cardBottom = topCardMaxY
+						// Account for the floating tab bar clearance (tab bar height + safe area insets)
+						let tabbarClearance: CGFloat = 95
+						let bottomEdge = max(cardBottom + 50, rootGeo.size.height - tabbarClearance)
+						let availableHeight = bottomEdge - cardBottom
+						let centerY = cardBottom + (availableHeight / 2)
+
+						_placeholderContent
+							.frame(width: rootGeo.size.width)
+							.position(x: rootGeo.size.width / 2, y: centerY)
+					}
+				}
+			}
+			.coordinateSpace(name: "DeviceTabRoot")
+			.onPreferenceChange(CardBottomPreferenceKey.self) { maxY in
+				if maxY > 0 {
+					topCardMaxY = maxY
 				}
 			}
 			.animation(.spring(response: 0.35, dampingFraction: 0.85), value: installationManager.activeApp != nil)
@@ -98,137 +129,90 @@ struct InstalledAppsView: View {
 			}
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.installedAppsRefresh"))) { _ in
 				Task {
+					guard loadsApps, connection.isConnected else { return }
 					await store.refresh()
 				}
 			}
 			.onReceive(NotificationCenter.default.publisher(for: .heartbeat)) { _ in
 				Task {
-					await localDevVPN.refresh()
+					await connection.reconcile()
 				}
 			}
-		}
-	}
-
-	private func _statusView(
-		title: String,
-		description: String,
-		systemImage: String,
-		retry: (() -> Void)? = nil
-	) -> some View {
-		VStack(spacing: 10) {
-			Image(systemName: systemImage)
-				.font(.largeTitle)
-				.foregroundStyle(.secondary)
-			Text(title)
-				.font(.headline)
-			Text(description)
-				.font(.subheadline)
-				.foregroundStyle(.secondary)
-				.multilineTextAlignment(.center)
-			if let retry {
-				Button(.localized("Retry"), action: retry)
-					.buttonStyle(.borderedProminent)
-			}
-		}
-		.padding()
-	}
-}
-
-@MainActor
-private final class LocalDevVPNConnectionMonitor: ObservableObject {
-	@Published private(set) var isConnected = false
-	@Published private(set) var isUpdating = false
-	@Published private(set) var hasPairingFile: Bool
-
-	private var refreshID = UUID()
-
-	init() {
-		hasPairingFile = FileManager.default.fileExists(
-			atPath: HeartbeatManager.pairingFile()
-		)
-	}
-
-	func refresh() async {
-		let currentRefreshID = UUID()
-		refreshID = currentRefreshID
-		hasPairingFile = FileManager.default.fileExists(
-			atPath: HeartbeatManager.pairingFile()
-		)
-		guard hasPairingFile else {
-			isConnected = false
-			return
-		}
-
-		let isDeviceReachable = await Task.detached(priority: .utility) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1).isConnected
-		}.value
-
-		guard !Task.isCancelled, refreshID == currentRefreshID else { return }
-		isConnected = isDeviceReachable
-	}
-
-	func setConnection(enabled: Bool) {
-		guard !isUpdating, enabled != isConnected else { return }
-
-		let action = enabled ? "enable" : "disable"
-		guard let url = URL(string: "localdevvpn://\(action)?scheme=feather") else { return }
-
-		refreshID = UUID()
-		isUpdating = true
-		isConnected = enabled
-		UIApplication.shared.open(url, options: [:]) { [weak self] didOpen in
-			Task { @MainActor [weak self] in
-				guard let self else { return }
-				guard didOpen else {
-					self.isConnected = !enabled
-					self.isUpdating = false
-					return
-				}
-
-				try? await Task.sleep(nanoseconds: 1_500_000_000)
-				guard !Task.isCancelled else { return }
-				await self.refresh()
-				self.isUpdating = false
-			}
-		}
-	}
-}
-
-private struct DeviceConnectionStatusCard: View {
-	@AppStorage("Feather.installationMethod") private var installationMethod = 0
-	@ObservedObject var connection: LocalDevVPNConnectionMonitor
-
-	var body: some View {
-		VStack(spacing: 0) {
-			HStack {
-				DeviceStatusRowLabel(
-					title: "Mode",
-					systemImage: _installationMethodIcon
-				)
-				Spacer()
-				Button {
-					AppTabManager.shared.openInstallationSettings()
-				} label: {
-					HStack(spacing: 5) {
-						Text(_installationMethodName)
-						Image(systemName: "chevron.right")
-							.font(.caption2.weight(.semibold))
-							.foregroundStyle(.tertiary)
+			.onChange(of: connection.isConnected) { isConnected in
+				guard loadsApps else { return }
+				Task {
+					if isConnected {
+						await store.refresh()
+					} else {
+						store.clear()
 					}
-					.font(.subheadline.weight(.medium))
-					.foregroundStyle(.primary)
 				}
-				.buttonStyle(.plain)
-				.accessibilityLabel("Open installation settings")
 			}
-			.padding(.horizontal, 14)
+			.toolbar {
+				ToolbarItem(placement: .topBarTrailing) {
+					Button {
+						tabManager.isSettingsPresented = true
+					} label: {
+						Image(systemName: "gear")
+					}
+					.accessibilityLabel(.localized("Settings"))
+				}
+			}
+			.sheet(isPresented: $tabManager.isSettingsPresented) {
+				SettingsView()
+			}
+		}
+	}
+
+	private var _modeVpnCard: some View {
+		VStack(spacing: 0) {
+			Button {
+				tabManager.openInstallationSettings()
+			} label: {
+				HStack(spacing: 12) {
+					SettingsIconBadge(
+						systemImage: _installationMethodIcon,
+						backgroundColor: _installationMethodColor,
+						iconSize: installationMethod == 1 ? 16 : 14
+					)
+
+					Text(.localized("Mode"))
+						.foregroundColor(.primary)
+
+					Spacer()
+
+					Text(_installationMethodName)
+						.foregroundColor(.secondary)
+
+					Image(systemName: "chevron.right")
+						.font(.footnote.weight(.semibold))
+						.foregroundColor(Color(UIColor.tertiaryLabel))
+				}
+				.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.padding(.horizontal, 16)
 			.padding(.vertical, 12)
 
 			Divider()
-				.padding(.leading, 14)
+				.padding(.leading, 56)
 
-			HStack {
-				DeviceStatusRowLabel(title: "VPN", systemImage: "network")
+			HStack(spacing: 12) {
+				SettingsIconBadge(
+					systemImage: "network",
+					backgroundColor: .green,
+					iconSize: 15
+				)
+
+				Text(.localized("VPN"))
+					.foregroundColor(.primary)
+
+				if connection.isUpdating {
+					ProgressView()
+						.controlSize(.small)
+						.padding(.leading, 4)
+				}
+
 				Spacer()
 
 				Toggle("", isOn: Binding(
@@ -238,10 +222,8 @@ private struct DeviceConnectionStatusCard: View {
 				.labelsHidden()
 				.tint(.green)
 				.disabled(connection.isUpdating)
-				.accessibilityLabel("VPN")
-				.accessibilityValue(connection.isConnected ? "On" : "Off")
 			}
-			.padding(.horizontal, 14)
+			.padding(.horizontal, 16)
 			.padding(.vertical, 10)
 		}
 		.background(Color(UIColor.secondarySystemGroupedBackground))
@@ -249,16 +231,6 @@ private struct DeviceConnectionStatusCard: View {
 		.overlay {
 			RoundedRectangle(cornerRadius: 16, style: .continuous)
 				.stroke(Color.primary.opacity(0.06), lineWidth: 1)
-		}
-		.task {
-			while !Task.isCancelled {
-				await connection.refresh()
-				do {
-					try await Task.sleep(nanoseconds: 5_000_000_000)
-				} catch {
-					break
-				}
-			}
 		}
 	}
 
@@ -269,22 +241,81 @@ private struct DeviceConnectionStatusCard: View {
 	private var _installationMethodIcon: String {
 		installationMethod == 1 ? "iphone" : "server.rack"
 	}
-}
 
-private struct DeviceStatusRowLabel: View {
-	let title: String
-	let systemImage: String
+	private var _installationMethodColor: Color {
+		installationMethod == 1 ? .purple : .blue
+	}
 
-	var body: some View {
-		HStack(spacing: 9) {
-			Image(systemName: systemImage)
-				.font(.subheadline.weight(.medium))
-				.frame(width: 18)
-			Text(title)
+	@ViewBuilder
+	private var _placeholderContent: some View {
+		if store.isLoading && store.apps.isEmpty {
+			ProgressView()
+				.padding(.vertical, 20)
+		} else if !connection.hasPairingFile && store.apps.isEmpty {
+			_statusView(
+				title: .localized("Pairing File Missing"),
+				description: .localized("Import a pairing file to view sideloaded apps."),
+				systemImage: "key.slash"
+			)
+		} else if !connection.isConnected && store.apps.isEmpty {
+			_statusView(
+				title: .localized("LocalDevVPN Is Off"),
+				description: .localized("Turn on VPN to view sideloaded apps."),
+				systemImage: "network.slash",
+				actionTitle: .localized("Turn On VPN"),
+				action: {
+					connection.setConnection(enabled: true)
+				}
+			)
+		} else if let errorMessage = store.errorMessage, store.apps.isEmpty {
+			_statusView(
+				title: .localized("Unable to Load Installed Apps"),
+				description: errorMessage,
+				systemImage: "iphone.slash",
+				actionTitle: .localized("Retry"),
+				action: {
+					Task { await store.refresh() }
+				}
+			)
+		} else {
+			_statusView(
+				title: .localized("No Sideloaded Apps"),
+				description: .localized("Installed sideloaded apps will appear here."),
+				systemImage: "square.stack.3d.up.slash"
+			)
 		}
-		.foregroundStyle(.secondary)
+	}
+
+	private func _statusView(
+		title: String,
+		description: String,
+		systemImage: String,
+		actionTitle: String? = nil,
+		action: (() -> Void)? = nil
+	) -> some View {
+		VStack(spacing: 12) {
+			Image(systemName: systemImage)
+				.font(.system(size: 40))
+				.foregroundStyle(.secondary)
+			Text(title)
+				.font(.headline)
+				.foregroundStyle(.primary)
+			Text(description)
+				.font(.subheadline)
+				.foregroundStyle(.secondary)
+				.multilineTextAlignment(.center)
+				.padding(.horizontal, 28)
+			if let actionTitle, let action {
+				Button(actionTitle, action: action)
+					.buttonStyle(.borderedProminent)
+					.padding(.top, 4)
+			}
+		}
+		.frame(maxWidth: .infinity)
+		.padding(.vertical, 16)
 	}
 }
+
 private struct InstalledAppCellView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	let app: InstalledApp
@@ -344,6 +375,16 @@ private struct InstalledAppIconView: View {
 				for: bundleIdentifier,
 				cacheVersion: cacheVersion
 			)
+		}
+	}
+}
+
+private struct CardBottomPreferenceKey: PreferenceKey {
+	static var defaultValue: CGFloat = 160
+	static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+		let next = nextValue()
+		if next > 0 {
+			value = next
 		}
 	}
 }

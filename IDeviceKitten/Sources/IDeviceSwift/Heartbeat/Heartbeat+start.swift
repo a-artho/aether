@@ -186,6 +186,11 @@ extension HeartbeatManager {
 			throw IDeviceConnectionError.rsdEndpointInvalid
 		}
 
+		let probe = checkRSDEndpoint(timeoutInSeconds: 0.75)
+		guard probe.isConnected else {
+			throw IDeviceConnectionError.rsdTunnelUnavailable(probe.error ?? "RSD endpoint unreachable")
+		}
+
 		var newAdapter: AdapterHandle?
 		var newHandshake: RsdHandshakeHandle?
 
@@ -219,6 +224,12 @@ extension HeartbeatManager {
 
 		rsdAdapter = newAdapter
 		rsdHandshake = newHandshake
+	}
+
+	public func resetRSDTunnel() {
+		rsdConnectionLock.lock()
+		defer { rsdConnectionLock.unlock() }
+		_invalidateRSDTunnelLocked()
 	}
 
 	private func _invalidateRSDTunnelLocked() {

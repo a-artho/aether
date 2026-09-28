@@ -8,34 +8,34 @@
 import Foundation
 import IDevice
 
-struct IDeviceSwiftError: LocalizedError {
-	private let _message: String
-	private let _code: Int32
+public struct IDeviceSwiftError: LocalizedError {
+	public let message: String
+	public let code: Int32
 
-	init(_ error: UnsafeMutablePointer<IdeviceFfiError>?) {
+	public init(_ error: UnsafeMutablePointer<IdeviceFfiError>?) {
 		if let cMessage = error?.pointee.message {
-			self._message = String(cString: cMessage)
+			self.message = String(cString: cMessage)
 		} else {
-			self._message = "Unknown device error"
+			self.message = "Unknown device error"
 		}
-		self._code = error?.pointee.code ?? 0
+		self.code = error?.pointee.code ?? 0
 
 		if let error {
 			idevice_error_free(error)
 		}
 	}
 
-	init(
+	public init(
 		_ code: Int32 = -7001, // our custom error hehe
 		message: String
 	) {
-		self._message = message
-		self._code = code
+		self.message = message
+		self.code = code
 	}
 
-	var errorDescription: String? {
-		guard _code != 0 else { return _message }
-		return "\(_message) (\(_code))"
+	public var errorDescription: String? {
+		guard code != 0 else { return message }
+		return "\(message) (\(code))"
 	}
 }
 

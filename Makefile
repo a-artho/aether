@@ -25,13 +25,13 @@ deps:
 
 
 $(PLATFORMS): deps
-	rm -rf _build
-
 	@if [ "$@" = "iphoneos" ]; then \
 		DEST="generic/platform=iOS"; \
 	else \
 		DEST="generic/platform=macOS,variant=Mac Catalyst"; \
 	fi; \
+	rm -rf $(TMP)/$@/dst; \
+	mkdir -p $(TMP)/$@/dst; \
 	xcodebuild \
 		-project Feather.xcodeproj \
 		-scheme $(SCHEME) \
@@ -39,19 +39,21 @@ $(PLATFORMS): deps
 		-destination "$$DEST" \
 		-derivedDataPath $(TMP)/$@ \
 		-skipPackagePluginValidation \
+		DSTROOT=$(TMP)/$@/dst \
 		CODE_SIGNING_ALLOWED=NO \
 		ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES=NO
 
-	mkdir -p _build/Payload
-	cp -R _build/Applications/*.app _build/Payload/Feather.app
-	chmod -R 0755 _build/Payload/Feather.app
-	codesign --force --sign - --timestamp=none _build/Payload/Feather.app
-	cp deps/* _build/Payload/Feather.app/ || true
+	rm -rf $(TMP)/$@/Payload
+	mkdir -p $(TMP)/$@/Payload
+	cp -R $(TMP)/$@/dst/Applications/*.app $(TMP)/$@/Payload/Feather.app
+	chmod -R 0755 $(TMP)/$@/Payload/Feather.app
+	codesign --force --sign - --timestamp=none $(TMP)/$@/Payload/Feather.app
+	cp deps/* $(TMP)/$@/Payload/Feather.app/ || true
 
 	mkdir -p packages
 
 	@if [ "$@" = "iphoneos" ]; then \
-		ditto -c -k --sequesterRsrc --keepParent _build/Payload "packages/Feather.ipa"; \
+		ditto -c -k --sequesterRsrc --keepParent $(TMP)/$@/Payload "packages/Feather.ipa"; \
 	else \
-		ditto -c -k --sequesterRsrc --keepParent _build/Payload/Feather.app "packages/Feather_Catalyst.zip"; \
+		ditto -c -k --sequesterRsrc --keepParent $(TMP)/$@/Payload/Feather.app "packages/Feather_Catalyst.zip"; \
 	fi

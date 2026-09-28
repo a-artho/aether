@@ -64,19 +64,23 @@ extension ResetView {
 	@ViewBuilder
 	private func _cache() -> some View {
 		Section {
-			Button(.localized("Reset Work Cache"), systemImage: "xmark.rectangle.portrait") {
+			Button {
 				Self.resetAlert(title: .localized("Reset Work Cache")) {
 					Self.clearWorkCache()
 				}
+			} label: {
+				SettingsRowLabel(.localized("Reset Work Cache"), systemImage: "xmark.bin.fill", backgroundColor: .orange)
 			}
 			
-			Button(.localized("Reset Network Cache"), systemImage: "xmark.rectangle.portrait") {
+			Button {
 				Self.resetAlert(
 					title: .localized("Reset Network Cache"),
 					message: _cacheSize()
 				) {
 					Self.clearNetworkCache()
 				}
+			} label: {
+				SettingsRowLabel(.localized("Reset Network Cache"), systemImage: "network", backgroundColor: .orange)
 			}
 		}
 	}
@@ -84,40 +88,48 @@ extension ResetView {
 	@ViewBuilder
 	private func _coredata() -> some View {
 		Section {
-			Button(.localized("Reset Sources"), systemImage: "xmark.circle") {
+			Button {
 				Self.resetAlert(
 					title: .localized("Reset Sources"),
 					message: Storage.shared.countContent(for: AltSource.self)
 				) {
 					Self.resetSources()
 				}
+			} label: {
+				SettingsRowLabel(.localized("Reset Sources"), systemImage: "globe", backgroundColor: .red)
 			}
 			
-			Button(.localized("Reset Signed Apps"), systemImage: "xmark.circle") {
+			Button {
 				Self.resetAlert(
 					title: .localized("Reset Signed Apps"),
 					message: Storage.shared.countContent(for: Signed.self)
 				) {
 					Self.deleteSignedApps()
 				}
+			} label: {
+				SettingsRowLabel(.localized("Reset Signed Apps"), systemImage: "signature", backgroundColor: .red)
 			}
 			
-			Button(.localized("Reset Imported Apps"), systemImage: "xmark.circle") {
+			Button {
 				Self.resetAlert(
 					title: .localized("Reset Imported Apps"),
 					message: Storage.shared.countContent(for: Imported.self)
 				) {
 					Self.deleteImportedApps()
 				}
+			} label: {
+				SettingsRowLabel(.localized("Reset Imported Apps"), systemImage: "arrow.down.app.fill", backgroundColor: .red)
 			}
 			
-			Button(.localized("Reset Certificates"), systemImage: "xmark.circle") {
+			Button {
 				Self.resetAlert(
 					title: .localized("Reset Certificates"),
 					message: Storage.shared.countContent(for: CertificatePair.self)
 				) {
 					Self.resetCertificates()
 				}
+			} label: {
+				SettingsRowLabel(.localized("Reset Certificates"), systemImage: "checkmark.seal.fill", backgroundColor: .red)
 			}
 		}
 	}
@@ -125,19 +137,30 @@ extension ResetView {
 	@ViewBuilder
 	private func _all() -> some View {
 		Section {
-			Button(.localized("Reset Settings"), systemImage: "xmark.octagon") {
+			Button {
 				Self.resetAlert(title: .localized("Reset Settings")) {
 					Self.resetUserDefaults()
 				}
+			} label: {
+				HStack(spacing: 12) {
+					SettingsIconBadge(systemImage: "gearshape.fill", backgroundColor: .red)
+					Text(.localized("Reset Settings"))
+						.foregroundColor(.red)
+				}
 			}
 			
-			Button(.localized("Reset All"), systemImage: "xmark.octagon") {
+			Button {
 				Self.resetAlert(title: .localized("Reset All")) {
 					Self.resetAll()
 				}
+			} label: {
+				HStack(spacing: 12) {
+					SettingsIconBadge(systemImage: "trash.fill", backgroundColor: .red)
+					Text(.localized("Reset All"))
+						.foregroundColor(.red)
+				}
 			}
 		}
-		.foregroundStyle(.red)
 	}
 }
 

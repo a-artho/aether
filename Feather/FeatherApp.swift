@@ -57,6 +57,19 @@ struct FeatherApp: App {
 				AppTabManager.shared.switchTo(tab)
 				return
 			}
+			if url.host == "open-settings" {
+				var requestedPage: AppTabManager.SettingsPage? = nil
+				if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+				   let pageParam = components.queryItems?.first(where: { $0.name == "page" })?.value {
+					requestedPage = AppTabManager.SettingsPage(rawValue: pageParam)
+				}
+				AppTabManager.shared.openSettings(page: requestedPage)
+				return
+			}
+			if url.host == "open-installation-settings" {
+				AppTabManager.shared.openInstallationSettings()
+				return
+			}
 			if url.host == "open-search" {
 				NotificationCenter.default.post(name: Notification.Name("Feather.openSearch"), object: nil)
 				return
@@ -65,7 +78,24 @@ struct FeatherApp: App {
 				NotificationCenter.default.post(name: Notification.Name("Feather.closeSearch"), object: nil)
 				return
 			}
+			if url.host == "test-scroll" {
+				AppTabManager.shared.switchTo(.installed)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					NotificationCenter.default.post(name: Notification.Name("Feather.testScrollDevice"), object: nil)
+				}
+				return
+			}
 			#if DEBUG
+			if url.host == "mock-apps" {
+				NotificationCenter.default.post(name: Notification.Name("Feather.mockApps"), object: nil)
+				AppTabManager.shared.switchTo(.installed)
+				return
+			}
+			if url.host == "clear-apps" {
+				NotificationCenter.default.post(name: Notification.Name("Feather.clearApps"), object: nil)
+				AppTabManager.shared.switchTo(.installed)
+				return
+			}
 			if url.host == "mock-install" {
 				AppInstallationManager.shared.startMockInstall(progress: 0.62, status: .installing)
 				AppTabManager.shared.switchTo(.installed)

@@ -19,7 +19,7 @@ struct SigningOptionsView: View {
 			NBSection(.localized("Protection")) {
 				_toggle(
 					.localized("PPQ Protection"),
-					systemImage: "shield",
+					systemImage: "shield.fill",
 					isOn: $options.ppqProtection,
 					temporaryValue: temporaryOptions?.ppqProtection
 				)
@@ -31,14 +31,14 @@ struct SigningOptionsView: View {
 		NBSection(.localized("General")) {
 			Self.picker(
 				.localized("Appearance"),
-				systemImage: "paintpalette",
+				systemImage: "paintpalette.fill",
 				selection: $options.appAppearance,
 				values: Options.AppAppearance.allCases
 			)
 			
 			Self.picker(
 				.localized("Minimum Requirement"),
-				systemImage: "ruler",
+				systemImage: "ruler.fill",
 				selection: $options.minimumAppRequirement,
 				values: Options.MinimumAppRequirement.allCases
 			)
@@ -102,7 +102,7 @@ struct SigningOptionsView: View {
 			
 			_toggle(
 				.localized("Game Mode"),
-				systemImage: "gamecontroller",
+				systemImage: "gamecontroller.fill",
 				isOn: $options.gameMode,
 				temporaryValue: temporaryOptions?.gameMode
 			)
@@ -119,13 +119,15 @@ struct SigningOptionsView: View {
 			_toggle(
 				.localized("Remove URL Scheme"),
 				systemImage: "ellipsis.curlybraces",
+				backgroundColor: .orange,
 				isOn: $options.removeURLScheme,
 				temporaryValue: temporaryOptions?.removeURLScheme
 			)
 			
 			_toggle(
 				.localized("Remove Provisioning"),
-				systemImage: "doc.badge.gearshape",
+				systemImage: "doc.badge.gearshape.fill",
+				backgroundColor: .red,
 				isOn: $options.removeProvisioning,
 				temporaryValue: temporaryOptions?.removeProvisioning
 			)
@@ -136,7 +138,7 @@ struct SigningOptionsView: View {
 		Section {
 			_toggle(
 				.localized("Force Localize"),
-				systemImage: "character.bubble",
+				systemImage: "character.bubble.fill",
 				isOn: $options.changeLanguageFilesForCustomDisplayName,
 				temporaryValue: temporaryOptions?.changeLanguageFilesForCustomDisplayName
 			)
@@ -147,13 +149,13 @@ struct SigningOptionsView: View {
 		NBSection(.localized("Post Signing")) {
 			_toggle(
 				.localized("Install After Signing"),
-				systemImage: "arrow.down.circle",
+				systemImage: "arrow.down.circle.fill",
 				isOn: $options.post_installAppAfterSigned,
 				temporaryValue: temporaryOptions?.post_installAppAfterSigned
 			)
 			_toggle(
 				.localized("Delete After Signing"),
-				systemImage: "trash",
+				systemImage: "trash.fill",
 				isOn: $options.post_deleteAppAfterSigned,
 				temporaryValue: temporaryOptions?.post_deleteAppAfterSigned
 			)
@@ -182,14 +184,14 @@ struct SigningOptionsView: View {
 			
 			_toggle(
 				.localized("Disable Liquid Glass"),
-				systemImage: "18.circle",
+				systemImage: "18.circle.fill",
 				isOn: $options.experiment_disableLiquidGlass,
 				temporaryValue: temporaryOptions?.experiment_disableLiquidGlass
 			).disabled(options.experiment_supportLiquidGlass)
 			
 			_toggle(
 				.localized("Enable Liquid Glass"),
-				systemImage: "26.circle",
+				systemImage: "26.circle.fill",
 				isOn: $options.experiment_supportLiquidGlass,
 				temporaryValue: temporaryOptions?.experiment_supportLiquidGlass
 			).disabled(options.experiment_disableLiquidGlass)
@@ -202,6 +204,7 @@ struct SigningOptionsView: View {
 	static func picker<SelectionValue: Hashable, T: Hashable & LocalizedDescribable>(
 		_ title: String,
 		systemImage: String,
+		backgroundColor: Color? = nil,
 		selection: Binding<SelectionValue>,
 		values: [T]
 	) -> some View {
@@ -210,7 +213,11 @@ struct SigningOptionsView: View {
 				Text(value.localizedDescription)
 			}
 		} label: {
-			Label(title, systemImage: systemImage)
+			SettingsRowLabel(
+				title,
+				systemImage: systemImage,
+				backgroundColor: backgroundColor ?? SettingsIconBadge.color(for: systemImage)
+			)
 		}
 	}
 	
@@ -218,18 +225,21 @@ struct SigningOptionsView: View {
 	private func _toggle(
 		_ title: String,
 		systemImage: String,
+		backgroundColor: Color? = nil,
 		isOn: Binding<Bool>,
 		temporaryValue: Bool? = nil
 	) -> some View {
 		Toggle(isOn: isOn) {
-			Label {
+			HStack(spacing: 12) {
+				SettingsIconBadge(
+					systemImage: systemImage,
+					backgroundColor: backgroundColor ?? SettingsIconBadge.color(for: systemImage)
+				)
 				if let tempValue = temporaryValue, tempValue != isOn.wrappedValue {
 					Text(title).bold()
 				} else {
 					Text(title)
 				}
-			} icon: {
-				Image(systemName: systemImage)
 			}
 		}
 	}

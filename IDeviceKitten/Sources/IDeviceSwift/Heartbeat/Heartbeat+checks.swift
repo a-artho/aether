@@ -14,29 +14,34 @@ extension HeartbeatManager {
 	/// Unlike a raw TCP probe, this validates the active transport and pairing flow.
 	public func checkDeviceConnection(
 		timeoutInSeconds: Double = 2.0
-	) -> (isConnected: Bool, error: String?) {
+	) -> (isConnected: Bool, error: String?, errorCode: Int32?) {
 		if isRsd {
+			let probe = checkRSDEndpoint(timeoutInSeconds: min(timeoutInSeconds, 0.75))
+			guard probe.isConnected else {
+				return (false, probe.error, nil)
+			}
 			return _checkRSDDeviceConnection()
 		}
 
 		let socketConnection = checkSocketConnection(timeoutInSeconds: timeoutInSeconds)
 		guard socketConnection.isConnected else {
-			return socketConnection
+			return (false, socketConnection.error, nil)
 		}
 
 		guard let provider else {
-			return (false, "Heartbeat provider unavailable")
+			return (false, "Heartbeat provider unavailable", nil)
 		}
 
 		var client: OpaquePointer?
 		defer { installation_proxy_client_free(client) }
 		if let error = installation_proxy_connect(provider, &client) {
-			return (false, IDeviceSwiftError(error).localizedDescription)
+			let swiftError = IDeviceSwiftError(error)
+			return (false, swiftError.localizedDescription, swiftError.code)
 		}
-		return (client != nil, client == nil ? "Installation Proxy unavailable" : nil)
+		return (client != nil, client == nil ? "Installation Proxy unavailable" : nil, nil)
 	}
 
-	private func _checkRSDDeviceConnection() -> (isConnected: Bool, error: String?) {
+	private func _checkRSDDeviceConnection() -> (isConnected: Bool, error: String?, errorCode: Int32?) {
 		var client: OpaquePointer?
 		defer { installation_proxy_client_free(client) }
 
@@ -44,15 +49,29 @@ extension HeartbeatManager {
 			try withRSDServiceConnection { adapter, handshake in
 				installation_proxy_connect_rsd(adapter, handshake, &client)
 			}
-			return (client != nil, client == nil ? "Installation Proxy unavailable" : nil)
+			return (client != nil, client == nil ? "Installation Proxy unavailable" : nil, nil)
+		} catch let error as IDeviceSwiftError {
+			return (false, error.localizedDescription, error.code)
 		} catch {
-			return (false, error.localizedDescription)
+			return (false, error.localizedDescription, nil)
 		}
 	}
 
-	/// Check connection to socket/tunnel
+	/// Check connection to RSD endpoint (port 49152)
+	/// - Returns: Tuple for connection status and error message (if any)
+	public func checkRSDEndpoint(timeoutInSeconds: Double = 0.5) -> (isConnected: Bool, error: String?) {
+		checkPortConnection(port: port_rsd, timeoutInSeconds: timeoutInSeconds)
+	}
+
+	/// Check connection to legacy socket/tunnel (port 62078)
 	/// - Returns: Tuple for connection status and error message (if any)
 	public func checkSocketConnection(timeoutInSeconds: Double = 2.0) -> (isConnected: Bool, error: String?) {
+		checkPortConnection(port: port, timeoutInSeconds: timeoutInSeconds)
+	}
+
+	/// Check TCP connection to a specific port on the device
+	/// - Returns: Tuple for connection status and error message (if any)
+	public func checkPortConnection(port targetPort: UInt16, timeoutInSeconds: Double = 0.5) -> (isConnected: Bool, error: String?) {
 		let socketFD = socket(AF_INET, SOCK_STREAM, 0)
 		if socketFD == -1 {
 			return (false, "Failed to create socket")
@@ -73,7 +92,7 @@ extension HeartbeatManager {
 		var addr = sockaddr_in()
 		memset(&addr, 0, MemoryLayout.size(ofValue: addr))
 		addr.sin_family = sa_family_t(AF_INET)
-		addr.sin_port = CFSwapInt16HostToBig(port)
+		addr.sin_port = CFSwapInt16HostToBig(targetPort)
 
 		guard inet_pton(AF_INET, ipAddress, &addr.sin_addr) == 1 else {
 			return (false, "Invalid IP address format")

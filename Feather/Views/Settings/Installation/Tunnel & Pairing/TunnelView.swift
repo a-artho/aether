@@ -34,12 +34,18 @@ struct TunnelView: View {
 			}
 			
 			Section {
-				Button(.localized("Import Pairing File"), systemImage: "square.and.arrow.down") {
+				Button {
 					_isImportingPairingPresenting = true
+				} label: {
+					HStack(spacing: 12) {
+						SettingsIconBadge(systemImage: "square.and.arrow.down.fill", backgroundColor: .blue)
+						Text(.localized("Import Pairing File"))
+							.foregroundColor(.primary)
+					}
 				}
 				if #available(iOS 17.4, *) {
 				} else {
-					Button(.localized("Restart Heartbeat"), systemImage: "arrow.counterclockwise") {
+					Button {
 						HeartbeatManager.shared.start(true)
 						
 						DispatchQueue.global(qos: .userInitiated).async {
@@ -52,21 +58,53 @@ struct TunnelView: View {
 								}
 							}
 						}
+					} label: {
+						HStack(spacing: 12) {
+							SettingsIconBadge(systemImage: "arrow.counterclockwise", backgroundColor: .orange)
+							Text(.localized("Restart Heartbeat"))
+								.foregroundColor(.primary)
+						}
 					}
 				}
 			}
 			
 			NBSection(.localized("Help")) {
-				Button(.localized("Pairing File Guide"), systemImage: "questionmark.circle") {
+				Button {
 					UIApplication.open("https://github.com/claration/Impactor#pairing-file")
+				} label: {
+					HStack(spacing: 12) {
+						SettingsIconBadge(systemImage: "questionmark.circle.fill", backgroundColor: .purple)
+						Text(.localized("Pairing File Guide"))
+							.foregroundColor(.primary)
+						Spacer()
+						Image(systemName: "arrow.up.forward.app")
+							.font(.footnote)
+							.foregroundColor(Color(UIColor.tertiaryLabel))
+					}
 				}
 				if isLocalDevVpnAvailable {
-					Button(.localized("Connect to LocalDevVPN"), systemImage: "link") {
+					Button {
 						UIApplication.open("localdevvpn://enable?scheme=feather")
+					} label: {
+						HStack(spacing: 12) {
+							SettingsIconBadge(systemImage: "network", backgroundColor: .green)
+							Text(.localized("Connect to LocalDevVPN"))
+								.foregroundColor(.primary)
+						}
 					}
 				} else {
-					Button(.localized("Download LocalDevVPN"), systemImage: "arrow.down.app") {
+					Button {
 						UIApplication.open("https://apps.apple.com/us/app/localdevvpn/id6755608044")
+					} label: {
+						HStack(spacing: 12) {
+							SettingsIconBadge(systemImage: "arrow.down.app.fill", backgroundColor: .blue)
+							Text(.localized("Download LocalDevVPN"))
+								.foregroundColor(.primary)
+							Spacer()
+							Image(systemName: "arrow.up.forward.app")
+								.font(.footnote)
+								.foregroundColor(Color(UIColor.tertiaryLabel))
+						}
 					}
 				}
 			}

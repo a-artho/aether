@@ -57,18 +57,20 @@ struct AppearanceView: View {
 			}
 			
 			Section {
-				ColorPicker(
-					.localized("Custom Theme Color"),
-					selection: _tintColorBinding,
-					supportsOpacity: false
-				)
+				ColorPicker(selection: _tintColorBinding, supportsOpacity: false) {
+					SettingsRowLabel(.localized("Custom Theme Color"), systemImage: "eyedropper.halffull", backgroundColor: .blue)
+				}
 			}
 			
 			if #available(iOS 18.0, *) {
 				NBSection(.localized("Library")) {
-					Toggle(.localized("Dynamic Icons"), isOn: $_shouldChangeIconsBasedOffStyle)
+					Toggle(isOn: $_shouldChangeIconsBasedOffStyle) {
+						SettingsRowLabel(.localized("Dynamic Icons"), systemImage: "app.badge.fill", backgroundColor: .indigo)
+					}
 					if #available(iOS 18.2, *) {
-						Toggle(.localized("Tinted Icons"), isOn: $_shouldTintIcons)
+						Toggle(isOn: $_shouldTintIcons) {
+							SettingsRowLabel(.localized("Tinted Icons"), systemImage: "paintpalette.fill", backgroundColor: .purple)
+						}
 					}
 				}
 			}

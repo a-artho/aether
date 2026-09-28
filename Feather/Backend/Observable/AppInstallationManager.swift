@@ -56,38 +56,21 @@ final class AppInstallationManager: ObservableObject {
 			return
 		}
 
-		guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
-			_showIDevicePreflightAlert(
-				title: .localized("Pairing File Missing"),
-				message: .localized("Import one in Installation settings.")
-			)
-			return
-		}
-
 		iDevicePreflightTask = Task { [weak self] in
-			let connection = await Task.detached(priority: .userInitiated) {
-				HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 2)
-			}.value
+			do {
+				try await DeviceConnectionManager.shared.ensureConnected()
+			} catch {
+				guard !Task.isCancelled, let self else { return }
+				self.iDevicePreflightTask = nil
+				self._showIDevicePreflightAlert(
+					title: .localized("Device Connection Unavailable"),
+					message: error.localizedDescription
+				)
+				return
+			}
 
 			guard !Task.isCancelled, let self else { return }
 			self.iDevicePreflightTask = nil
-
-			guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
-				self._showIDevicePreflightAlert(
-					title: .localized("Pairing File Missing"),
-					message: .localized("Import one in Installation settings.")
-				)
-				return
-			}
-
-			guard connection.isConnected else {
-				self._showIDevicePreflightAlert(
-					title: .localized("LocalDevVPN Not Connected"),
-					message: .localized("Turn it on and try again.")
-				)
-				return
-			}
-
 			self._beginInstall(app)
 		}
 	}

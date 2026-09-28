@@ -11,7 +11,8 @@ struct TunnelHeaderView: View {
 	@State var lastHeartbeatTime = Date()
 	
 	var body: some View {
-		HStack {
+		HStack(spacing: 12) {
+			SettingsIconBadge(systemImage: "waveform.path.ecg", backgroundColor: .green)
 			Text(.localized("Status"))
 			Spacer()
 			TunnelPulseRing(lastHeartbeat: $lastHeartbeatTime)

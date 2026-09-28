@@ -31,13 +31,42 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		self.isLoading = isLoading
 		self.errorMessage = errorMessage
 		super.init()
+		#if DEBUG
+		NotificationCenter.default.addObserver(forName: Notification.Name("Feather.mockApps"), object: nil, queue: .main) { [weak self] _ in
+			guard let self else { return }
+			self.apps = (1...20).map { i in
+				InstalledApp(
+					bundleIdentifier: "com.example.app\(i)",
+					name: "App \(i)",
+					version: "1.\(i)",
+					build: "\(100 + i)"
+				)
+			}
+			self.errorMessage = nil
+		}
+		NotificationCenter.default.addObserver(forName: Notification.Name("Feather.clearApps"), object: nil, queue: .main) { [weak self] _ in
+			guard let self else { return }
+			self.clear()
+		}
+		#endif
 	}
 
 	func load() async {
 		await refresh()
 	}
 
+	func clear() {
+		self.apps = []
+		self.errorMessage = nil
+		self.isLoading = false
+	}
+
 	func refresh() async {
+		guard DeviceConnectionManager.shared.isConnected else {
+			self.apps = []
+			self.errorMessage = nil
+			return
+		}
 		guard !isLoading else { return }
 		isLoading = true
 		errorMessage = nil

@@ -59,17 +59,21 @@ struct ServerView: View {
 	var body: some View {
 		Group {
 			Section {
-				Picker(.localized("Server Type"), systemImage: "server.rack", selection: $_serverMethod) {
+				Picker(selection: $_serverMethod) {
 					ForEach(_serverMethods.indices, id: \.description) { index in
 						Text(_serverMethods[index]).tag(index)
 					}
+				} label: {
+					SettingsRowLabel(.localized("Server Type"), systemImage: "server.rack", backgroundColor: .blue)
 				}
-				Toggle(.localized("Only use localhost address"), systemImage: "lifepreserver", isOn: $_ipFix)
-					.disabled(_serverMethod != 1)
+				Toggle(isOn: $_ipFix) {
+					SettingsRowLabel(.localized("Only use localhost address"), systemImage: "lifepreserver.fill", backgroundColor: .orange)
+				}
+				.disabled(_serverMethod != 1)
 			}
 			
 			Section {
-				Button(.localized("Update SSL Certificates"), systemImage: "arrow.down.doc") {
+				Button {
 					FR.downloadSSLCertificates(from: _serverPackUrl) { success in
 						if success {
 							DispatchQueue.main.async {
@@ -86,6 +90,12 @@ struct ServerView: View {
 								)
 							}
 						}
+					}
+				} label: {
+					HStack(spacing: 12) {
+						SettingsIconBadge(systemImage: "arrow.down.doc.fill", backgroundColor: .green)
+						Text(.localized("Update SSL Certificates"))
+							.foregroundColor(.primary)
 					}
 				}
 			}

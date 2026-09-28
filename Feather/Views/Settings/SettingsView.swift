@@ -11,9 +11,10 @@ import UIKit
 
 // MARK: - View
 struct SettingsView: View {
+	@Environment(\.dismiss) private var dismiss
 	@AppStorage("feather.selectedCert") private var _storedSelectedCert: Int = 0
 	@State private var _currentIcon: String? = UIApplication.shared.alternateIconName
-	@State private var _isInstallationSettingsPresented = false
+	@State private var _activeSettingsPage: AppTabManager.SettingsPage? = nil
 	@ObservedObject private var _tabManager = AppTabManager.shared
 	
 	// MARK: Fetch
@@ -38,10 +39,10 @@ struct SettingsView: View {
 			Form {
 				Section {
 					NavigationLink(destination: AppearanceView()) {
-						Label(.localized("Appearance"), systemImage: "paintbrush")
+						SettingsRowLabel(.localized("Appearance"), systemImage: "paintbrush.fill", backgroundColor: .blue)
 					}
 					NavigationLink(destination: AppIconView(currentIcon: $_currentIcon)) {
-						Label(.localized("App Icon"), systemImage: "app.badge")
+						SettingsRowLabel(.localized("App Icon"), systemImage: "app.badge.fill", backgroundColor: .indigo)
 					}
 				}
                 
@@ -55,7 +56,7 @@ struct SettingsView: View {
 							.foregroundColor(.disabled())
 					}
 					NavigationLink(destination: CertificatesView()) {
-						Label(.localized("Certificates"), systemImage: "checkmark.seal")
+						SettingsRowLabel(.localized("Certificates"), systemImage: "checkmark.seal.fill", backgroundColor: .green)
 					}
                  
 				} footer: {
@@ -64,13 +65,13 @@ struct SettingsView: View {
                 
 				NBSection(.localized("Features")) {
 					NavigationLink(destination: ConfigurationView()) {
-						Label(.localized("Signing Options"), systemImage: "signature")
+						SettingsRowLabel(.localized("Signing Options"), systemImage: "signature", backgroundColor: .orange)
 					}
 					NavigationLink(destination: ArchiveView()) {
-						Label(.localized("Archive & Compression"), systemImage: "archivebox")
+						SettingsRowLabel(.localized("Archive & Compression"), systemImage: "archivebox.fill", backgroundColor: .cyan)
 					}
 					NavigationLink(destination: InstallationView()) {
-						Label(.localized("Installation"), systemImage: "arrow.down.circle")
+						SettingsRowLabel(.localized("Installation"), systemImage: "arrow.down.circle.fill", backgroundColor: .blue)
 					}
 				} footer: {
 					Text(.localized("Configure the apps way of installing, its zip compression levels, and custom modifications to apps."))
@@ -80,28 +81,50 @@ struct SettingsView: View {
                 
 				Section {
 					NavigationLink(destination: ResetView()) {
-						Label(.localized("Reset"), systemImage: "trash")
+						SettingsRowLabel(.localized("Reset"), systemImage: "trash.fill", backgroundColor: .red)
 					}
 				} footer: {
 					Text(.localized("Reset the applications sources, certificates, apps, and general contents."))
 				}
 			}
-			.navigationDestination(isPresented: $_isInstallationSettingsPresented) {
-				InstallationView()
+			.navigationDestination(isPresented: Binding(
+				get: { _activeSettingsPage != nil },
+				set: { if !$0 { _activeSettingsPage = nil } }
+			)) {
+				if let page = _activeSettingsPage {
+					switch page {
+					case .appearance: AppearanceView()
+					case .appIcon: AppIconView(currentIcon: $_currentIcon)
+					case .certificates: CertificatesView()
+					case .signing: ConfigurationView()
+					case .archive: ArchiveView()
+					case .installation: InstallationView()
+					case .reset: ResetView()
+					}
+				}
+			}
+			.toolbar {
+				ToolbarItem(placement: .topBarTrailing) {
+					Button(.localized("Done")) {
+						dismiss()
+					}
+				}
 			}
 			.onAppear {
-				_presentInstallationSettingsIfNeeded()
+				_presentRequestedPageIfNeeded()
 			}
-			.onChange(of: _tabManager.isInstallationSettingsRequested) { _ in
-				_presentInstallationSettingsIfNeeded()
+			.onChange(of: _tabManager.requestedSettingsPage) { _ in
+				_presentRequestedPageIfNeeded()
 			}
 		}
 	}
 
-	private func _presentInstallationSettingsIfNeeded() {
-		guard _tabManager.isInstallationSettingsRequested else { return }
-		_isInstallationSettingsPresented = true
-		_tabManager.consumeInstallationSettingsRequest()
+	private func _presentRequestedPageIfNeeded() {
+		guard let page = _tabManager.requestedSettingsPage else { return }
+		DispatchQueue.main.async {
+			_activeSettingsPage = page
+			_tabManager.requestedSettingsPage = nil
+		}
 	}
 }
 
@@ -110,14 +133,44 @@ extension SettingsView {
 	@ViewBuilder
 	private func _directories() -> some View {
 		NBSection(.localized("Misc")) {
-			Button(.localized("Open Documents"), systemImage: "folder") {
+			Button {
 				UIApplication.open(URL.documentsDirectory.toSharedDocumentsURL()!)
+			} label: {
+				HStack(spacing: 12) {
+					SettingsIconBadge(systemImage: "folder.fill", backgroundColor: .blue)
+					Text(.localized("Open Documents"))
+						.foregroundColor(.primary)
+					Spacer()
+					Image(systemName: "arrow.up.forward.app")
+						.font(.footnote)
+						.foregroundColor(Color(UIColor.tertiaryLabel))
+				}
 			}
-			Button(.localized("Open Archives"), systemImage: "folder") {
+			Button {
 				UIApplication.open(FileManager.default.archives.toSharedDocumentsURL()!)
+			} label: {
+				HStack(spacing: 12) {
+					SettingsIconBadge(systemImage: "archivebox.fill", backgroundColor: .purple)
+					Text(.localized("Open Archives"))
+						.foregroundColor(.primary)
+					Spacer()
+					Image(systemName: "arrow.up.forward.app")
+						.font(.footnote)
+						.foregroundColor(Color(UIColor.tertiaryLabel))
+				}
 			}
-			Button(.localized("Open Certificates"), systemImage: "folder") {
+			Button {
 				UIApplication.open(FileManager.default.certificates.toSharedDocumentsURL()!)
+			} label: {
+				HStack(spacing: 12) {
+					SettingsIconBadge(systemImage: "checkmark.seal.fill", backgroundColor: .teal)
+					Text(.localized("Open Certificates"))
+						.foregroundColor(.primary)
+					Spacer()
+					Image(systemName: "arrow.up.forward.app")
+						.font(.footnote)
+						.foregroundColor(Color(UIColor.tertiaryLabel))
+				}
 			}
 		} footer: {
 			Text(.localized("All of the apps files are contained in the documents directory, here are some quick links to these."))

@@ -30,7 +30,7 @@ enum TabEnum: String, CaseIterable, Hashable {
 		case .sources: 		return "globe.desk"
 		case .library: 		return "square.grid.2x2"
 		case .installed:	return "iphone"
-		case .settings: 	return "gearshape.2"
+		case .settings: 	return "gear"
 		case .certificates: return "person.text.rectangle"
 		}
 	}
@@ -51,8 +51,7 @@ enum TabEnum: String, CaseIterable, Hashable {
 		return [
 			.sources,
 			.library,
-			.installed,
-			.settings
+			.installed
 		]
 	}
 

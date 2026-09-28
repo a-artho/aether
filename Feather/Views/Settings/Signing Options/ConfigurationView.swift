@@ -23,14 +23,14 @@ struct ConfigurationView: View {
 					dataDict: $_optionsManager.options.displayNames
 				)
 				) {
-					Label(.localized("Display Names"), systemImage: "character.cursor.ibeam")
+					SettingsRowLabel(.localized("Display Names"), systemImage: "character.cursor.ibeam", backgroundColor: .blue)
 				}
 				NavigationLink(destination: ConfigurationDictView(
 					title: .localized("Identifiers"),
 					dataDict: $_optionsManager.options.identifiers
 				)
 				) {
-					Label(.localized("Identifiers"), systemImage: "person.text.rectangle")
+					SettingsRowLabel(.localized("Identifiers"), systemImage: "person.text.rectangle.fill", backgroundColor: .purple)
 				}
 			}footer: {
 				Text(.localized("This allows you to set rules for automatically replacing the Bundle ID/Display Name when signing an app."))
