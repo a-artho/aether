@@ -14,12 +14,12 @@ final class ZsignHandler {
 	
 	private var _appUrl: URL
 	private var _options: Options
-	private var _certificate: CertificatePair?
+	private var _certificate: SigningCertificateSnapshot?
 	
 	init(
 		appUrl: URL,
 		options: Options = OptionsManager.shared.options,
-		cert: CertificatePair? = nil
+		cert: SigningCertificateSnapshot? = nil
 	) {
 		self._appUrl = appUrl
 		self._options = options
@@ -46,9 +46,9 @@ final class ZsignHandler {
 
 		let _ = Zsign.sign(
 			appPath: _appUrl.relativePath,
-			provisionPath: Storage.shared.getFile(.provision, from: cert)?.path ?? "",
-			p12Path: Storage.shared.getFile(.certificate, from: cert)?.path ?? "",
-			p12Password: cert.password ?? "",
+			provisionPath: cert.provisionURL.path,
+			p12Path: cert.certificateURL.path,
+			p12Password: cert.password,
 			entitlementsPath: _options.appEntitlementsFile?.path ?? "",
 			removeProvision: !_options.removeProvisioning,
 			completion: { success in

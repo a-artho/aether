@@ -6,8 +6,8 @@
 import CryptoKit
 import Foundation
 
-struct StoredDownload: Codable {
-	enum Status: String, Codable {
+struct StoredDownload: Codable, Sendable {
+	enum Status: String, Codable, Sendable {
 		case downloading
 		case pausing
 		case paused
@@ -160,11 +160,7 @@ final class DownloadStore {
 		}
 	}
 
-	func save(_ downloads: [Download]) throws {
-		let records = downloads
-			.filter { !$0.onlyArchiving }
-			.map(StoredDownload.init)
-
+	func save(records: [StoredDownload]) throws {
 		guard !records.isEmpty else {
 			try? fileManager.removeItem(at: rootURL)
 			return

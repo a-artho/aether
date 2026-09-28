@@ -53,17 +53,24 @@ final class CertificateFileHandler: NSObject {
 	}
 	
 	func addToDatabase() async throws {
-		
-		Storage.shared.addCertificate(
-			uuid: _uuid,
-			password: _keyPassword,
-			nickname: _certNickname,
-			ppq: _certPair?.PPQCheck ?? false,
-			expiration: _certPair?.ExpirationDate ?? Date(),
-			isDefault: _isDefault
-		) { _ in
-			Logger.misc.info("[\(self._uuid)] Added to database")
+		let uuid = _uuid
+		let password = _keyPassword
+		let nickname = _certNickname
+		let ppq = _certPair?.PPQCheck ?? false
+		let expiration = _certPair?.ExpirationDate ?? Date()
+		let isDefault = _isDefault
+
+		try await MainActor.run {
+			try Storage.shared.addCertificate(
+				uuid: uuid,
+				password: password,
+				nickname: nickname,
+				ppq: ppq,
+				expiration: expiration,
+				isDefault: isDefault
+			)
 		}
+		Logger.misc.info("[\(uuid)] Added to database")
 	}
 	
 	private func _directory() async throws -> URL {

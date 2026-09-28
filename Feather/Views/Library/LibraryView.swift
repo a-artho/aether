@@ -255,11 +255,6 @@ struct LibraryView: View {
 					}
 				}
 			}
-			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.installApp"))) { _ in
-				if let latest = _signedApps.first {
-					AppInstallationManager.shared.startInstall(app: latest)
-				}
-			}
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openSearch"))) { _ in
 				withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
 					_isSearchPresented = true

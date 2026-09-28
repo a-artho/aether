@@ -70,7 +70,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		context.coordinator.sortAscending = sortAscending
 		
 		if sourcesChanged || searchChanged || sortOptionChanged || sortDirectionChanged {
-			context.coordinator.invalidateCache()
+			context.coordinator.invalidateCache(debouncingSearch: searchChanged && !sourcesChanged && !sortOptionChanged && !sortDirectionChanged)
 		}
 	}
 	
@@ -97,7 +97,8 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	private var _groupedAppsByDate: [String: [SourceAppEntry]] = [:]
 	private var _sortedSectionTitles: [String] = []
 	
-	private var _cachedSortedApps: [SourceAppEntry] = []
+	private var _cachedSortedApps: [SourceAppEntry]?
+	private var _searchReloadWorkItem: DispatchWorkItem?
 	weak var uiTableView: UITableView?
 	
 	private var _allAppsWithSource: [SourceAppEntry] {
@@ -113,11 +114,11 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	}
 	
 	private var _sortedApps: [SourceAppEntry] {
-		if !_cachedSortedApps.isEmpty {
+		if let _cachedSortedApps {
 			return _cachedSortedApps
 		}
 		_cachedSortedApps = _calculateSortedApps()
-		return _cachedSortedApps
+		return _cachedSortedApps ?? []
 	}
 	
 	init(
@@ -205,13 +206,24 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		}
 	}
 	
-	func invalidateCache() {
-		_cachedSortedApps = _calculateSortedApps()
-		if let tableView = uiTableView {
-			UIView.transition(with: tableView, duration: 0.3, options: [.transitionCrossDissolve], animations: {
-				tableView.reloadData()
-			})
+	func invalidateCache(debouncingSearch: Bool = false) {
+		_cachedSortedApps = nil
+		_searchReloadWorkItem?.cancel()
+
+		let reload = { [weak self] in
+			guard let self else { return }
+			self._cachedSortedApps = self._calculateSortedApps()
+			self.uiTableView?.reloadData()
 		}
+
+		guard debouncingSearch else {
+			reload()
+			return
+		}
+
+		let workItem = DispatchWorkItem(block: reload)
+		_searchReloadWorkItem = workItem
+		DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
 	}
 	
 	// MARK: TableView

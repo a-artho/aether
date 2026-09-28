@@ -142,29 +142,39 @@ struct SourceAppsView: View {
 	
 	private func _load() {
 		isLoading = true
-		
-		Task {
-			let loadedSources = object.compactMap { source -> SourceRepositoryContext? in
-				guard let repository = viewModel.sources[source] else { return nil }
-				return SourceRepositoryContext(sourceURL: source.sourceURL, repository: repository)
-			}
-			_sourceContexts = loadedSources
-			withAnimation(.easeIn(duration: 0.2)) {
-				isLoading = false
-			}
+
+		let loadedSources = object.compactMap { source -> SourceRepositoryContext? in
+			guard let repository = viewModel.repository(for: source) else { return nil }
+			return SourceRepositoryContext(sourceURL: source.sourceURL, repository: repository)
+		}
+		_sourceContexts = loadedSources
+		withAnimation(.easeIn(duration: 0.2)) {
+			isLoading = false
 		}
 	}
 	
 	struct SourceRepositoryContext: Equatable {
 		let sourceURL: URL?
 		let repository: ASRepository
+		private let appFingerprint: String
+
+		init(sourceURL: URL?, repository: ASRepository) {
+			self.sourceURL = sourceURL
+			self.repository = repository
+			var fingerprint = ""
+			for app in repository.apps {
+				let identifier = app.currentUniqueId
+				let version = app.currentVersion ?? ""
+				fingerprint += "\(identifier.utf8.count):\(identifier)\u{1e}\(version.utf8.count):\(version)\u{1f}"
+			}
+			self.appFingerprint = fingerprint
+		}
 		
 		static func == (lhs: SourceRepositoryContext, rhs: SourceRepositoryContext) -> Bool {
 			lhs.sourceURL == rhs.sourceURL &&
 			lhs.repository.id == rhs.repository.id &&
 			lhs.repository.name == rhs.repository.name &&
-			lhs.repository.apps.map { "\($0.currentUniqueId)|\($0.currentVersion ?? "")" } ==
-			rhs.repository.apps.map { "\($0.currentUniqueId)|\($0.currentVersion ?? "")" }
+			lhs.appFingerprint == rhs.appFingerprint
 		}
 	}
 	

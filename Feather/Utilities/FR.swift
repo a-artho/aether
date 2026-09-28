@@ -108,29 +108,33 @@ enum FR {
 		}
 	}
 	
+	@MainActor
 	static func signPackageFile(
 		_ app: AppInfoPresentable,
 		using options: Options,
 		icon: UIImage?,
 		certificate: CertificatePair?,
-		completion: @escaping (Error?) -> Void
+		completion: @escaping (Result<String, Error>) -> Void
 	) {
+		let appSnapshot = AppSnapshot(app)
+		let certificateSnapshot = SigningCertificateSnapshot(certificate)
+		let iconData = icon?.pngData()
 		Task.detached {
-			let handler = SigningHandler(app: app, options: options)
-			handler.appCertificate = certificate
-			handler.appIcon = icon
+			let handler = SigningHandler(app: appSnapshot, options: options)
+			handler.appCertificate = certificateSnapshot
+			handler.appIconData = iconData
 			
 			do {
 				try await handler.copy()
 				try await handler.modify()
 				try? await handler.clean()
 				await MainActor.run {
-					completion(nil)
+					completion(.success(handler.signedUUID))
 				}
 			} catch {
 				try? await handler.clean()
 				await MainActor.run {
-					completion(error)
+					completion(.failure(error))
 				}
 			}
 		}
@@ -246,13 +250,13 @@ enum FR {
 			switch result {
 			case .success(let data):
 				let id = data.id ?? url.absoluteString
-				
-				if !Storage.shared.sourceExists(id) {
-					Storage.shared.addSource(url, repository: data, id: id) { _ in
-						competion()
-					}
-				} else {
-					DispatchQueue.main.async {
+
+				DispatchQueue.main.async {
+					if !Storage.shared.sourceExists(id) {
+						Storage.shared.addSource(url, repository: data, id: id) { _ in
+							competion()
+						}
+					} else {
 						UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Repository already added."))
 					}
 				}

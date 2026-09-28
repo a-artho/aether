@@ -16,11 +16,13 @@ final class AppExport: ObservableObject, Identifiable {
 
 	let id = UUID()
 	let app: AppInfoPresentable
+	let snapshot: AppSnapshot
 	@Published var progress: Double = 0
 	@Published var state: State = .exporting
 
 	init(app: AppInfoPresentable) {
 		self.app = app
+		self.snapshot = AppSnapshot(app)
 	}
 }
 
@@ -76,7 +78,7 @@ final class ExportManager: ObservableObject {
 		let useShareSheet = UserDefaults.standard.bool(forKey: "Feather.useShareSheetForArchiving")
 		tasks[export.id] = Task { @MainActor [weak self, weak export] in
 			guard let self, let export else { return }
-			let handler = ArchiveHandler(app: export.app, viewModel: viewModel)
+			let handler = ArchiveHandler(app: export.snapshot, viewModel: viewModel, purpose: .export)
 			self.handlers[export.id] = handler
 
 			do {

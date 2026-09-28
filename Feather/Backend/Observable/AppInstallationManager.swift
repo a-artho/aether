@@ -23,6 +23,8 @@ final class AppInstallationManager: ObservableObject {
 	
 	private var progressTask: Task<Void, Never>?
 	private var iDevicePreflightTask: Task<Void, Never>?
+	private var installTask: Task<Void, Never>?
+	private var installGeneration = UUID()
 	private var cancellables = Set<AnyCancellable>()
 	private var _hasLaunchedSemiLocalInstall = false
 	
@@ -76,6 +78,9 @@ final class AppInstallationManager: ObservableObject {
 	}
 
 	private func _beginInstall(_ app: AppInfoPresentable) {
+		let appSnapshot = AppSnapshot(app)
+		let generation = UUID()
+		installGeneration = generation
 		AppTabManager.shared.switchTo(.installed)
 		
 		self.activeApp = app
@@ -98,22 +103,37 @@ final class AppInstallationManager: ObservableObject {
 		}
 		#endif
 		
-		Task.detached { [weak self] in
+		installTask = Task.detached { [weak self, appSnapshot] in
 			var currentHandler: ArchiveHandler?
 			do {
-				let handler = await ArchiveHandler(app: app, viewModel: statusVM)
+				try Task.checkCancellation()
+				let handler = ArchiveHandler(app: appSnapshot, viewModel: statusVM, purpose: .install)
 				currentHandler = handler
+				guard await MainActor.run(body: {
+					self?.installGeneration == generation && !Task.isCancelled
+				}) else {
+					handler.clean()
+					return
+				}
 				await MainActor.run {
 					self?.archiveHandler = handler
 				}
 				try await handler.move()
+				try Task.checkCancellation()
 				
 				let packageUrl = try await handler.archive()
+				try Task.checkCancellation()
 				
-				let method = await self?._installationMethod ?? 0
+				let method = await MainActor.run { self?._installationMethod ?? 0 }
 				if method == 0 {
 					let serverInstaller = try await MainActor.run {
-						try ServerInstaller(app: app, viewModel: statusVM)
+						try ServerInstaller(app: appSnapshot, viewModel: statusVM)
+					}
+					guard await MainActor.run(body: {
+						self?.installGeneration == generation && !Task.isCancelled
+					}) else {
+						handler.clean()
+						return
 					}
 					await MainActor.run {
 						self?.installer = serverInstaller
@@ -125,14 +145,19 @@ final class AppInstallationManager: ObservableObject {
 					let proxy = await InstallationProxy(viewModel: statusVM)
 					try await proxy.install(
 						at: packageUrl,
-						suspend: app.identifier == Bundle.main.bundleIdentifier
+						suspend: appSnapshot.identifier == Bundle.main.bundleIdentifier
 					)
 				}
+			} catch is CancellationError {
+				currentHandler?.clean()
 			} catch {
 				currentHandler?.clean()
-				await self?.progressTask?.cancel()
+				guard await MainActor.run(body: {
+					self?.installGeneration == generation && !Task.isCancelled
+				}) else { return }
 				
 				await MainActor.run {
+					self?.progressTask?.cancel()
 					self?.archiveHandler = nil
 					self?.installer = nil
 					#if !targetEnvironment(macCatalyst)
@@ -268,6 +293,9 @@ final class AppInstallationManager: ObservableObject {
 	}
 	
 	func cancel() {
+		installGeneration = UUID()
+		installTask?.cancel()
+		installTask = nil
 		iDevicePreflightTask?.cancel()
 		iDevicePreflightTask = nil
 		progressTask?.cancel()

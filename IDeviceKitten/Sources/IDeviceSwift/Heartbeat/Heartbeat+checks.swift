@@ -13,12 +13,15 @@ extension HeartbeatManager {
 	/// Verifies that Feather can reach the paired device's Installation Proxy service.
 	/// Unlike a raw TCP probe, this validates the active transport and pairing flow.
 	public func checkDeviceConnection(
-		timeoutInSeconds: Double = 2.0
+		timeoutInSeconds: Double = 2.0,
+		endpointAlreadyValidated: Bool = false
 	) -> (isConnected: Bool, error: String?, errorCode: Int32?) {
 		if isRsd {
-			let probe = checkRSDEndpoint(timeoutInSeconds: min(timeoutInSeconds, 0.75))
-			guard probe.isConnected else {
-				return (false, probe.error, nil)
+			if !endpointAlreadyValidated {
+				let probe = checkRSDEndpoint(timeoutInSeconds: min(timeoutInSeconds, 0.75))
+				guard probe.isConnected else {
+					return (false, probe.error, nil)
+				}
 			}
 			return _checkRSDDeviceConnection()
 		}

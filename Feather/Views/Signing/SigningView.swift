@@ -145,6 +145,7 @@ struct SigningView: View {
 			}
 		}
 	}
+
 }
 
 // MARK: - Extension: View
@@ -256,9 +257,10 @@ extension SigningView {
 		} label: {
 			LabeledContent(title) {
 				Text(desc ?? .localized("Unknown"))
-			}
 		}
 	}
+}
+
 }
 
 // MARK: - Extension: View (import)
@@ -284,8 +286,9 @@ extension SigningView {
 			using: _temporaryOptions,
 			icon: appIcon,
 			certificate: _selectedCert()
-		) { error in
-			if let error {
+		) { result in
+			switch result {
+			case .failure(let error):
 				let ok = UIAlertAction(title: .localized("Dismiss"), style: .cancel) { _ in
 					dismiss()
 				}
@@ -295,7 +298,7 @@ extension SigningView {
 					message: error.localizedDescription,
 					actions: [ok]
 				)
-			} else {
+			case .success(let signedUUID):
 				if
 					_temporaryOptions.post_deleteAppAfterSigned,
 					!app.isSigned
@@ -303,10 +306,10 @@ extension SigningView {
 					Storage.shared.deleteApp(for: app)
 				}
 				
-				if _temporaryOptions.post_installAppAfterSigned {
-					DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-						NotificationCenter.default.post(name: Notification.Name("Feather.installApp"), object: nil)
-					}
+				if _temporaryOptions.post_installAppAfterSigned,
+					let signedApp = Storage.shared.signedApp(uuid: signedUUID)
+				{
+					AppInstallationManager.shared.startInstall(app: signedApp)
 				}
 				dismiss()
 			}

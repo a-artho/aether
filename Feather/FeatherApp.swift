@@ -208,7 +208,7 @@ struct FeatherApp: App {
 					at: externalURL
 				)
 				await MainActor.run {
-					_ = FR.handlePackageFile(materializedFile.fileURL) { error in
+					_ = FR.handlePackageFile(materializedFile.fileURL, copySource: false) { error in
 						materializedFile.cleanup()
 						if let error {
 							UIAlertController.showAlertWithOk(

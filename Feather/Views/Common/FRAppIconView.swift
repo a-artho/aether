@@ -12,6 +12,35 @@ enum FRIconAppearance: Int {
 	case dark = 1
 }
 
+private actor FRIconRenderGate {
+	static let shared = FRIconRenderGate(maximumConcurrentRenders: 2)
+
+	private var availablePermits: Int
+	private var waiters: [CheckedContinuation<Void, Never>] = []
+
+	init(maximumConcurrentRenders: Int) {
+		availablePermits = maximumConcurrentRenders
+	}
+
+	func acquire() async {
+		if availablePermits > 0 {
+			availablePermits -= 1
+			return
+		}
+
+		await withCheckedContinuation { waiters.append($0) }
+	}
+
+	func release() {
+		if let waiter = waiters.first {
+			waiters.removeFirst()
+			waiter.resume()
+		} else {
+			availablePermits += 1
+		}
+	}
+}
+
 final class FRIconCache: NSObject {
 	static let shared = FRIconCache()
 	private let cache = NSCache<NSString, UIImage>()
@@ -66,16 +95,21 @@ final class FRAppIconLoader: ObservableObject {
 		}
 
 		task?.cancel()
-		task = Task {
-			let generated = await Task.detached(priority: .userInitiated) {
-				return iconTest(bundleURL)
-			}.value
+		task = Task.detached(priority: .userInitiated) { [weak self] in
+			await FRIconRenderGate.shared.acquire()
+			guard !Task.isCancelled else {
+				await FRIconRenderGate.shared.release()
+				return
+			}
 
-			guard !Task.isCancelled else { return }
+			let generated = iconTest(bundleURL)
+			await FRIconRenderGate.shared.release()
+			guard !Task.isCancelled, let generated else { return }
 
-			if let generated {
+			await MainActor.run {
+				guard !Task.isCancelled else { return }
 				FRIconCache.shared.insert(generated, for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic)
-				self.image = generated
+				self?.image = generated
 			}
 		}
 	}

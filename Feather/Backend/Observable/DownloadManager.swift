@@ -8,7 +8,7 @@ import Foundation
 import UIKit
 
 class Download: ObservableObject, Identifiable, @unchecked Sendable {
-	enum FailureAction: String, Codable, Equatable {
+	enum FailureAction: String, Codable, Equatable, Sendable {
 		case resume
 		case restart
 		case retryProcessing
@@ -50,6 +50,7 @@ class Download: ObservableObject, Identifiable, @unchecked Sendable {
 	let url: URL
 	let fileName: String
 	let onlyArchiving: Bool
+	let sourceIsStable: Bool
 	var sourceProvenance: SourceAppProvenance?
 
 	init(
@@ -57,6 +58,7 @@ class Download: ObservableObject, Identifiable, @unchecked Sendable {
 		logicalIdentifier: String,
 		url: URL,
 		onlyArchiving: Bool = false,
+		sourceIsStable: Bool = false,
 		sourceProvenance: SourceAppProvenance? = nil,
 		state: State? = nil,
 		fileName: String? = nil,
@@ -68,6 +70,7 @@ class Download: ObservableObject, Identifiable, @unchecked Sendable {
 		self.importIdentifier = importIdentifier ?? UUID().uuidString
 		self.url = url
 		self.onlyArchiving = onlyArchiving
+		self.sourceIsStable = sourceIsStable
 		self.sourceProvenance = sourceProvenance
 		self.fileName = fileName ?? (url.lastPathComponent.isEmpty ? "Download.ipa" : url.lastPathComponent)
 		self.stagedFileName = stagedFileName
@@ -103,7 +106,7 @@ class DownloadManager: NSObject, ObservableObject {
 	private var _finishedEventsBeforeHandler = false
 	private var _processingBackgroundTasks: [String: UIBackgroundTaskIdentifier] = [:]
 	private var _processingTasks: [String: Task<Void, Never>] = [:]
-	private var _deletedTransferIdentifiers: Set<String> = []
+	private let _persistenceWriter = DownloadPersistenceWriter()
 
 	override init() {
 		super.init()
@@ -170,12 +173,14 @@ class DownloadManager: NSObject, ObservableObject {
 
 	func startArchive(
 		from url: URL,
-		id logicalIdentifier: String = UUID().uuidString
+		id logicalIdentifier: String = UUID().uuidString,
+		sourceIsStable: Bool = true
 	) -> Download {
 		let download = Download(
 			logicalIdentifier: logicalIdentifier,
 			url: url,
-			onlyArchiving: true
+			onlyArchiving: true,
+			sourceIsStable: sourceIsStable
 		)
 		downloads.append(download)
 		_startContinuedTask(for: download)
@@ -246,7 +251,7 @@ class DownloadManager: NSObject, ObservableObject {
 		guard _isCurrent(download) else { return }
 
 		if download.onlyArchiving {
-			_startProcessing(download, sourceURL: download.url, sourceIsStable: false)
+			_startProcessing(download, sourceURL: download.url, sourceIsStable: download.sourceIsStable)
 			return
 		}
 
@@ -266,7 +271,6 @@ class DownloadManager: NSObject, ObservableObject {
 
 	func deleteDownload(_ download: Download) {
 		guard _isCurrent(download) else { return }
-		_deletedTransferIdentifiers.insert(download.id)
 		_processingTasks.removeValue(forKey: download.id)?.cancel()
 		download.task?.cancel()
 		download.task = nil
@@ -660,17 +664,18 @@ class DownloadManager: NSObject, ObservableObject {
 		_persistDownloads()
 	}
 
-	private func _persistDownloads() {
-		do {
-			try _store.save(downloads)
-		} catch {
-			print("Failed to persist downloads:", error)
+	private func _persistDownloads(immediately: Bool = true) {
+		let records = downloads
+			.filter { !$0.onlyArchiving }
+			.map(StoredDownload.init)
+		let writer = _persistenceWriter
+		Task {
+			await writer.schedule(records: records, immediately: immediately)
 		}
-	}
+		}
 
 	private func _isCurrent(_ download: Download) -> Bool {
-		!_deletedTransferIdentifiers.contains(download.id)
-			&& downloads.contains(where: { $0 === download })
+		downloads.contains(where: { $0 === download })
 	}
 
 	private func _startContinuedTask(for download: Download) {
@@ -814,7 +819,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
 		if shouldPersist {
 			download.lastPersistedProgressUpdate = now
 			download.lastPersistedBytes = totalBytesWritten
-			_persistDownloads()
+			_persistDownloads(immediately: false)
 		}
 	}
 

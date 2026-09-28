@@ -17,7 +17,7 @@ final class SigningHandler: NSObject {
 	// using uuid string is the best way to find the
 	// app we want to sign, it does not matter what
 	// type of app it is
-	private var _app: AppInfoPresentable
+	private let _app: AppSnapshot
 	private var _options: Options
 	private let _uniqueWorkDir: URL
 	// the options struct is not gonna decode these so
@@ -26,19 +26,27 @@ final class SigningHandler: NSObject {
 	// icon. If the cert pair is not there, fallback
 	// to adhoc signing (if the option is on, otherwise
 	// throw an error
-	var appIcon: UIImage?
-	var appCertificate: CertificatePair?
+	var appIconData: Data?
+	var appCertificate: SigningCertificateSnapshot?
 	
-	init(app: AppInfoPresentable, options: Options = OptionsManager.shared.options) {
+	init(app: AppSnapshot, options: Options = OptionsManager.shared.options) {
 		self._app = app
 		self._options = options
 		self._uniqueWorkDir = _fileManager.temporaryDirectory
 			.appendingPathComponent("FeatherSigning_\(_uuid)", isDirectory: true)
 		super.init()
 	}
+
+	var signedUUID: String { _uuid }
 	
 	func copy() async throws {
-		guard let appUrl = Storage.shared.getAppDirectory(for: _app) else {
+		guard
+			let uuid = _app.uuid,
+			let appUrl = _fileManager.getPath(
+				in: _app.isSigned ? _fileManager.signed(uuid) : _fileManager.unsigned(uuid),
+				for: "app"
+			)
+		else {
 			throw SigningFileHandlerError.appNotFound
 		}
 
@@ -46,7 +54,7 @@ final class SigningHandler: NSObject {
 		
 		let movedAppURL = _uniqueWorkDir.appendingPathComponent(appUrl.lastPathComponent)
 		
-		try _fileManager.copyItem(at: appUrl, to: movedAppURL)
+		try _fileManager.copyItemPreferClone(at: appUrl, to: movedAppURL)
 		_movedAppPath = movedAppURL
 		Logger.misc.info("[\(self._uuid)] Moved Payload to: \(movedAppURL.path)")
 	}
@@ -55,12 +63,11 @@ final class SigningHandler: NSObject {
 		guard let movedAppPath = _movedAppPath else {
 			throw SigningFileHandlerError.appNotFound
 		}
+		let fileIndex = _makeFileIndex(at: movedAppPath)
 		
-		guard
-			let infoDictionary = NSDictionary(
-				contentsOf: movedAppPath.appendingPathComponent("Info.plist")
-			)!.mutableCopy() as? NSMutableDictionary
-		else {
+		guard let infoDictionary = NSDictionary(
+			contentsOf: movedAppPath.appendingPathComponent("Info.plist")
+		)?.mutableCopy() as? NSMutableDictionary else {
 			throw SigningFileHandlerError.infoPlistNotFound
 		}
 		
@@ -68,12 +75,16 @@ final class SigningHandler: NSObject {
 			let identifier = _options.appIdentifier,
 			let oldIdentifier = infoDictionary["CFBundleIdentifier"] as? String
 		{
-			try await _modifyPluginIdentifiers(old: oldIdentifier, new: identifier, for: movedAppPath)
+			try await _modifyPluginIdentifiers(
+				old: oldIdentifier,
+				new: identifier,
+				pluginBundles: fileIndex.pluginBundles
+			)
 		}
 		
 		try await _modifyDict(using: infoDictionary, with: _options, to: movedAppPath)
 		
-		if let icon = appIcon {
+		if let iconData = appIconData, let icon = UIImage(data: iconData) {
 			try await _modifyDict(using: infoDictionary, for: icon, to: movedAppPath)
 		}
 		
@@ -85,7 +96,10 @@ final class SigningHandler: NSObject {
 			try await _removeFiles(for: movedAppPath, from: _options.removeFiles)
 		}
 		
-		try await _removePresetFiles(for: movedAppPath)
+		try await _removePresetFiles(
+			for: movedAppPath,
+			codeSignatureDirectories: fileIndex.codeSignatureDirectories
+		)
 		try await _removeWatchIfNeeded(for: movedAppPath)
 		
 		if _options.experiment_supportLiquidGlass {
@@ -101,7 +115,9 @@ final class SigningHandler: NSObject {
 		}
 		
 		// iOS "26" (19) needs special treatment
-		try await _locateMachosAndFixupArm64eSlice(for: movedAppPath)
+		try await _locateMachosAndFixupArm64eSlice(
+			machoFiles: fileIndex.machoFiles
+		)
 		
 		if _options.mergeEntitlements && _options.appEntitlementsFile == nil {
 			try await _mergeEntitlements(for: movedAppPath, with: _options)
@@ -155,28 +171,34 @@ final class SigningHandler: NSObject {
 			return
 		}
 		
-		await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-			let bundle = Bundle(url: appUrl)
-			
-			Storage.shared.addSigned(
-				uuid: _uuid,
-				source: _app.source,
-				certificate: _options.signingOption != .default ? nil : appCertificate,
-				appName: bundle?.name,
-				appIdentifier: bundle?.bundleIdentifier,
-				appVersion: bundle?.version,
-				appIcon: bundle?.iconFileName
-			) { _ in
-				Logger.signing.info("[\(self._uuid)] Added to database")
-				continuation.resume()
-			}
-		}
-		
-		Storage.shared.copySourceMetadata(
-			from: _app.uuid,
-			to: _uuid,
-			kind: .signed
+		let bundle = Bundle(url: appUrl)
+		let metadata = (
+			name: bundle?.name,
+			identifier: bundle?.bundleIdentifier,
+			version: bundle?.version,
+			icon: bundle?.iconFileName
 		)
+		let sourceUUID = _app.uuid
+		let sourceURL = _app.source
+		let certificateUUID = _options.signingOption == .default ? appCertificate?.uuid : nil
+
+		try await MainActor.run {
+			try Storage.shared.addSigned(
+				uuid: _uuid,
+				source: sourceURL,
+				certificateUUID: certificateUUID,
+				appName: metadata.name,
+				appIdentifier: metadata.identifier,
+				appVersion: metadata.version,
+				appIcon: metadata.icon
+			)
+			Storage.shared.copySourceMetadata(
+				from: sourceUUID,
+				to: _uuid,
+				kind: .signed
+			)
+		}
+		Logger.signing.info("[\(self._uuid)] Added to database")
 	}
 	
 	private func _directory() async throws -> URL {
@@ -287,12 +309,8 @@ extension SigningHandler {
 	private func _modifyPluginIdentifiers(
 		old oldIdentifier: String,
 		new newIdentifier: String,
-		for app: URL
+		pluginBundles: [URL]
 	) async throws {
-		let pluginBundles = _enumerateFiles(at: app) {
-			$0.hasSuffix(".app") || $0.hasSuffix(".appex")
-		}
-		
 		for bundleURL in pluginBundles {
 			let infoPlistURL = bundleURL.appendingPathComponent("Info.plist")
 			
@@ -352,7 +370,10 @@ extension SigningHandler {
 		}
 	}
 	
-	private func _removePresetFiles(for app: URL) async throws {
+	private func _removePresetFiles(
+		for app: URL,
+		codeSignatureDirectories: [URL]
+	) async throws {
 		var files = [
 			"_CodeSignature", // Fallbaccck for some reason the locate doesnt work
 			"embedded.mobileprovision", // Remove this because zsign doesn't replace it
@@ -362,7 +383,7 @@ extension SigningHandler {
 			app.appendingPathComponent($0)
 		}
 		
-		await files += try _locateCodeSignatureDirectories(for: app)
+		files += codeSignatureDirectories
 		
 		for file in files {
 			try _fileManager.removeFileIfNeeded(at: file)
@@ -405,18 +426,10 @@ extension SigningHandler {
 		}
 	}
 	
-	private func _locateCodeSignatureDirectories(for app: URL) async throws -> [URL] {
-		_enumerateFiles(at: app) { $0.hasSuffix("_CodeSignature") }
-	}
-	
 	// this is mainly for CydiaSubstrate where it often contains legacy arm64e slices
 	// which cause the app to crash when loaded on ios 26+,
 	// avoids `(cpu type/subtype in slice (arm64e.old) does not match fat header (arm64e))`
-	private func _locateMachosAndFixupArm64eSlice(for app: URL) async throws {
-		let machoFiles = _enumerateFiles(at: app) {
-			$0.hasSuffix(".dylib") || $0.hasSuffix(".framework")
-		}
-		
+	private func _locateMachosAndFixupArm64eSlice(machoFiles: [URL]) async throws {
 		for fileURL in machoFiles {
 			switch fileURL.pathExtension {
 			case "dylib":
@@ -451,14 +464,15 @@ extension SigningHandler {
 			return
 		}
 		
-		guard 
-			let cert = self.appCertificate, 
-			let ourEntitlements = CertificateReader(Storage.shared.getFile(.provision, from: cert)).decoded
+		guard
+			let cert = self.appCertificate,
+			let ourEntitlements = CertificateReader(cert.provisionURL).decoded,
+			let ourTeamIdentifier = ourEntitlements.TeamIdentifier.first,
+			!ourTeamIdentifier.isEmpty
 		else {
 			return 
 		}
 		
-		let ourTeamIdentifier = ourEntitlements.TeamIdentifier[0]
 		let ourBundleIdentifer = options.appIdentifier ?? _app.identifier
 		
 		var baseDictionary: [String: Any] = (ourEntitlements.Entitlements ?? [:]).mapValues { $0.value }
@@ -543,20 +557,33 @@ extension SigningHandler {
 		_options.appEntitlementsFile = tempEntitlementsURL
 	}
 	
-	private func _enumerateFiles(at base: URL, where predicate: (String) -> Bool) -> [URL] {
+	private struct AppFileIndex {
+		var pluginBundles: [URL] = []
+		var codeSignatureDirectories: [URL] = []
+		var machoFiles: [URL] = []
+	}
+
+	private func _makeFileIndex(at base: URL) -> AppFileIndex {
 		guard let fileEnum = _fileManager.enumerator(atPath: base.path) else {
-			return []
+			return AppFileIndex()
 		}
 		
-		var results: [URL] = []
+		var index = AppFileIndex()
 		
 		while let file = fileEnum.nextObject() as? String {
-			if predicate(file) {
-				results.append(base.appendingPathComponent(file))
+			let url = base.appendingPathComponent(file)
+			if file.hasSuffix(".app") || file.hasSuffix(".appex") {
+				index.pluginBundles.append(url)
+			}
+			if file.hasSuffix("_CodeSignature") {
+				index.codeSignatureDirectories.append(url)
+			}
+			if file.hasSuffix(".dylib") || file.hasSuffix(".framework") {
+				index.machoFiles.append(url)
 			}
 		}
 		
-		return results
+		return index
 	}
 }
 

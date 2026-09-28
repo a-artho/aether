@@ -40,6 +40,9 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	}
 	
 	func prepare(copySource: Bool) async throws {
+		// Reserve enough room before duplicating a large archive. This avoids a
+		// needless full IPA copy only to fail during extraction.
+		try _checkAvailableDiskSpace()
 		try _fileManager.removeFileIfNeeded(at: _uniqueWorkDir)
 		try _fileManager.createDirectoryIfNeeded(at: _uniqueWorkDir)
 		guard copySource else { return }
@@ -48,7 +51,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 
 		try _fileManager.removeFileIfNeeded(at: destinationURL)
 		
-		try _fileManager.copyItem(at: _ipa, to: destinationURL)
+		try _fileManager.copyItemPreferClone(at: _ipa, to: destinationURL)
 		_ipa = destinationURL
 	}
 	
@@ -211,7 +214,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		let fileSize = Int64(
 			(try _ipa.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
 		)
-		let values = try _uniqueWorkDir.resourceValues(
+		let values = try URL.documentsDirectory.resourceValues(
 			forKeys: [.volumeAvailableCapacityForImportantUsageKey]
 		)
 		guard let available = values.volumeAvailableCapacityForImportantUsage else { return }

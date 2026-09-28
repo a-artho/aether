@@ -11,15 +11,15 @@ import Zsign
 
 // MARK: - Class extension: certificate
 extension Storage {
+	@MainActor
 	func addCertificate(
 		uuid: String,
 		password: String? = nil,
 		nickname: String? = nil,
 		ppq: Bool = false,
 		expiration: Date,
-		isDefault: Bool = false,
-		completion: @escaping (Error?) -> Void
-	) {
+		isDefault: Bool = false
+	) throws {
 		let generator = UIImpactFeedbackGenerator(style: .light)
 		
 		let new = CertificatePair(context: context)
@@ -31,9 +31,10 @@ extension Storage {
 		new.nickname = nickname
 		new.isDefault = isDefault
 		Storage.shared.revokagedCertificate(for: new)
-		saveContext()
+		if let error = saveContext() {
+			throw error
+		}
 		generator.impactOccurred()
-		completion(nil)
 	}
 	
 	func deleteCertificate(for cert: CertificatePair) {

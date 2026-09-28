@@ -14,6 +14,17 @@ import NIOTLS
 import SwiftUI
 import IDeviceSwift
 
+private enum ServerInstallerError: LocalizedError {
+	case unavailable
+
+	var errorDescription: String? {
+		switch self {
+		case .unavailable:
+			return .localized("Unable to start the local install server.")
+		}
+	}
+}
+
 // MARK: - Class
 class ServerInstaller: Identifiable, ObservableObject {
 	let id = UUID()
@@ -39,11 +50,15 @@ class ServerInstaller: Identifiable, ObservableObject {
 	}
 	
 	private func _setup() throws {
-		self._server = try? setupApp(port: port)
+		self._server = try setupApp(port: port)
 	}
 		
 	private func _configureRoutes() throws {
-		_server?.get("*") { [weak self] req in
+		guard let server = _server else {
+			throw ServerInstallerError.unavailable
+		}
+
+		server.get("*") { [weak self] req in
 			guard let self else { return Response(status: .badGateway) }
 			switch req.url.path {
 			case plistEndpoint.path:

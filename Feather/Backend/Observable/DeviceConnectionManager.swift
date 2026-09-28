@@ -88,6 +88,9 @@ public final class DeviceConnectionManager: ObservableObject {
 	private var transitionGeneration: UUID?
 	private var transitionExpectedState: Bool?
 	private var transitionDeadline: TimeInterval = 0
+	private var reconciliationTask: Task<Void, Never>?
+	private var reconciliationPending = false
+	private var pendingReconciliationForce = false
 
 	public init() {
 		hasPairingFile = HeartbeatManager.hasPairingFile()
@@ -153,23 +156,26 @@ public final class DeviceConnectionManager: ObservableObject {
 		state = enabled ? .connecting : .disconnecting
 		diagnostic = .checking
 
-		// Invalidate stale RSD handles on transition start
-		HeartbeatManager.shared.resetRSDTunnel()
+		Task { [weak self] in
+			guard let self else { return }
+			await self._resetRSDTunnel()
+			guard self.transitionGeneration == generation else { return }
 
-		if enabled {
-			// On older iOS, start legacy heartbeat thread
-			HeartbeatManager.shared.start(true)
-		}
+			if enabled {
+				// On older iOS, start legacy heartbeat thread.
+				HeartbeatManager.shared.start(true)
+			}
 
-		_startTransitionPolling(generation: generation, expectedState: enabled)
+			self._startTransitionPolling(generation: generation, expectedState: enabled)
 
-		UIApplication.shared.open(url, options: [:]) { [weak self] didOpen in
-			Task { @MainActor [weak self] in
-				guard let self else { return }
-				guard didOpen else {
-					self._cancelTransition()
-					await self.reconcile(force: true)
-					return
+			UIApplication.shared.open(url, options: [:]) { [weak self] didOpen in
+				Task { @MainActor [weak self] in
+					guard let self else { return }
+					guard didOpen else {
+						self._cancelTransition()
+						await self.reconcile(force: true)
+						return
+					}
 				}
 			}
 		}
@@ -195,20 +201,23 @@ public final class DeviceConnectionManager: ObservableObject {
 		}.value
 
 		guard probe.isConnected else {
-			HeartbeatManager.shared.resetRSDTunnel()
+			await _resetRSDTunnel()
 			_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 			throw DeviceConnectionError.tunnelUnavailable(probe.error ?? "Port unreachable")
 		}
 
 		let checkResult = await Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
+			HeartbeatManager.shared.checkDeviceConnection(
+				timeoutInSeconds: 1.5,
+				endpointAlreadyValidated: isRsd
+			)
 		}.value
 
 		if checkResult.isConnected {
 			_finishTransition(to: .connected, diagnostic: .ready)
 			return true
 		} else {
-			HeartbeatManager.shared.resetRSDTunnel()
+			await _resetRSDTunnel()
 			if checkResult.errorCode == -9 {
 				_finishTransition(to: .disconnected, diagnostic: .invalidPairing)
 				throw DeviceConnectionError.invalidPairing
@@ -223,6 +232,28 @@ public final class DeviceConnectionManager: ObservableObject {
 	// MARK: - Ground Truth Reconciliation
 
 	public func reconcile(force: Bool = false) async {
+		if reconciliationTask != nil {
+			reconciliationPending = true
+			pendingReconciliationForce = pendingReconciliationForce || force
+			return
+		}
+
+		let task = Task { [weak self] in
+			guard let self else { return }
+			await self._reconcile(force: force)
+		}
+		reconciliationTask = task
+		await task.value
+		reconciliationTask = nil
+
+		guard reconciliationPending else { return }
+		let nextForce = pendingReconciliationForce
+		reconciliationPending = false
+		pendingReconciliationForce = false
+		await reconcile(force: nextForce)
+	}
+
+	private func _reconcile(force: Bool) async {
 		let reconciliationGeneration = transitionGeneration
 		hasPairingFile = HeartbeatManager.hasPairingFile()
 		guard hasPairingFile else {
@@ -256,14 +287,17 @@ public final class DeviceConnectionManager: ObservableObject {
 				// During active connection attempt that hasn't timed out, wait for retries
 				return
 			}
-			HeartbeatManager.shared.resetRSDTunnel()
+			await _resetRSDTunnel()
 			_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 			return
 		}
 
 		// Step 2: Full Installation Proxy check (validates pairing + transport)
 		let checkResult = await Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
+			HeartbeatManager.shared.checkDeviceConnection(
+				timeoutInSeconds: 1.5,
+				endpointAlreadyValidated: isRsd
+			)
 		}.value
 
 		guard
@@ -284,7 +318,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			if expectedState == true && !force && !isExpired {
 				return
 			}
-			HeartbeatManager.shared.resetRSDTunnel()
+			await _resetRSDTunnel()
 			if checkResult.errorCode == -9 {
 				_finishTransition(to: .disconnected, diagnostic: .invalidPairing)
 			} else {
@@ -295,6 +329,12 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	// MARK: - Private Helpers
+
+	private func _resetRSDTunnel() async {
+		await Task.detached(priority: .utility) {
+			HeartbeatManager.shared.resetRSDTunnel()
+		}.value
+	}
 
 	private func _startTransitionPolling(generation: UUID, expectedState: Bool) {
 		transitionTask?.cancel()

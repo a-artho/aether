@@ -43,6 +43,63 @@ extension Storage {
 }
 
 // MARK: - Helpers
+/// A value-only description of an app for file workers. `Signed` and `Imported`
+/// are main-context objects, so they must never outlive the main actor in a
+/// detached signing, export, or installation task.
+struct AppSnapshot: AppInfoPresentable, Sendable {
+	let name: String?
+	let version: String?
+	let identifier: String?
+	let date: Date?
+	let icon: String?
+	let uuid: String?
+	let source: URL?
+	let isSigned: Bool
+
+	init(_ app: AppInfoPresentable) {
+		name = app.name
+		version = app.version
+		identifier = app.identifier
+		date = app.date
+		icon = app.icon
+		uuid = app.uuid
+		source = app.source
+		isSigned = app.isSigned
+	}
+}
+
+/// The file-backed portion of a certificate needed by signing. Keeping this
+/// separate from `CertificatePair` prevents a managed object from crossing a
+/// detached worker boundary.
+struct SigningCertificateSnapshot: Sendable {
+	let uuid: String
+	let password: String
+	let certificateURL: URL
+	let provisionURL: URL
+
+	init?(_ certificate: CertificatePair?) {
+		guard
+			let certificate,
+			let uuid = certificate.uuid,
+			let certificateURL = FileManager.default.getPath(
+				in: FileManager.default.certificates(uuid),
+				for: Storage.FileRequest.certificate.rawValue
+			),
+			let provisionURL = FileManager.default.getPath(
+				in: FileManager.default.certificates(uuid),
+				for: Storage.FileRequest.provision.rawValue
+			)
+		else {
+			return nil
+		}
+
+		self.uuid = uuid
+		self.password = certificate.password ?? ""
+		self.certificateURL = certificateURL
+		self.provisionURL = provisionURL
+	}
+}
+
 struct AnyApp: Identifiable {
 	let base: AppInfoPresentable
 	

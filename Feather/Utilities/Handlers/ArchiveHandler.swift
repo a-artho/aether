@@ -11,18 +11,25 @@ import Zip
 import IDeviceSwift
 
 final class ArchiveHandler: NSObject {
+	enum Purpose: Equatable {
+		case install
+		case export
+	}
+
 	let viewModel: InstallerStatusViewModel
 	
 	private let _fileManager = FileManager.default
 	private let _uuid = UUID().uuidString
 	private var _payloadUrl: URL?
 	
-	private var _app: AppInfoPresentable
+	private let _app: AppSnapshot
+	private let _purpose: Purpose
 	private let _uniqueWorkDir: URL
 	
-	init(app: AppInfoPresentable, viewModel: InstallerStatusViewModel) {
+	init(app: AppSnapshot, viewModel: InstallerStatusViewModel, purpose: Purpose) {
 		self.viewModel = viewModel
 		self._app = app
+		self._purpose = purpose
 		self._uniqueWorkDir = _fileManager.temporaryDirectory
 			.appendingPathComponent("FeatherInstall_\(_uuid)", isDirectory: true)
 		
@@ -30,17 +37,28 @@ final class ArchiveHandler: NSObject {
 	}
 	
 	func move() async throws {
-		guard let appUrl = Storage.shared.getAppDirectory(for: _app) else {
-			throw SigningFileHandlerError.appNotFound
-		}
-		
-		let payloadUrl = _uniqueWorkDir.appendingPathComponent("Payload")
-		let movedAppURL = payloadUrl.appendingPathComponent(appUrl.lastPathComponent)
+		let app = _app
+		let workDirectory = _uniqueWorkDir
+		let payloadURL = try await Task.detached(priority: .utility) { [fileManager = _fileManager] in
+			try Task.checkCancellation()
+			guard
+				let uuid = app.uuid,
+				let appURL = fileManager.getPath(
+					in: app.isSigned ? fileManager.signed(uuid) : fileManager.unsigned(uuid),
+					for: "app"
+				)
+			else {
+				throw SigningFileHandlerError.appNotFound
+			}
 
-		try _fileManager.createDirectoryIfNeeded(at: payloadUrl)
-		
-		try _fileManager.copyItem(at: appUrl, to: movedAppURL)
-		_payloadUrl = payloadUrl
+			let payloadURL = workDirectory.appendingPathComponent("Payload")
+			let movedAppURL = payloadURL.appendingPathComponent(appURL.lastPathComponent)
+			try fileManager.createDirectoryIfNeeded(at: payloadURL)
+			try fileManager.copyItemPreferClone(at: appURL, to: movedAppURL)
+			try Task.checkCancellation()
+			return payloadURL
+		}.value
+		_payloadUrl = payloadURL
 	}
 	
 	func archive() async throws -> URL {
@@ -52,12 +70,30 @@ final class ArchiveHandler: NSObject {
 			let zipUrl = self._uniqueWorkDir.appendingPathComponent("Archive.zip")
 			let ipaUrl = self._uniqueWorkDir.appendingPathComponent("Archive.ipa")
 			
+			let progressLock = NSLock()
+			var lastProgressUpdate = Date.distantPast
+			var lastReportedProgress = 0.0
+			let compression: ZipCompression = self._purpose == .install
+				? .NoCompression
+				: ArchiveHandler.compressionLevel()
+
 			try Zip.zipFiles(
 				paths: [payloadUrl],
 				zipFilePath: zipUrl,
 				password: nil,
-				compression: ZipCompression.allCases[ArchiveHandler.getCompressionLevel()],
+				compression: compression,
 				progress: { progress in
+					progressLock.lock()
+					let now = Date()
+					let shouldPublish = now.timeIntervalSince(lastProgressUpdate) >= 0.125
+						|| progress - lastReportedProgress >= 0.01
+						|| progress >= 1
+					if shouldPublish {
+						lastProgressUpdate = now
+						lastReportedProgress = progress
+					}
+					progressLock.unlock()
+					guard shouldPublish, !Task.isCancelled else { return }
 					Task { @MainActor in
 						self.viewModel.packageProgress = progress
 					}
@@ -103,7 +139,9 @@ final class ArchiveHandler: NSObject {
 		return String((sanitized.isEmpty ? "Unknown" : sanitized).prefix(80))
 	}
 	
-	static func getCompressionLevel() -> Int {
-		UserDefaults.standard.integer(forKey: "Feather.compressionLevel")
+	static func compressionLevel() -> ZipCompression {
+		let rawValue = UserDefaults.standard.integer(forKey: "Feather.compressionLevel")
+		return ZipCompression.allCases.first(where: { $0.rawValue == rawValue })
+			?? .DefaultCompression
 	}
 }

@@ -295,8 +295,7 @@ extension HeartbeatManager {
 
 		_runHeartbeatLoop(
 			heartbeatClient: heartbeatClient,
-			currentSession: currentSession,
-			sessionId: sessionId
+			expectedSession: currentSession
 		)
 	}
 
@@ -304,13 +303,12 @@ extension HeartbeatManager {
 
 	private func _runHeartbeatLoop(
 		heartbeatClient: HeartbeatClientHandle,
-		currentSession: UInt32?,
-		sessionId: UInt32?
+		expectedSession: UInt32?
 	) {
 		var currentInterval: UInt64 = 15
 
 		while true {
-			if sessionId != currentSession {
+			if self.sessionId != expectedSession {
 				break
 			}
 
