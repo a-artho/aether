@@ -65,10 +65,7 @@ struct LibraryView: View {
 		NBNavigationView(_isSearchPresented ? "" : .localized("Library"), displayMode: .inline) {
 			NBListAdaptable {
 				if !exportManager.exports.isEmpty {
-					NBSection(
-						.localized("Exports"),
-						secondary: exportManager.exports.count.description
-					) {
+					NBSection(.localized("Exports")) {
 						ForEach(exportManager.exports) { export in
 							ExportLibraryCellView(export: export)
 						}
@@ -76,10 +73,7 @@ struct LibraryView: View {
 				}
 
 				if !downloadManager.downloads.isEmpty {
-					NBSection(
-						.localized("Downloads"),
-						secondary: downloadManager.downloads.count.description
-					) {
+					NBSection(.localized("Downloads")) {
 						ForEach(downloadManager.downloads) { download in
 							DownloadLibraryCellView(download: download)
 						}
@@ -87,10 +81,7 @@ struct LibraryView: View {
 				}
 
 				if !_filteredSignedApps.isEmpty {
-					NBSection(
-						.localized("Signed"),
-						secondary: _filteredSignedApps.count.description
-					) {
+					NBSection(.localized("Signed")) {
 						ForEach(_filteredSignedApps, id: \.uuid) { app in
 							LibraryCellView(
 								app: app,
@@ -104,10 +95,7 @@ struct LibraryView: View {
 				}
 
 				if !_filteredImportedApps.isEmpty {
-					NBSection(
-						.localized("Imported"),
-						secondary: _filteredImportedApps.count.description
-					) {
+					NBSection(.localized("Imported")) {
 						ForEach(_filteredImportedApps, id: \.uuid) { app in
 							LibraryCellView(
 								app: app,
@@ -270,7 +258,6 @@ struct LibraryView: View {
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.installApp"))) { _ in
 				if let latest = _signedApps.first {
 					AppInstallationManager.shared.startInstall(app: latest)
-					AppTabManager.shared.switchTo(.installed)
 				}
 			}
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openSearch"))) { _ in

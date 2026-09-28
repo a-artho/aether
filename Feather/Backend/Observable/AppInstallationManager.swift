@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import Foundation
 import IDeviceSwift
 
 @MainActor
@@ -21,6 +22,7 @@ final class AppInstallationManager: ObservableObject {
 	@Published var lastErrorMessage: String?
 	
 	private var progressTask: Task<Void, Never>?
+	private var iDevicePreflightTask: Task<Void, Never>?
 	private var cancellables = Set<AnyCancellable>()
 	private var _hasLaunchedSemiLocalInstall = false
 	
@@ -48,6 +50,50 @@ final class AppInstallationManager: ObservableObject {
 			)
 			return
 		}
+
+		guard _installationMethod == 1 else {
+			_beginInstall(app)
+			return
+		}
+
+		guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
+			_showIDevicePreflightAlert(
+				title: .localized("Pairing File Missing"),
+				message: .localized("Import one in Installation settings.")
+			)
+			return
+		}
+
+		iDevicePreflightTask = Task { [weak self] in
+			let connection = await Task.detached(priority: .userInitiated) {
+				HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 2)
+			}.value
+
+			guard !Task.isCancelled, let self else { return }
+			self.iDevicePreflightTask = nil
+
+			guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
+				self._showIDevicePreflightAlert(
+					title: .localized("Pairing File Missing"),
+					message: .localized("Import one in Installation settings.")
+				)
+				return
+			}
+
+			guard connection.isConnected else {
+				self._showIDevicePreflightAlert(
+					title: .localized("LocalDevVPN Not Connected"),
+					message: .localized("Turn it on and try again.")
+				)
+				return
+			}
+
+			self._beginInstall(app)
+		}
+	}
+
+	private func _beginInstall(_ app: AppInfoPresentable) {
+		AppTabManager.shared.switchTo(.installed)
 		
 		self.activeApp = app
 		self.lastErrorMessage = nil
@@ -114,6 +160,10 @@ final class AppInstallationManager: ObservableObject {
 				}
 			}
 		}
+	}
+
+	private func _showIDevicePreflightAlert(title: String, message: String) {
+		UIAlertController.showAlertWithOk(title: title, message: message)
 	}
 	
 	private func _handleStatusChange(_ newStatus: InstallerStatusViewModel.InstallerStatus) {
@@ -235,6 +285,8 @@ final class AppInstallationManager: ObservableObject {
 	}
 	
 	func cancel() {
+		iDevicePreflightTask?.cancel()
+		iDevicePreflightTask = nil
 		progressTask?.cancel()
 		progressTask = nil
 		cancellables.removeAll()

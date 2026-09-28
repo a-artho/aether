@@ -13,6 +13,8 @@ import UIKit
 struct SettingsView: View {
 	@AppStorage("feather.selectedCert") private var _storedSelectedCert: Int = 0
 	@State private var _currentIcon: String? = UIApplication.shared.alternateIconName
+	@State private var _isInstallationSettingsPresented = false
+	@ObservedObject private var _tabManager = AppTabManager.shared
 	
 	// MARK: Fetch
 	@FetchRequest(
@@ -84,7 +86,22 @@ struct SettingsView: View {
 					Text(.localized("Reset the applications sources, certificates, apps, and general contents."))
 				}
 			}
+			.navigationDestination(isPresented: $_isInstallationSettingsPresented) {
+				InstallationView()
+			}
+			.onAppear {
+				_presentInstallationSettingsIfNeeded()
+			}
+			.onChange(of: _tabManager.isInstallationSettingsRequested) { _ in
+				_presentInstallationSettingsIfNeeded()
+			}
 		}
+	}
+
+	private func _presentInstallationSettingsIfNeeded() {
+		guard _tabManager.isInstallationSettingsRequested else { return }
+		_isInstallationSettingsPresented = true
+		_tabManager.consumeInstallationSettingsRequest()
 	}
 }
 

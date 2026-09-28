@@ -10,6 +10,46 @@ import IDevice
 
 // MARK: - Class extension: socket
 extension HeartbeatManager {
+	/// Verifies that Feather can reach the paired device's Installation Proxy service.
+	/// Unlike a raw TCP probe, this validates the active transport and pairing flow.
+	public func checkDeviceConnection(
+		timeoutInSeconds: Double = 2.0
+	) -> (isConnected: Bool, error: String?) {
+		if isRsd {
+			return _checkRSDDeviceConnection()
+		}
+
+		let socketConnection = checkSocketConnection(timeoutInSeconds: timeoutInSeconds)
+		guard socketConnection.isConnected else {
+			return socketConnection
+		}
+
+		guard let provider else {
+			return (false, "Heartbeat provider unavailable")
+		}
+
+		var client: OpaquePointer?
+		defer { installation_proxy_client_free(client) }
+		if let error = installation_proxy_connect(provider, &client) {
+			return (false, IDeviceSwiftError(error).localizedDescription)
+		}
+		return (client != nil, client == nil ? "Installation Proxy unavailable" : nil)
+	}
+
+	private func _checkRSDDeviceConnection() -> (isConnected: Bool, error: String?) {
+		var client: OpaquePointer?
+		defer { installation_proxy_client_free(client) }
+
+		do {
+			try withRSDServiceConnection { adapter, handshake in
+				installation_proxy_connect_rsd(adapter, handshake, &client)
+			}
+			return (client != nil, client == nil ? "Installation Proxy unavailable" : nil)
+		} catch {
+			return (false, error.localizedDescription)
+		}
+	}
+
 	/// Check connection to socket/tunnel
 	/// - Returns: Tuple for connection status and error message (if any)
 	public func checkSocketConnection(timeoutInSeconds: Double = 2.0) -> (isConnected: Bool, error: String?) {

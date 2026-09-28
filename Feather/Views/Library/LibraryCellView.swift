@@ -174,7 +174,6 @@ extension LibraryCellView {
 			}
 			Button(.localized("Install"), systemImage: "square.and.arrow.down") {
 				AppInstallationManager.shared.startInstall(app: app)
-				AppTabManager.shared.switchTo(.installed)
 			}
 			Button(.localized("Re-sign"), systemImage: "signature") {
 				selectedSigningAppPresenting = AnyApp(base: app)
@@ -185,7 +184,6 @@ extension LibraryCellView {
 		} else {
 			Button(.localized("Install"), systemImage: "square.and.arrow.down") {
 				AppInstallationManager.shared.startInstall(app: app)
-				AppTabManager.shared.switchTo(.installed)
 			}
 			Button(.localized("Sign"), systemImage: "signature") {
 				selectedSigningAppPresenting = AnyApp(base: app)
@@ -198,7 +196,6 @@ extension LibraryCellView {
 		Button {
 			if app.isSigned {
 				AppInstallationManager.shared.startInstall(app: app)
-				AppTabManager.shared.switchTo(.installed)
 			} else {
 				selectedSigningAppPresenting = AnyApp(base: app)
 			}

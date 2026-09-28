@@ -12,6 +12,7 @@ final class AppTabManager: ObservableObject {
 	static let shared = AppTabManager()
 	
 	@Published var selectedTab: TabEnum = .sources
+	@Published private(set) var isInstallationSettingsRequested = false
 	
 	private init() {}
 	
@@ -19,5 +20,14 @@ final class AppTabManager: ObservableObject {
 		withAnimation(.easeInOut(duration: 0.25)) {
 			self.selectedTab = tab
 		}
+	}
+
+	func openInstallationSettings() {
+		switchTo(.settings)
+		isInstallationSettingsRequested = true
+	}
+
+	func consumeInstallationSettingsRequest() {
+		isInstallationSettingsRequested = false
 	}
 }

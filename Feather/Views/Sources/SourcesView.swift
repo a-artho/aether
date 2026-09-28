@@ -58,10 +58,7 @@ struct SourcesView: View {
 						.buttonStyle(.plain)
 					}
 					
-					NBSection(
-						.localized("Repositories"),
-						secondary: _filteredSources.count.description
-					) {
+					NBSection(.localized("Repositories")) {
 						ForEach(_filteredSources) { source in
 							NavigationLink {
 								SourceAppsView(object: [source], viewModel: viewModel)
