@@ -32,7 +32,7 @@ struct SourcesView: View {
 	
 	// MARK: Body
 	var body: some View {
-		NBNavigationView("", displayMode: .inline) {
+		NBNavigationView(_isSearchPresented ? "" : .localized("Sources"), displayMode: .inline) {
 			NBListAdaptable {
 				if !_filteredSources.isEmpty {
 					Section {
@@ -92,97 +92,73 @@ struct SourcesView: View {
 				}
 			}
 			.toolbar {
-				ToolbarItem(placement: .principal) {
-					HStack(spacing: 8) {
+				if _isSearchPresented {
+					ToolbarItem(placement: .principal) {
 						HStack(spacing: 8) {
 							Image(systemName: "magnifyingglass")
-								.font(.system(size: 15, weight: .medium))
-								.foregroundColor(_isSearchPresented ? .secondary : .primary)
-								.frame(width: 36, height: 36)
+								.font(.system(size: 15, weight: .semibold))
+								.foregroundColor(.secondary)
+								.padding(.leading, 12)
 							
-							if _isSearchPresented {
-								TextField(.localized("Search"), text: $_searchText)
-									.font(.system(size: 16))
-									.focused($_isSearchFocused)
-									.textInputAutocapitalization(.never)
-									.disableAutocorrection(true)
-									.onAppear {
-										_isSearchFocused = true
-									}
-									.transition(.opacity)
-								
-								if !_searchText.isEmpty {
-									Button {
-										_searchText = ""
-									} label: {
-										Image(systemName: "xmark.circle.fill")
-											.font(.system(size: 14))
-											.foregroundColor(.secondary)
-									}
-									.buttonStyle(.plain)
-									.padding(.trailing, 8)
+							TextField(.localized("Search"), text: $_searchText)
+								.font(.system(size: 16))
+								.focused($_isSearchFocused)
+								.textInputAutocapitalization(.never)
+								.disableAutocorrection(true)
+								.onAppear {
+									_isSearchFocused = true
 								}
+							
+							if !_searchText.isEmpty {
+								Button {
+									_searchText = ""
+								} label: {
+									Image(systemName: "xmark.circle.fill")
+										.font(.system(size: 14))
+										.foregroundColor(.secondary)
+								}
+								.buttonStyle(.plain)
+								.padding(.trailing, 8)
 							}
 						}
 						.frame(height: 36)
-						.frame(maxWidth: _isSearchPresented ? .infinity : 36)
-						.background(
-							_isSearchPresented
-								? Color(UIColor.secondarySystemFill)
-								: Color.clear,
-							in: Capsule()
-						)
-						.contentShape(Capsule())
-						.onTapGesture {
-							if !_isSearchPresented {
-								withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-									_isSearchPresented = true
-								}
-							}
-						}
-
-						if !_isSearchPresented {
-							Spacer()
-
-							Text(.localized("Sources"))
-								.font(.headline)
-								.lineLimit(1)
-								.transition(.opacity)
-
-							Spacer()
-
-							Button {
-								_isAddingPresenting = true
-							} label: {
-								Image(systemName: "plus")
-									.font(.system(size: 17, weight: .medium))
-									.foregroundColor(.accentColor)
-									.frame(width: 36, height: 36)
-									.contentShape(Rectangle())
-							}
-							.disabled(_addingSourceLoading)
-							.accessibilityLabel(.localized("Add Source"))
-							.transition(.opacity)
-						} else {
-							Button {
-								_isSearchFocused = false
-								withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-									_isSearchPresented = false
-									_searchText = ""
-								}
-							} label: {
-								Image(systemName: "xmark")
-									.font(.system(size: 14, weight: .semibold))
-									.foregroundColor(.primary)
-									.frame(width: 36, height: 36)
-									.background(Color(UIColor.secondarySystemFill), in: Circle())
-							}
-							.buttonStyle(.plain)
-							.transition(.scale.combined(with: .opacity))
-							.accessibilityLabel(.localized("Cancel"))
-						}
+						.frame(width: min(500, UIScreen.main.bounds.width - 74))
+						.background(Color(UIColor.secondarySystemFill), in: Capsule())
 					}
-					.frame(width: UIScreen.main.bounds.width - 32)
+					
+					ToolbarItem(placement: .topBarTrailing) {
+						Button {
+							_isSearchFocused = false
+							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+								_isSearchPresented = false
+								_searchText = ""
+							}
+						} label: {
+							Image(systemName: "xmark")
+						}
+						.accessibilityLabel(.localized("Cancel"))
+					}
+				} else {
+					ToolbarItem(placement: .topBarLeading) {
+						Button {
+							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+								_isSearchPresented = true
+							}
+						} label: {
+							Image(systemName: "magnifyingglass")
+						}
+						.accessibilityLabel(.localized("Search"))
+					}
+					
+					ToolbarItem(placement: .topBarTrailing) {
+						Button {
+							_isAddingPresenting = true
+						} label: {
+							Image(systemName: "plus")
+						}
+						.disabled(_addingSourceLoading)
+						.accessibilityLabel(.localized("Add Source"))
+					}
 				}
 			}
 			.refreshable {
@@ -190,6 +166,19 @@ struct SourcesView: View {
 			}
 			.sheet(isPresented: $_isAddingPresenting) {
 				SourcesAddView()
+			}
+			.animation(.spring(response: 0.35, dampingFraction: 0.82), value: _isSearchPresented)
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openSearch"))) { _ in
+				withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+					_isSearchPresented = true
+				}
+			}
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.closeSearch"))) { _ in
+				_isSearchFocused = false
+				withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+					_isSearchPresented = false
+					_searchText = ""
+				}
 			}
 		}
 		.task(id: Array(_sources)) {

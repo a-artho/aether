@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@%%" : {
+
+    },
     "%lld Apps" : {
       "comment" : "Repository app count",
       "extractionState" : "manual",

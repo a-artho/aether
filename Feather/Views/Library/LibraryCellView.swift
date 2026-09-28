@@ -25,7 +25,6 @@ struct LibraryCellView: View {
 	var app: AppInfoPresentable
 	@Binding var selectedInfoAppPresenting: AnyApp?
 	@Binding var selectedSigningAppPresenting: AnyApp?
-	@Binding var selectedInstallAppPresenting: AnyApp?
 	@Binding var selectedAppUUIDs: Set<String>
 	
 	// MARK: Selections
@@ -174,17 +173,19 @@ extension LibraryCellView {
 				}
 			}
 			Button(.localized("Install"), systemImage: "square.and.arrow.down") {
-				selectedInstallAppPresenting = AnyApp(base: app)
+				AppInstallationManager.shared.startInstall(app: app)
+				AppTabManager.shared.switchTo(.installed)
 			}
 			Button(.localized("Re-sign"), systemImage: "signature") {
 				selectedSigningAppPresenting = AnyApp(base: app)
 			}
 			Button(.localized("Export"), systemImage: "square.and.arrow.up") {
-				selectedInstallAppPresenting = AnyApp(base: app, archive: true)
+				ExportManager.shared.startExport(app: app)
 			}
 		} else {
 			Button(.localized("Install"), systemImage: "square.and.arrow.down") {
-				selectedInstallAppPresenting = AnyApp(base: app)
+				AppInstallationManager.shared.startInstall(app: app)
+				AppTabManager.shared.switchTo(.installed)
 			}
 			Button(.localized("Sign"), systemImage: "signature") {
 				selectedSigningAppPresenting = AnyApp(base: app)
@@ -196,7 +197,8 @@ extension LibraryCellView {
 	private func _buttonActions(for app: AppInfoPresentable) -> some View {
 		Button {
 			if app.isSigned {
-				selectedInstallAppPresenting = AnyApp(base: app)
+				AppInstallationManager.shared.startInstall(app: app)
+				AppTabManager.shared.switchTo(.installed)
 			} else {
 				selectedSigningAppPresenting = AnyApp(base: app)
 			}

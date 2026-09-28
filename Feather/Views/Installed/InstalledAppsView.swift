@@ -10,6 +10,7 @@ import SwiftUI
 @MainActor
 struct InstalledAppsView: View {
 	@StateObject private var store: InstalledAppsStore
+	@ObservedObject private var installationManager = AppInstallationManager.shared
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
 
@@ -31,45 +32,61 @@ struct InstalledAppsView: View {
 
 	var body: some View {
 		NBNavigationView(.localized("Device"), displayMode: .inline) {
-			NBListAdaptable {
-				if !store.apps.isEmpty {
-					NBSection(
-						.localized("Sideloaded"),
-						secondary: store.apps.count.description
-					) {
-						ForEach(store.apps) { app in
-							InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+			VStack(spacing: 0) {
+				if let activeApp = installationManager.activeApp, let vm = installationManager.viewModel {
+					ActiveInstallationHeroCard(app: activeApp, viewModel: vm)
+						.padding(.horizontal)
+						.padding(.top, 8)
+						.padding(.bottom, 6)
+						.transition(.move(edge: .top).combined(with: .opacity))
+				}
+
+				NBListAdaptable {
+					if !store.apps.isEmpty {
+						NBSection(
+							.localized("Sideloaded"),
+							secondary: store.apps.count.description
+						) {
+							ForEach(store.apps) { app in
+								InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+							}
 						}
 					}
 				}
-			}
-			.refreshable {
-				guard loadsApps else { return }
-				await store.refresh()
-			}
-			.overlay {
-				if store.isLoading && store.apps.isEmpty {
-					ProgressView()
-				} else if let errorMessage = store.errorMessage, store.apps.isEmpty {
-					_statusView(
-						title: .localized("Unable to Load Installed Apps"),
-						description: errorMessage,
-						systemImage: "iphone.slash",
-						retry: {
-							Task { await store.refresh() }
-						}
-					)
-				} else if store.apps.isEmpty {
-					_statusView(
-						title: .localized("No Sideloaded Apps"),
-						description: .localized("No sideloaded applications were found on this device."),
-						systemImage: "square.stack.3d.up.slash"
-					)
+				.refreshable {
+					guard loadsApps else { return }
+					await store.refresh()
+				}
+				.overlay {
+					if store.isLoading && store.apps.isEmpty {
+						ProgressView()
+					} else if let errorMessage = store.errorMessage, store.apps.isEmpty {
+						_statusView(
+							title: .localized("Unable to Load Installed Apps"),
+							description: errorMessage,
+							systemImage: "iphone.slash",
+							retry: {
+								Task { await store.refresh() }
+							}
+						)
+					} else if store.apps.isEmpty {
+						_statusView(
+							title: .localized("No Sideloaded Apps"),
+							description: .localized("No sideloaded applications were found on this device."),
+							systemImage: "square.stack.3d.up.slash"
+						)
+					}
 				}
 			}
+			.animation(.spring(response: 0.35, dampingFraction: 0.85), value: installationManager.activeApp != nil)
 			.task {
 				guard loadsApps else { return }
 				await store.load()
+			}
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.installedAppsRefresh"))) { _ in
+				Task {
+					await store.refresh()
+				}
 			}
 		}
 	}

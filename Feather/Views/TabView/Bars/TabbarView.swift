@@ -8,10 +8,10 @@
 import SwiftUI
 
 struct TabbarView: View {
-	@State private var selectedTab: TabEnum = .sources
+	@ObservedObject private var tabManager = AppTabManager.shared
 
 	var body: some View {
-		TabView(selection: $selectedTab) {
+		TabView(selection: $tabManager.selectedTab) {
 			ForEach(TabEnum.defaultTabs, id: \.hashValue) { tab in
 				TabEnum.view(for: tab)
 					.tabItem {

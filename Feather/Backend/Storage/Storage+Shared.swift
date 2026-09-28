@@ -45,7 +45,6 @@ extension Storage {
 // MARK: - Helpers
 struct AnyApp: Identifiable {
 	let base: AppInfoPresentable
-	var archive: Bool = false
 	
 	var id: String {
 		base.uuid ?? UUID().uuidString

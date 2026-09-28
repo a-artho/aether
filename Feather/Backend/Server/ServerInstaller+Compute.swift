@@ -8,7 +8,7 @@
 //
 
 import Foundation
-import UIKit.UIGraphicsImageRenderer
+import UIKit
 
 extension ServerInstaller {
 	var plistEndpoint: URL {
@@ -40,6 +40,21 @@ extension ServerInstaller {
 	
 	var iTunesLinkExternal: String {
 		_iTunesLink(with: externalServerLink)
+	}
+
+	@MainActor
+	func launchSemiLocalInstall(fallback: @escaping () -> Void) {
+		guard let installURL = URL(string: iTunesLinkExternal) else {
+			fallback()
+			return
+		}
+
+		UIApplication.shared.open(installURL, options: [:]) { didOpen in
+			guard !didOpen else { return }
+			Task { @MainActor in
+				fallback()
+			}
+		}
 	}
 	
 	private func _iTunesLink(with url: String) -> String {

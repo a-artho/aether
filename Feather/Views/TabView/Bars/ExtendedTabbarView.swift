@@ -17,22 +17,35 @@ struct ExtendedTabbarView: View {
 	
 	@State private var _isAddingPresenting = false
 	
+	@ObservedObject private var tabManager = AppTabManager.shared
+	
 	@FetchRequest(
 		entity: AltSource.entity(),
 		sortDescriptors: [NSSortDescriptor(keyPath: \AltSource.name, ascending: true)],
 		animation: .snappy
 	) private var _sources: FetchedResults<AltSource>
+	
+	private var _selectedTabBinding: Binding<String> {
+		Binding(
+			get: { tabManager.selectedTab.rawValue },
+			set: { newValue in
+				if let tab = TabEnum(rawValue: newValue) {
+					tabManager.selectedTab = tab
+				}
+			}
+		)
+	}
 		
 	var body: some View {
-		TabView {
+		TabView(selection: _selectedTabBinding) {
 			ForEach(TabEnum.defaultTabs, id: \.hashValue) { tab in
-				Tab(tab.title, systemImage: tab.icon) {
+				Tab(tab.title, systemImage: tab.icon, value: tab.rawValue) {
 					TabEnum.view(for: tab)
 				}
 			}
 			
 			ForEach(TabEnum.customizableTabs, id: \.hashValue) { tab in
-				Tab(tab.title, systemImage: tab.icon) {
+				Tab(tab.title, systemImage: tab.icon, value: tab.rawValue) {
 					TabEnum.view(for: tab)
 				}
 				.customizationID("tab.\(tab.rawValue)")
@@ -42,14 +55,14 @@ struct ExtendedTabbarView: View {
 			}
 			
 			TabSection("Sources") {
-				Tab(.localized("All Repositories"), systemImage: "globe.desk") {
+				Tab(.localized("All Repositories"), systemImage: "globe.desk", value: "all_repositories") {
 					NavigationStack {
 						SourceAppsView(object: Array(_sources), viewModel: viewModel)
 					}
 				}
 				
 				ForEach(_sources, id: \.identifier) { source in
-					Tab {
+					Tab(value: "source.\(source.identifier ?? UUID().uuidString)") {
 						NavigationStack {
 							SourceAppsView(object: [source], viewModel: viewModel)
 						}

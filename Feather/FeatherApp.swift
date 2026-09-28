@@ -45,6 +45,38 @@ struct FeatherApp: App {
 
 	private func _handleURL(_ url: URL) {
 		if url.scheme == "feather" {
+			if url.host == "tab" {
+				guard
+					let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+					let queryItems = components.queryItems,
+					let tabName = queryItems.first(where: { $0.name == "name" })?.value,
+					let tab = TabEnum(rawValue: tabName)
+				else {
+					return
+				}
+				AppTabManager.shared.switchTo(tab)
+				return
+			}
+			if url.host == "open-search" {
+				NotificationCenter.default.post(name: Notification.Name("Feather.openSearch"), object: nil)
+				return
+			}
+			if url.host == "close-search" {
+				NotificationCenter.default.post(name: Notification.Name("Feather.closeSearch"), object: nil)
+				return
+			}
+			#if DEBUG
+			if url.host == "mock-install" {
+				AppInstallationManager.shared.startMockInstall(progress: 0.62, status: .installing)
+				AppTabManager.shared.switchTo(.installed)
+				return
+			}
+			if url.host == "mock-install-done" {
+				AppInstallationManager.shared.startMockInstall(progress: 1.0, status: .completed(.success(())))
+				AppTabManager.shared.switchTo(.installed)
+				return
+			}
+			#endif
 			/// feather://import-certificate?p12=<base64>&mobileprovision=<base64>&password=<base64>
 			if url.host == "import-certificate" {
 				guard
