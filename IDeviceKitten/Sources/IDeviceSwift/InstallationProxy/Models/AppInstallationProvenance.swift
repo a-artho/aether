@@ -40,7 +40,19 @@ public enum AppInstallationProvenanceClassifier {
 		guard let bundleIdentifier = app.CFBundleIdentifier else {
 			return .unknown
 		}
-		return profiles.contains(where: { $0.matches(bundleIdentifier: bundleIdentifier, now: now) })
+		let teamIdentifier = app.Entitlements?["com.apple.developer.team-identifier"]?.value as? String
+		let applicationIdentifier = app.Entitlements?["application-identifier"]?.value as? String
+		guard teamIdentifier != nil || applicationIdentifier != nil else {
+			return .unknown
+		}
+		return profiles.contains(where: {
+			$0.matches(
+				bundleIdentifier: bundleIdentifier,
+				appTeamIdentifier: teamIdentifier,
+				appApplicationIdentifier: applicationIdentifier,
+				now: now
+			)
+		})
 			? .sideloaded
 			: .unknown
 	}

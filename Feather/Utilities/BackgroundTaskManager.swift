@@ -15,7 +15,7 @@ import CryptoKit
 class BackgroundTaskManager: ObservableObject {
 	static let shared = BackgroundTaskManager()
 	
-	private let baseId = "\(Bundle.main.bundleIdentifier!).userTask"
+	private let baseId = "\(Bundle.main.bundleIdentifier ?? "Feather").userTask"
 	
 	private var activeTasks: [String: BGContinuedProcessingTask] = [:]
 	private var registeredTasks: Set<String> = []
@@ -78,9 +78,6 @@ class BackgroundTaskManager: ObservableObject {
 			applyProgress(to: task, progress: clampedProgress)
 		}
 
-		if clampedProgress >= 1 {
-			stopTask(for: downloadId, success: true)
-		}
 	}
 	
 	func stopTask(for downloadId: String, success: Bool) {

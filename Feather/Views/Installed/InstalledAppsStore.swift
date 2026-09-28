@@ -13,6 +13,7 @@ struct InstalledApp: Identifiable, Equatable {
 	let build: String?
 
 	var id: String { bundleIdentifier }
+	var iconCacheVersion: String { "\(version ?? "")|\(build ?? "")" }
 }
 
 @MainActor

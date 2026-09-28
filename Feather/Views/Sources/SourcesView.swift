@@ -13,13 +13,12 @@ import NimbleViews
 // MARK: - View
 struct SourcesView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
-	#if !NIGHTLY && !DEBUG
-		@AppStorage("Feather.shouldStar") private var _shouldStar: Int = 0
-	#endif
 	@StateObject var viewModel = SourcesViewModel.shared
 	@State private var _isAddingPresenting = false
 	@State private var _addingSourceLoading = false
 	@State private var _searchText = ""
+	@State private var _isSearchPresented = false
+	@FocusState private var _isSearchFocused: Bool
 	
 	private var _filteredSources: [AltSource] {
 		_sources.filter { _searchText.isEmpty || ($0.name?.localizedCaseInsensitiveContains(_searchText) ?? false) }
@@ -33,7 +32,7 @@ struct SourcesView: View {
 	
 	// MARK: Body
 	var body: some View {
-		NBNavigationView(.localized("Sources")) {
+		NBNavigationView("", displayMode: .inline) {
 			NBListAdaptable {
 				if !_filteredSources.isEmpty {
 					Section {
@@ -74,7 +73,7 @@ struct SourcesView: View {
 					}
 				}
 			}
-			.searchable(text: $_searchText, placement: .platform())
+			.scrollDismissesKeyboard(.interactively)
 			.overlay {
 				if _filteredSources.isEmpty {
 					if #available(iOS 17, *) {
@@ -93,13 +92,97 @@ struct SourcesView: View {
 				}
 			}
 			.toolbar {
-				NBToolbarButton(
-					systemImage: "plus",
-					style: .icon,
-					placement: .topBarTrailing,
-					isDisabled: _addingSourceLoading
-				) {
-					_isAddingPresenting = true
+				ToolbarItem(placement: .principal) {
+					HStack(spacing: 8) {
+						HStack(spacing: 8) {
+							Image(systemName: "magnifyingglass")
+								.font(.system(size: 15, weight: .medium))
+								.foregroundColor(_isSearchPresented ? .secondary : .primary)
+								.frame(width: 36, height: 36)
+							
+							if _isSearchPresented {
+								TextField(.localized("Search"), text: $_searchText)
+									.font(.system(size: 16))
+									.focused($_isSearchFocused)
+									.textInputAutocapitalization(.never)
+									.disableAutocorrection(true)
+									.onAppear {
+										_isSearchFocused = true
+									}
+									.transition(.opacity)
+								
+								if !_searchText.isEmpty {
+									Button {
+										_searchText = ""
+									} label: {
+										Image(systemName: "xmark.circle.fill")
+											.font(.system(size: 14))
+											.foregroundColor(.secondary)
+									}
+									.buttonStyle(.plain)
+									.padding(.trailing, 8)
+								}
+							}
+						}
+						.frame(height: 36)
+						.frame(maxWidth: _isSearchPresented ? .infinity : 36)
+						.background(
+							_isSearchPresented
+								? Color(UIColor.secondarySystemFill)
+								: Color.clear,
+							in: Capsule()
+						)
+						.contentShape(Capsule())
+						.onTapGesture {
+							if !_isSearchPresented {
+								withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+									_isSearchPresented = true
+								}
+							}
+						}
+
+						if !_isSearchPresented {
+							Spacer()
+
+							Text(.localized("Sources"))
+								.font(.headline)
+								.lineLimit(1)
+								.transition(.opacity)
+
+							Spacer()
+
+							Button {
+								_isAddingPresenting = true
+							} label: {
+								Image(systemName: "plus")
+									.font(.system(size: 17, weight: .medium))
+									.foregroundColor(.accentColor)
+									.frame(width: 36, height: 36)
+									.contentShape(Rectangle())
+							}
+							.disabled(_addingSourceLoading)
+							.accessibilityLabel(.localized("Add Source"))
+							.transition(.opacity)
+						} else {
+							Button {
+								_isSearchFocused = false
+								withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+									_isSearchPresented = false
+									_searchText = ""
+								}
+							} label: {
+								Image(systemName: "xmark")
+									.font(.system(size: 14, weight: .semibold))
+									.foregroundColor(.primary)
+									.frame(width: 36, height: 36)
+									.background(Color(UIColor.secondarySystemFill), in: Circle())
+							}
+							.buttonStyle(.plain)
+							.transition(.scale.combined(with: .opacity))
+							.accessibilityLabel(.localized("Cancel"))
+						}
+					}
+					.frame(width: UIScreen.main.bounds.width - 32)
 				}
 			}
 			.refreshable {
@@ -112,23 +195,5 @@ struct SourcesView: View {
 		.task(id: Array(_sources)) {
 			await viewModel.fetchSources(_sources)
 		}
-		#if !NIGHTLY && !DEBUG
-		.onAppear {
-				guard _shouldStar < 6 else { return }; _shouldStar += 1
-				guard _shouldStar == 6 else { return }
-			
-				let github = UIAlertAction(title: "GitHub", style: .default) { _ in
-					UIApplication.open("https://github.com/khcrysalis/Feather")
-				}
-			
-				let cancel = UIAlertAction(title: .localized("Dismiss"), style: .cancel)
-			
-				UIAlertController.showAlert(
-					title: .localized("Enjoying %@?", arguments: Bundle.main.name),
-					message: .localized("Go to our GitHub and give us a star!"),
-					actions: [github, cancel]
-				)
-			}
-		#endif
 	}
 }

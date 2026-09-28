@@ -29,13 +29,71 @@ final class AppInstallationProvenanceTests: XCTestCase {
 	}
 
 	func testMissingSignerWithMatchingValidProfileIsSideloaded() throws {
-		let app = try appInfo(bundleIdentifier: "com.example.feather")
+		let app = try appInfo(
+			bundleIdentifier: "com.example.feather",
+			entitlements: [
+				"com.apple.developer.team-identifier": "TEAM123456",
+				"application-identifier": "TEAM123456.com.example.feather"
+			]
+		)
 		let profile = try XCTUnwrap(profileInfo(applicationIdentifier: "TEAM123456.com.example.*"))
 		XCTAssertEqual(classify(app, profiles: [profile]), .sideloaded)
 	}
 
 	func testMissingSignerWithoutEvidenceIsUnknown() throws {
 		XCTAssertEqual(classify(try appInfo()), .unknown)
+	}
+
+	func testProfileWithoutDeclaredTeamIsNotTrusted() throws {
+		let app = try appInfo()
+		let profile = try XCTUnwrap(profileInfo(
+			applicationIdentifier: "TEAM123456.com.example.*",
+			teamIdentifiers: []
+		))
+		XCTAssertEqual(classify(app, profiles: [profile]), .unknown)
+	}
+
+	func testProfileWithMismatchedAppTeamEntitlementIsNotTrusted() throws {
+		let app = try appInfo(
+			entitlements: [
+				"com.apple.developer.team-identifier": "OTHERTEAM1",
+				"application-identifier": "OTHERTEAM1.com.example.feather"
+			]
+		)
+		let profile = try XCTUnwrap(profileInfo(applicationIdentifier: "TEAM123456.com.example.*"))
+		XCTAssertEqual(classify(app, profiles: [profile]), .unknown)
+	}
+
+	func testProfileWithMismatchedAppIdentifierEntitlementIsNotTrusted() throws {
+		let app = try appInfo(
+			entitlements: [
+				"com.apple.developer.team-identifier": "TEAM123456",
+				"application-identifier": "TEAM123456.com.example.other"
+			]
+		)
+		let profile = try XCTUnwrap(profileInfo(applicationIdentifier: "TEAM123456.com.example.*"))
+		XCTAssertEqual(classify(app, profiles: [profile]), .unknown)
+	}
+
+	func testEntitlementDeclaredProfileTeamCanMatch() throws {
+		let app = try appInfo(
+			entitlements: [
+				"com.apple.developer.team-identifier": "TEAM123456",
+				"application-identifier": "TEAM123456.com.example.feather"
+			]
+		)
+		let profile = try XCTUnwrap(profileInfo(
+			applicationIdentifier: "TEAM123456.com.example.*",
+			teamIdentifiers: [],
+			entitlementTeamIdentifier: "TEAM123456"
+		))
+		XCTAssertEqual(classify(app, profiles: [profile]), .sideloaded)
+	}
+
+	func testWildcardProfileWithoutAppIdentityRemainsUnknown() throws {
+		let app = try appInfo()
+		let profile = try XCTUnwrap(profileInfo(applicationIdentifier: "TEAM123456.*"))
+		XCTAssertEqual(classify(app, profiles: [profile]), .unknown)
 	}
 
 	private func classify(
@@ -52,11 +110,13 @@ final class AppInstallationProvenanceTests: XCTestCase {
 	private func appInfo(
 		bundleIdentifier: String = "com.example.feather",
 		signer: String? = nil,
-		hasSINF: Bool = false
+		hasSINF: Bool = false,
+		entitlements: [String: String]? = nil
 	) throws -> AppInfo {
 		var plist: [String: Any] = ["CFBundleIdentifier": bundleIdentifier]
 		plist["SignerIdentity"] = signer
 		if hasSINF { plist["ApplicationSINF"] = Data([0x01]) }
+		plist["Entitlements"] = entitlements
 		let data = try PropertyListSerialization.data(
 			fromPropertyList: plist,
 			format: .binary,
@@ -65,12 +125,18 @@ final class AppInstallationProvenanceTests: XCTestCase {
 		return try PropertyListDecoder().decode(AppInfo.self, from: data)
 	}
 
-	private func profileInfo(applicationIdentifier: String) throws -> ProvisioningProfileInfo? {
+	private func profileInfo(
+		applicationIdentifier: String,
+		teamIdentifiers: [String] = ["TEAM123456"],
+		entitlementTeamIdentifier: String? = nil
+	) throws -> ProvisioningProfileInfo? {
+		var entitlements: [String: Any] = ["application-identifier": applicationIdentifier]
+		entitlements["com.apple.developer.team-identifier"] = entitlementTeamIdentifier
 		let plist: [String: Any] = [
 			"ExpirationDate": Date(timeIntervalSince1970: 10_000),
-			"TeamIdentifier": ["TEAM123456"],
+			"TeamIdentifier": teamIdentifiers,
 			"ProvisionedDevices": ["device"],
-			"Entitlements": ["application-identifier": applicationIdentifier]
+			"Entitlements": entitlements
 		]
 		let data = try PropertyListSerialization.data(
 			fromPropertyList: plist,

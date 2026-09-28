@@ -9,6 +9,7 @@ public struct ProvisioningProfileInfo: Equatable, Sendable {
 	public let applicationIdentifier: String
 	public let expirationDate: Date
 	public let teamIdentifiers: [String]
+	public let entitlementTeamIdentifier: String?
 	public let provisionedDevices: [String]
 	public let provisionsAllDevices: Bool
 
@@ -27,25 +28,35 @@ public struct ProvisioningProfileInfo: Equatable, Sendable {
 		self.teamIdentifiers = (plist["TeamIdentifier"] as? [String])
 			?? (plist["TeamIdentifier"] as? String).map { [$0] }
 			?? []
+		self.entitlementTeamIdentifier = entitlements["com.apple.developer.team-identifier"] as? String
 		self.provisionedDevices = plist["ProvisionedDevices"] as? [String] ?? []
 		self.provisionsAllDevices = plist["ProvisionsAllDevices"] as? Bool ?? false
 	}
 
-	public func matches(bundleIdentifier: String, now: Date = Date()) -> Bool {
+	public func matches(
+		bundleIdentifier: String,
+		appTeamIdentifier: String? = nil,
+		appApplicationIdentifier: String? = nil,
+		now: Date = Date()
+	) -> Bool {
 		guard expirationDate > now else { return false }
 		guard provisionsAllDevices || !provisionedDevices.isEmpty else { return false }
 
-		var pattern = applicationIdentifier
-		if let teamIdentifier = teamIdentifiers.first(where: {
-			pattern.hasPrefix($0 + ".")
-		}) {
-			pattern.removeFirst(teamIdentifier.count + 1)
-		} else if let separator = pattern.firstIndex(of: ".") {
-			let possibleTeamIdentifier = pattern[..<separator]
-			if possibleTeamIdentifier.count == 10 {
-				pattern = String(pattern[pattern.index(after: separator)...])
-			}
+		let declaredTeams = Set(teamIdentifiers + [entitlementTeamIdentifier].compactMap { $0 })
+		guard !declaredTeams.isEmpty else { return false }
+		guard let teamIdentifier = declaredTeams.first(where: {
+			applicationIdentifier.hasPrefix($0 + ".")
+		}) else { return false }
+		if let appTeamIdentifier, appTeamIdentifier != teamIdentifier {
+			return false
 		}
+		if let appApplicationIdentifier,
+		   appApplicationIdentifier != teamIdentifier + "." + bundleIdentifier {
+			return false
+		}
+
+		var pattern = applicationIdentifier
+		pattern.removeFirst(teamIdentifier.count + 1)
 
 		if pattern == "*" {
 			return true

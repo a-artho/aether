@@ -39,9 +39,10 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		super.init()
 	}
 	
-	func copy() async throws {
+	func prepare(copySource: Bool) async throws {
 		try _fileManager.removeFileIfNeeded(at: _uniqueWorkDir)
 		try _fileManager.createDirectoryIfNeeded(at: _uniqueWorkDir)
+		guard copySource else { return }
 		
 		let destinationURL = _uniqueWorkDir.appendingPathComponent(_ipa.lastPathComponent)
 
@@ -52,6 +53,8 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	}
 	
 	func extract() async throws {
+		try Task.checkCancellation()
+		try _checkAvailableDiskSpace()
 		if _ipa.pathExtension.lowercased() == "ipa" {
 			Zip.addCustomFileExtension("ipa")
 		}
@@ -64,6 +67,9 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		try await withCheckedThrowingContinuation { continuation in
 			DispatchQueue.global(qos: .utility).async {
 				do {
+					let progressLock = NSLock()
+					var lastProgressUpdate = Date.distantPast
+					var lastReportedProgress = 0.0
 					try Zip.unzipFile(
 						self._ipa,
 						destination: self._uniqueWorkDir,
@@ -71,6 +77,17 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 						password: nil,
 						progress: { progress in
 							if let download = download {
+								progressLock.lock()
+								let now = Date()
+								let shouldReport = now.timeIntervalSince(lastProgressUpdate) >= 0.125
+									|| progress - lastReportedProgress >= 0.01
+									|| progress >= 1
+								if shouldReport {
+									lastProgressUpdate = now
+									lastReportedProgress = progress
+								}
+								progressLock.unlock()
+								guard shouldReport else { return }
 								DispatchQueue.main.async {
 									download.unpackageProgress = progress
 									
@@ -83,7 +100,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 							}
 						}
 					)
-					
+					if Task.isCancelled { throw CancellationError() }
 					self.uniqueWorkDirPayload = self._uniqueWorkDir.appendingPathComponent("Payload")
 					continuation.resume()
 				} catch {
@@ -94,6 +111,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	}
 	
 	func move() async throws {
+		try Task.checkCancellation()
 		guard let payloadURL = uniqueWorkDirPayload else {
 			throw ImportedFileHandlerError.payloadNotFound
 		}
@@ -111,6 +129,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	}
 	
 	func addToDatabase() async throws {
+		try Task.checkCancellation()
 		let app = try await _directory()
 		
 		guard let appUrl = _fileManager.getPath(in: app, for: "app") else {
@@ -121,6 +140,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	}
 
 	func recoverCommittedImport() async throws -> Bool {
+		try Task.checkCancellation()
 		let destinationURL = try await _directory()
 		guard _fileManager.fileExists(atPath: destinationURL.path) else {
 			return false
@@ -135,17 +155,10 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		return true
 	}
 
-	static func removeUncommittedImport(transactionIdentifier: String) async {
-		let isCommitted = await MainActor.run {
-			do {
-				return try Storage.shared.importedExists(uuid: transactionIdentifier)
-			} catch {
-				// Preserve the destination if Core Data cannot prove it is uncommitted.
-				return true
-			}
+	static func removeImportTransaction(transactionIdentifier: String) async {
+		await MainActor.run {
+			try? Storage.shared.removeImported(uuid: transactionIdentifier)
 		}
-		guard !isCommitted else { return }
-
 		let fileManager = FileManager.default
 		try? fileManager.removeFileIfNeeded(
 			at: fileManager.unsigned(transactionIdentifier)
@@ -159,8 +172,10 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	}
 
 	private func _commitToDatabase(appURL: URL) async throws {
+		try Task.checkCancellation()
 		let bundle = Bundle(url: appURL)
 		try await MainActor.run {
+			if Task.isCancelled { throw CancellationError() }
 			try Storage.shared.upsertImported(
 				uuid: _uuid,
 				source: _sourceProvenance?.sourceRepositoryURL,
@@ -191,11 +206,29 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	func clean() async throws {
 		try _fileManager.removeFileIfNeeded(at: _uniqueWorkDir)
 	}
+
+	private func _checkAvailableDiskSpace() throws {
+		let fileSize = Int64(
+			(try _ipa.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
+		)
+		let values = try _uniqueWorkDir.resourceValues(
+			forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+		)
+		guard let available = values.volumeAvailableCapacityForImportantUsage else { return }
+		let doubledSize = fileSize.multipliedReportingOverflow(by: 2)
+		let required = doubledSize.overflow
+			? Int64.max
+			: max(doubledSize.partialValue, 512 * 1024 * 1024)
+		guard available >= required else {
+			throw ImportedFileHandlerError.insufficientDiskSpace(required: required, available: available)
+		}
+	}
 }
 
 private enum ImportedFileHandlerError: LocalizedError {
 	case payloadNotFound
 	case appBundleNotFound
+	case insufficientDiskSpace(required: Int64, available: Int64)
 
 	var errorDescription: String? {
 		switch self {
@@ -203,6 +236,8 @@ private enum ImportedFileHandlerError: LocalizedError {
 			return "The archive does not contain a Payload directory."
 		case .appBundleNotFound:
 			return "The archive does not contain an application bundle."
+		case .insufficientDiskSpace(let required, let available):
+			return "Not enough free space to import this IPA. Feather needs about \(required.formattedByteCount), but \(available.formattedByteCount) is available."
 		}
 	}
 }

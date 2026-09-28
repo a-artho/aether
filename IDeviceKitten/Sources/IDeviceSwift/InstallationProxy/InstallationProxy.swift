@@ -29,6 +29,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		var afcClient: AfcClientHandle?
 		var fileHandle: AfcFileHandle?
 		var installproxy: InstallationProxyClientHandle?
+		var remotePath: String?
 
 		try await Task.detached(priority: .utility) {
 			guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
@@ -44,13 +45,17 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			}
 
 			defer {
-				afc_client_free(afcClient)
-				installation_proxy_client_free(installproxy)
 				if let fileHandle {
 					if let error = afc_file_close(fileHandle) {
 						idevice_error_free(error)
 					}
 				}
+				if let afcClient, let remotePath,
+				   let error = afc_remove_path(afcClient, remotePath) {
+					idevice_error_free(error)
+				}
+				installation_proxy_client_free(installproxy)
+				afc_client_free(afcClient)
 			}
 
 			let heartbeat = await self._heartbeat
@@ -82,6 +87,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			}
 
 			let remoteDir = "/\(stagingDir)/\(self._uuid).ipa"
+			remotePath = remoteDir
 
 			let afc_file_open_result = afc_file_open(afcClient, remoteDir, AfcWrOnly, &fileHandle)
 			guard afc_file_open_result == nil else {
@@ -102,6 +108,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			let chunkSize = 4 * 1024 * 1024
 			var totalBytesWritten: Int64 = 0
 			while let chunk = try localFile.read(upToCount: chunkSize), !chunk.isEmpty {
+				try Task.checkCancellation()
 				let writeError = chunk.withUnsafeBytes { buffer -> UnsafeMutablePointer<IdeviceFfiError>? in
 					guard let baseAddress = buffer.baseAddress else { return nil }
 					return afc_file_write(

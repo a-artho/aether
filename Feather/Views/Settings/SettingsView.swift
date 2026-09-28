@@ -8,8 +8,6 @@
 import SwiftUI
 import NimbleViews
 import UIKit
-import Darwin
-import IDeviceSwift
 
 // MARK: - View
 struct SettingsView: View {
@@ -32,21 +30,10 @@ struct SettingsView: View {
 		}
 		return _certificates[_storedSelectedCert]
 	}
-
-    
-	private let _donationsUrl = "https://github.com/sponsors/claration"
-	private let _githubUrl = "https://github.com/claration/Feather"
-    
 	// MARK: Body
 	var body: some View {
-		NBNavigationView(.localized("Settings")) {
+		NBNavigationView(.localized("Settings"), displayMode: .inline) {
 			Form {
-				#if !NIGHTLY && !DEBUG
-					SettingsDonationCellView(site: _donationsUrl)
-				#endif
-                
-				_feedback()
-                
 				Section {
 					NavigationLink(destination: AppearanceView()) {
 						Label(.localized("Appearance"), systemImage: "paintbrush")
@@ -101,30 +88,8 @@ struct SettingsView: View {
 	}
 }
 
-// MARK: - View extension
+// MARK: - View Extension
 extension SettingsView {
-	@ViewBuilder
-	private func _feedback() -> some View {
-		Section {
-			NavigationLink(destination: AboutView()) {
-				Label {
-					Text(verbatim: .localized("About %@", arguments: Bundle.main.name))
-				} icon: {
-					FRAppIconView(size: 23)
-				}
-			}
-            
-			Button(.localized("Submit Feedback"), systemImage: "safari") {
-				UIApplication.open(URL(string: "\(_githubUrl)/issues/new/choose")!)
-			}
-			Button(.localized("GitHub Repository"), systemImage: "safari") {
-				UIApplication.open(_githubUrl)
-			}
-		} footer: {
-			Text(.localized("If any issues occur within the app please report it via the GitHub repository. When submitting an issue, make sure to submit detailed information."))
-		}
-	}
-    
 	@ViewBuilder
 	private func _directories() -> some View {
 		NBSection(.localized("Misc")) {

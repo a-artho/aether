@@ -182,8 +182,15 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 			let sorted = filtered.sorted {
 				let n1 = $0.app.name ?? ""
 				let n2 = $1.app.name ?? ""
-				let comparison = n1.localizedCaseInsensitiveCompare(n2) == .orderedAscending
-				return sortAscending ? comparison : !comparison
+				let comparison = n1.localizedCaseInsensitiveCompare(n2)
+				if comparison == .orderedSame {
+					let id1 = $0.app.id ?? ""
+					let id2 = $1.app.id ?? ""
+					return sortAscending ? id1 < id2 : id1 > id2
+				}
+				return sortAscending
+					? comparison == .orderedAscending
+					: comparison == .orderedDescending
 			}
 			_groupedAppsByNameFirstLetter = Dictionary(grouping: sorted) {
 				let first = $0.app.name?.trimmingCharacters(in: .whitespacesAndNewlines).first?.uppercased() ?? "#"

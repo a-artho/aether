@@ -150,15 +150,21 @@ extension HeartbeatManager {
 		rsdConnectionLock.lock()
 		defer { rsdConnectionLock.unlock() }
 
-		try _ensureRSDTunnelLocked()
-		guard let adapter = rsdAdapter, let handshake = rsdHandshake else {
-			throw IDeviceConnectionError.rsdTunnelUnavailable("The adapter or handshake is missing.")
-		}
+		for attempt in 0..<2 {
+			try _ensureRSDTunnelLocked()
+			guard let adapter = rsdAdapter, let handshake = rsdHandshake else {
+				throw IDeviceConnectionError.rsdTunnelUnavailable("The adapter or handshake is missing.")
+			}
 
-		if let errorPointer = connect(adapter, handshake) {
-			let error = IDeviceSwiftError(errorPointer)
-			_invalidateRSDTunnelLocked()
-			throw error
+			if let errorPointer = connect(adapter, handshake) {
+				let error = IDeviceSwiftError(errorPointer)
+				_invalidateRSDTunnelLocked()
+				if attempt == 0 {
+					continue
+				}
+				throw error
+			}
+			return
 		}
 	}
 

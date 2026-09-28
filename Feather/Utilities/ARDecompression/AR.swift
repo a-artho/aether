@@ -10,60 +10,72 @@ import Foundation
 class AR: NSObject {
 	private var _data: Data
 	
-	init(with url: URL) {
-		self._data = try! Data(contentsOf: url)
+	init(with url: URL) throws {
+		self._data = try Data(contentsOf: url, options: [.mappedIfSafe])
 		super.init()
 	}
 	
 	func extract() async throws -> [ARFileModel] {
-		if [UInt8](_data.subdata(in: Range(0...7))) != [0x21, 0x3c, 0x61, 0x72, 0x63, 0x68, 0x3e, 0x0a] {
+		let magic = Data([0x21, 0x3c, 0x61, 0x72, 0x63, 0x68, 0x3e, 0x0a])
+		guard _data.count >= magic.count, _data.prefix(magic.count) == magic else {
 			throw ARError.badArchive("Invalid magic")
 		}
-		
-		let data = _data.subdata(in: 8..<_data.endIndex)
-		
-		var offset = 0
+
+		var offset = magic.count
 		var files: [ARFileModel] = []
-		while offset < data.count {
-			let fileInfo = try _getFileInfo(data, offset)
+		while offset < _data.count {
+			try Task.checkCancellation()
+			let fileInfo = try _getFileInfo(_data, offset)
 			files.append(fileInfo)
-			offset += fileInfo.size + 60
-			offset += offset % 2
+			let (nextOffset, overflow) = offset.addingReportingOverflow(60 + fileInfo.size)
+			guard !overflow else { throw ARError.badArchive("Invalid entry offset") }
+			offset = nextOffset + (fileInfo.size % 2)
 		}
 		return files
 	}
 	
 	private func _getFileInfo(_ data: Data, _ offset: Int) throws -> ARFileModel {
-		let size = Int(_removePadding(String(data: data.subdata(in: offset+48..<offset+48+10), encoding: .ascii) ?? "0"))!
-		if size < 1 {
+		guard offset >= 0, offset <= data.count, data.count - offset >= 60 else {
+			throw ARError.badArchive("Truncated entry header")
+		}
+		guard data[offset + 58] == 0x60, data[offset + 59] == 0x0A else {
+			throw ARError.badArchive("Invalid entry header")
+		}
+
+		let sizeString = try _field(data, range: offset + 48..<offset + 58)
+		guard let size = Int(sizeString), size >= 0, size <= data.count - (offset + 60) else {
 			throw ARError.badArchive("Invalid size")
 		}
 		
-		let name = _removePadding(String(data: data.subdata(in: offset..<offset+16), encoding: .ascii) ?? "")
-		guard name != "" else {
+		let name = try _field(data, range: offset..<offset + 16)
+			.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+		guard !name.isEmpty, name != ".", name != "..", !name.contains("/") else {
 			throw ARError.badArchive("Invalid name")
 		}
+
+		let timestamp = Double(try _field(data, range: offset + 16..<offset + 28)) ?? 0
+		let ownerID = Int(try _field(data, range: offset + 28..<offset + 34)) ?? 0
+		let groupID = Int(try _field(data, range: offset + 34..<offset + 40)) ?? 0
+		let mode = Int(try _field(data, range: offset + 40..<offset + 48), radix: 8) ?? 0
 		
 		return ARFileModel(
 			name: name,
-			modificationDate: NSDate(timeIntervalSince1970: Double(_removePadding(String(data: data.subdata(in: offset+16..<offset+16+12), encoding: .ascii) ?? "0"))!) as Date,
-			ownerId: Int(_removePadding(String(data: data.subdata(in: offset+28..<offset+28+6), encoding: .ascii) ?? "0"))!,
-			groupId: Int(_removePadding(String(data: data.subdata(in: offset+34..<offset+34+6), encoding: .ascii) ?? "0"))!,
-			mode: Int(_removePadding(String(data: data.subdata(in: offset+40..<offset+40+8), encoding: .ascii) ?? "0"))!,
+			modificationDate: Date(timeIntervalSince1970: timestamp),
+			ownerId: ownerID,
+			groupId: groupID,
+			mode: mode,
 			size: size,
-			content: data.subdata(in: offset+60..<offset+60+size)
+			content: data[offset+60..<offset+60+size]
 		)
 	}
 	
-	private func _removePadding(_ paddedString: String) -> String {
-		let data = paddedString.data(using: .utf8)!
-		
-		guard let firstNonSpaceIndex = data.firstIndex(of: UInt8(ascii: " ")) else {
-			return paddedString
+	private func _field(_ data: Data, range: Range<Int>) throws -> String {
+		guard range.lowerBound >= 0, range.upperBound <= data.count,
+		      let value = String(data: data[range], encoding: .ascii)
+		else {
+			throw ARError.badArchive("Invalid header field")
 		}
-		
-		let actualData = data[..<firstNonSpaceIndex]
-		return String(data: actualData, encoding: .utf8)!
+		return value.trimmingCharacters(in: .whitespacesAndNewlines)
 	}
 }
 

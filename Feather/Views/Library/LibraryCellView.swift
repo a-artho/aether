@@ -13,9 +13,6 @@ import NimbleViews
 struct LibraryCellView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@Environment(\.editMode) private var editMode
-	@ObservedObject private var updateManager = UpdateManager.shared
-	@State private var _signedUpdateConfirmation: AppUpdate?
-	@State private var _isSignedUpdateConfirmationPresented = false
 
 	var certInfo: Date.ExpirationInfo? {
 		Storage.shared.getCertificate(from: app)?.expiration?.expirationInfo()
@@ -63,13 +60,9 @@ struct LibraryCellView: View {
 				.buttonStyle(.borderless)
 			}
 			
-			_appIcon(for: app)
+			FRAppIconView(app: app, size: 57)
 			
-			NBTitleWithSubtitleView(
-				title: app.name ?? .localized("Unknown"),
-				subtitle: _desc,
-				linelimit: 0
-			)
+			_appDetails(for: app)
 			
 			if !isEditing {
 				_buttonActions(for: app)
@@ -102,25 +95,6 @@ struct LibraryCellView: View {
 				_actions(for: app)
 			}
 		}
-		.confirmationDialog(
-			.localized("Update Available"),
-			isPresented: $_isSignedUpdateConfirmationPresented,
-			titleVisibility: .visible
-		) {
-			Button(.localized("Install Current Version"), systemImage: "square.and.arrow.down") {
-				selectedInstallAppPresenting = AnyApp(base: app)
-			}
-			if let update = _signedUpdateConfirmation {
-				Button(.localized("Download Update"), systemImage: "arrow.down.circle") {
-					_startUpdateDownload(update)
-				}
-			}
-			Button(.localized("Cancel"), role: .cancel) {}
-		} message: {
-			if let update = _signedUpdateConfirmation {
-				Text(verbatim: "\(update.appName) \(update.remoteVersion)")
-			}
-		}
 	}
 	
 	private var _desc: String {
@@ -135,25 +109,48 @@ struct LibraryCellView: View {
 
 // MARK: - Extension: View
 extension LibraryCellView {
-	private func _appIcon(for app: AppInfoPresentable) -> some View {
-		FRAppIconView(app: app, size: 57)
-			.overlay(alignment: .topTrailing) {
-				if updateManager.update(for: app) != nil {
-					Image(systemName: "arrow.down.circle.fill")
-						.font(.system(size: 18, weight: .semibold))
-						.symbolRenderingMode(.palette)
-						.foregroundStyle(.white, Color.accentColor)
-						.background(
-							Circle()
-								.fill(Color(.systemBackground))
-								.frame(width: 20, height: 20)
-						)
-						.offset(x: 5, y: -5)
-						.accessibilityLabel(.localized("Update Available"))
+	private func _appDetails(for app: AppInfoPresentable) -> some View {
+		VStack(alignment: .leading, spacing: 2) {
+			Text(app.name ?? .localized("Unknown"))
+				.font(.headline)
+				.foregroundColor(.primary)
+
+			Text(_desc)
+				.font(.subheadline)
+				.foregroundColor(.secondary)
+				.lineLimit(1)
+
+			if let status = _certificateStatus {
+				HStack(spacing: 6) {
+					Circle()
+						.fill(status.color)
+						.frame(width: 8, height: 8)
+					Text(status.label)
+						.font(.subheadline)
+						.foregroundColor(.secondary)
 				}
+				.accessibilityElement(children: .combine)
+				.accessibilityLabel(status.label)
 			}
+		}
+		.padding(.vertical, 2)
+		.frame(maxWidth: .infinity, alignment: .leading)
 	}
-	
+
+	private var _certificateStatus: (label: String, color: Color)? {
+		guard app.isSigned else { return nil }
+
+		if certRevoked {
+			return (.localized("Revoked"), .red)
+		}
+
+		if let certInfo {
+			return (certInfo.formatted, certInfo.color)
+		}
+
+		return (.localized("Install"), .accentColor)
+	}
+
 	@ViewBuilder
 	private func _actions(for app: AppInfoPresentable) -> some View {
 		Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
@@ -170,17 +167,6 @@ extension LibraryCellView {
 	
 	@ViewBuilder
 	private func _contextActionsExtra(for app: AppInfoPresentable) -> some View {
-		if let update = updateManager.update(for: app) {
-			Button(.localized("Update"), systemImage: "arrow.down.circle") {
-				if app.isSigned {
-					_signedUpdateConfirmation = update
-					_isSignedUpdateConfirmationPresented = true
-				} else {
-					_startUpdateDownload(update)
-				}
-			}
-		}
-		
 		if app.isSigned {
 			if let id = app.identifier {
 				Button(.localized("Open"), systemImage: "app.badge.checkmark") {
@@ -208,60 +194,16 @@ extension LibraryCellView {
 	
 	@ViewBuilder
 	private func _buttonActions(for app: AppInfoPresentable) -> some View {
-		Group {
-			if let update = updateManager.update(for: app) {
-				if app.isSigned {
-					Button {
-						_signedUpdateConfirmation = update
-						_isSignedUpdateConfirmationPresented = true
-					} label: {
-						FRExpirationPillView(
-							title: .localized("Install"),
-							revoked: certRevoked,
-							expiration: certInfo
-						)
-					}
-				} else {
-					Button {
-						_startUpdateDownload(update)
-					} label: {
-						FRExpirationPillView(
-							title: .localized("Update"),
-							revoked: false,
-							expiration: nil
-						)
-					}
-				}
-			} else if app.isSigned {
-				Button {
-					selectedInstallAppPresenting = AnyApp(base: app)
-				} label: {
-					FRExpirationPillView(
-						title: .localized("Install"),
-						revoked: certRevoked,
-						expiration: certInfo
-					)
-				}
+		Button {
+			if app.isSigned {
+				selectedInstallAppPresenting = AnyApp(base: app)
 			} else {
-				Button {
-					selectedSigningAppPresenting = AnyApp(base: app)
-				} label: {
-					FRExpirationPillView(
-						title: .localized("Sign"),
-						revoked: false,
-						expiration: nil
-					)
-				}
+				selectedSigningAppPresenting = AnyApp(base: app)
 			}
+		} label: {
+			NBButton(app.isSigned ? .localized("Install") : .localized("Sign"), style: .text)
 		}
 		.buttonStyle(.borderless)
-	}
-	
-	private func _startUpdateDownload(_ update: AppUpdate) {
-		_ = DownloadManager.shared.startDownload(
-			from: update.downloadURL,
-			id: "FeatherManualDownload_Update_\(update.localUUID)",
-			sourceProvenance: update.sourceProvenance
-		)
+		.accessibilityLabel(app.isSigned ? .localized("Install") : .localized("Sign"))
 	}
 }

@@ -35,18 +35,8 @@ struct DownloadLibraryCellView: View {
 			}
 		}
 		.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-			if _isFailed {
-				Button(.localized("Dismiss"), systemImage: "xmark", role: .destructive) {
-					DownloadManager.shared.dismissDownload(download)
-				}
-			}
-		}
-		.swipeActions(edge: .leading, allowsFullSwipe: false) {
-			if case .downloading = download.state {
-				Button(.localized("Pause"), systemImage: "pause.fill") {
-					DownloadManager.shared.pauseDownload(download)
-				}
-				.tint(.orange)
+			Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
+				DownloadManager.shared.deleteDownload(download)
 			}
 		}
 	}
@@ -76,7 +66,7 @@ struct DownloadLibraryCellView: View {
 	}
 
 	private var _isFailed: Bool {
-		if case .failed = download.state { return true }
+		if case .failed(_, _) = download.state { return true }
 		return false
 	}
 
@@ -87,11 +77,15 @@ struct DownloadLibraryCellView: View {
 				return .localized("Downloading")
 			}
 			return "\(download.bytesDownloaded.formattedByteCount) / \(download.totalBytes.formattedByteCount)"
+		case .pausing:
+			return .localized("Pausing")
 		case .paused:
 			return .localized("Paused")
+		case .resuming:
+			return .localized("Resuming")
 		case .processing:
 			return .localized("Processing") + " \(Int(download.overallProgress * 100))%"
-		case .failed(let message):
+		case .failed(let message, _):
 			return message.isEmpty ? .localized("Download Failed") : message
 		}
 	}

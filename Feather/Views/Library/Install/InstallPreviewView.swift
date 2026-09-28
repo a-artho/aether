@@ -8,7 +8,6 @@
 import SwiftUI
 import NimbleViews
 import IDeviceSwift
-import OSLog
 
 // MARK: - View
 struct InstallPreviewView: View {
@@ -19,10 +18,11 @@ struct InstallPreviewView: View {
 	@AppStorage("Feather.serverMethod") private var _serverMethod: Int = 0
 	@State private var _isWebviewPresenting = false
 	@State private var progressTask: Task<Void, Never>?
+	@State private var installer: ServerInstaller?
+	@State private var archiveHandler: ArchiveHandler?
 	
 	var app: AppInfoPresentable
 	@StateObject var viewModel: InstallerStatusViewModel
-	@StateObject var installer: ServerInstaller
 	
 	@State var isSharing: Bool
 	
@@ -31,7 +31,6 @@ struct InstallPreviewView: View {
 		self.isSharing = isSharing
 		let viewModel = InstallerStatusViewModel(isIdevice: UserDefaults.standard.integer(forKey: "Feather.installationMethod") == 1)
 		self._viewModel = StateObject(wrappedValue: viewModel)
-		self._installer = StateObject(wrappedValue: try! ServerInstaller(app: app, viewModel: viewModel))
 	}
 	
 	// MARK: Body
@@ -54,13 +53,17 @@ struct InstallPreviewView: View {
 		.cornerRadius(cornerRadius)
 		.padding()
 		.sheet(isPresented: $_isWebviewPresenting) {
-			SafariRepresentableView(url: installer.pageEndpoint).ignoresSafeArea()
+			if let installer {
+				SafariRepresentableView(url: installer.pageEndpoint).ignoresSafeArea()
+			}
 		}
 		.onReceive(viewModel.$status) { newStatus in
 			if _installationMethod == 0 {
-				if case .ready = newStatus {
+				if case .ready = newStatus, let installer {
 					if _serverMethod == 0 {
-						UIApplication.shared.open(URL(string: installer.iTunesLink)!)
+						if let installURL = URL(string: installer.iTunesLink) {
+							UIApplication.shared.open(installURL)
+						}
 					} else if _serverMethod == 1 {
 						_isWebviewPresenting = true
 					}
@@ -70,10 +73,10 @@ struct InstallPreviewView: View {
 					_isWebviewPresenting = false
 				}
 				
-				if case .installing = newStatus {
+				if case .installing = newStatus, let bundleIdentifier = app.identifier {
 					if progressTask == nil {
 						progressTask = startInstallProgressPolling(
-							bundleID: app.identifier!,
+							bundleID: bundleIdentifier,
 							viewModel: viewModel
 						)
 					}
@@ -83,9 +86,7 @@ struct InstallPreviewView: View {
 				case .completed, .broken(_):
 					progressTask?.cancel()
 					progressTask = nil
-					#if !targetEnvironment(macCatalyst)
-					BackgroundAudioManager.shared.stop()
-					#endif
+					_cleanupInstallResources()
 				default:
 					break
 				}
@@ -93,19 +94,10 @@ struct InstallPreviewView: View {
 		}
 		.onAppear(perform: _install)
 		
-		#if !targetEnvironment(macCatalyst)
-		.onAppear {
-			BackgroundAudioManager.shared.start()
-		}
-		#endif
-		
 		.onDisappear {
 			progressTask?.cancel()
 			progressTask = nil
-			
-			#if !targetEnvironment(macCatalyst)
-			BackgroundAudioManager.shared.stop()
-			#endif
+			_cleanupInstallResources()
 		}
 	}
 	
@@ -136,43 +128,50 @@ struct InstallPreviewView: View {
 	}
 	
 	private func _install() {
-		guard isSharing || app.identifier != Bundle.main.bundleIdentifier! || _installationMethod == 1 else {
+		guard isSharing || app.identifier != Bundle.main.bundleIdentifier || _installationMethod == 1 else {
 			UIAlertController.showAlertWithOk(
 				title: .localized("Install"),
 				message: .localized("You cannot update ‘%@‘ with itself, please use an alternative tool to update it.", arguments: Bundle.main.name)
 			)
 			return
 		}
+
+		#if !targetEnvironment(macCatalyst)
+		if !isSharing && _installationMethod == 0 {
+			BackgroundAudioManager.shared.start()
+		}
+		#endif
 				
 		Task.detached {
+			var currentHandler: ArchiveHandler?
 			do {
 				let handler = await ArchiveHandler(app: app, viewModel: viewModel)
+				currentHandler = handler
+				await MainActor.run { archiveHandler = handler }
 				try await handler.move()
 				
 				let packageUrl = try await handler.archive()
 				
 				if await !isSharing {
 					if await _installationMethod == 0 {
+						let serverInstaller = try await MainActor.run {
+							try ServerInstaller(app: app, viewModel: viewModel)
+						}
 						await MainActor.run {
-							installer.packageUrl = packageUrl
+							installer = serverInstaller
+							serverInstaller.packageUrl = packageUrl
 							viewModel.status = .ready
 						}
-						
-						if case .installing = await viewModel.status {
-							let task = await startInstallProgressPolling(
-								bundleID: app.identifier!,
-								viewModel: viewModel
-							)
-
-							await MainActor.run {
-								progressTask = task
-							}
-						}
 					} else if await _installationMethod == 1 {
-						let handler = await InstallationProxy(viewModel: viewModel)
-						try await handler.install(at: packageUrl, suspend: app.identifier == Bundle.main.bundleIdentifier!)
+						defer { handler.clean() }
+						let proxy = await InstallationProxy(viewModel: viewModel)
+						try await proxy.install(
+							at: packageUrl,
+							suspend: app.identifier == Bundle.main.bundleIdentifier
+						)
 					}
 				} else {
+					defer { handler.clean() }
 					let package = try await handler.moveToArchive(packageUrl, shouldOpen: !_useShareSheet)
 					
 					if await !_useShareSheet {
@@ -189,9 +188,15 @@ struct InstallPreviewView: View {
 					}
 				}
 			} catch {
+				currentHandler?.clean()
 				await progressTask?.cancel()
 				
 				await MainActor.run {
+					archiveHandler = nil
+					installer = nil
+					#if !targetEnvironment(macCatalyst)
+					BackgroundAudioManager.shared.stop()
+					#endif
 					UIAlertController.showAlertWithOk(
 						title: .localized("Install"),
 						message: String(describing: error),
@@ -212,6 +217,7 @@ struct InstallPreviewView: View {
 
 		Task.detached(priority: .background) {
 			var hasStarted = false
+			var lastPublishedProgress = -1.0
 
 			while !Task.isCancelled {
 				let rawProgress = await UIApplication.installProgress(for: bundleID) ?? 0.0
@@ -224,10 +230,11 @@ struct InstallPreviewView: View {
 					? _normalizeInstallProgress(rawProgress)
 					: 0.0
 
-				Logger.misc.info("Install progress for \(bundleID): \(progress)")
-
-				await MainActor.run {
-					viewModel.installProgress = progress
+				if abs(progress - lastPublishedProgress) >= 0.005 {
+					lastPublishedProgress = progress
+					await MainActor.run {
+						viewModel.installProgress = progress
+					}
 				}
 
 				if hasStarted && rawProgress == 0 {
@@ -238,9 +245,22 @@ struct InstallPreviewView: View {
 					break
 				}
 
-				try? await Task.sleep(nanoseconds: 1_000_000) // 1 ms
+				do {
+					try await Task.sleep(nanoseconds: 300_000_000)
+				} catch {
+					break
+				}
 			}
 		}
+	}
+
+	private func _cleanupInstallResources() {
+		archiveHandler?.clean()
+		archiveHandler = nil
+		installer = nil
+		#if !targetEnvironment(macCatalyst)
+		BackgroundAudioManager.shared.stop()
+		#endif
 	}
 
 	private func _normalizeInstallProgress(_ rawProgress: Double) -> Double {

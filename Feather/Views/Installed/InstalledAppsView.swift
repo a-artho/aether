@@ -30,7 +30,7 @@ struct InstalledAppsView: View {
 	}
 
 	var body: some View {
-		NBNavigationView(.localized("Installed")) {
+		NBNavigationView(.localized("Device"), displayMode: .inline) {
 			NBListAdaptable {
 				if !store.apps.isEmpty {
 					NBSection(
@@ -108,6 +108,7 @@ private struct InstalledAppCellView: View {
 		HStack(spacing: 18) {
 			InstalledAppIconView(
 				bundleIdentifier: app.bundleIdentifier,
+				cacheVersion: app.iconCacheVersion,
 				loadsIcon: loadsIcon
 			)
 
@@ -139,6 +140,7 @@ private struct InstalledAppCellView: View {
 
 private struct InstalledAppIconView: View {
 	let bundleIdentifier: String
+	let cacheVersion: String
 	let loadsIcon: Bool
 	@State private var image: UIImage?
 
@@ -150,9 +152,12 @@ private struct InstalledAppIconView: View {
 				Image("App_Unknown").appIconStyle(size: 57)
 			}
 		}
-		.task(id: bundleIdentifier) {
+		.task(id: bundleIdentifier + "|" + cacheVersion) {
 			guard loadsIcon else { return }
-			image = try? await InstallationAppProxy.getAppIconCached(for: bundleIdentifier)
+			image = try? await InstallationAppProxy.getAppIconCached(
+				for: bundleIdentifier,
+				cacheVersion: cacheVersion
+			)
 		}
 	}
 }

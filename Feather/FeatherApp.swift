@@ -146,7 +146,7 @@ struct FeatherApp: App {
 					at: externalURL
 				)
 				await MainActor.run {
-					FR.handlePackageFile(materializedFile.fileURL) { error in
+					_ = FR.handlePackageFile(materializedFile.fileURL) { error in
 						materializedFile.cleanup()
 						if let error {
 							UIAlertController.showAlertWithOk(
@@ -206,7 +206,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 			let dataCache = try? DataCache(name: "thewonderofyou.Feather.datacache") // disk cache
 			let imageCache = Nuke.ImageCache() // memory cache
 			dataCache?.sizeLimit = 500 * 1024 * 1024
-			imageCache.costLimit = 100 * 1024 * 1024
+			imageCache.costLimit = 48 * 1024 * 1024
 			$0.dataCache = dataCache
 			$0.imageCache = imageCache
 			$0.dataLoader = dataLoader

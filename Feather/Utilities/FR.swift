@@ -12,7 +12,30 @@ import NimbleJSON
 import AltSourceKit
 import IDeviceSwift
 
+private actor PackageProcessingGate {
+	private var isOccupied = false
+	private var waiters: [CheckedContinuation<Void, Never>] = []
+
+	func acquire() async {
+		if !isOccupied {
+			isOccupied = true
+			return
+		}
+		await withCheckedContinuation { waiters.append($0) }
+	}
+
+	func release() {
+		if waiters.isEmpty {
+			isOccupied = false
+		} else {
+			waiters.removeFirst().resume()
+		}
+	}
+}
+
 enum FR {
+	private static let packageProcessingGate = PackageProcessingGate()
+
 	static func recoverPackageImport(
 		download: Download,
 		completion: @escaping (Result<Bool, Error>) -> Void
@@ -41,9 +64,15 @@ enum FR {
 		download: Download? = nil,
 		sourceProvenance: SourceAppProvenance? = nil,
 		transactionIdentifier: String? = nil,
+		copySource: Bool = true,
 		completion: @escaping (Error?) -> Void
-	) {
-		Task.detached {
+	) -> Task<Void, Never> {
+		Task.detached(priority: .utility) {
+			await packageProcessingGate.acquire()
+			defer {
+				Task { await packageProcessingGate.release() }
+			}
+
 			let handler = AppFileHandler(
 				file: ipa,
 				download: download,
@@ -52,15 +81,19 @@ enum FR {
 			)
 			
 			do {
+				try Task.checkCancellation()
 				if try await handler.recoverCommittedImport() {
 					await MainActor.run {
 						completion(nil)
 					}
 					return
 				}
-				try await handler.copy()
+				try await handler.prepare(copySource: copySource)
+				try Task.checkCancellation()
 				try await handler.extract()
+				try Task.checkCancellation()
 				try await handler.move()
+				try Task.checkCancellation()
 				try await handler.addToDatabase()
 				try? await handler.clean()
 				await MainActor.run {

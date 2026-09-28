@@ -39,7 +39,7 @@ struct DownloadProgressButton: View {
 
 	private var _showsProgress: Bool {
 		switch download.state {
-		case .downloading, .processing:
+		case .downloading, .pausing, .resuming, .processing:
 			return true
 		case .paused, .failed:
 			return false
@@ -50,7 +50,7 @@ struct DownloadProgressButton: View {
 		switch download.state {
 		case .downloading, .paused, .failed:
 			return true
-		case .processing:
+		case .pausing, .resuming, .processing:
 			return false
 		}
 	}
@@ -58,7 +58,9 @@ struct DownloadProgressButton: View {
 	private var _systemImage: String {
 		switch download.state {
 		case .downloading:
-			return "square.fill"
+			return "pause.fill"
+		case .pausing, .resuming:
+			return "hourglass"
 		case .paused:
 			return "play.fill"
 		case .processing:
@@ -71,25 +73,33 @@ struct DownloadProgressButton: View {
 	private var _accessibilityLabel: String {
 		switch download.state {
 		case .downloading:
-			return .localized("Cancel Download")
+			return .localized("Pause Download")
+		case .pausing:
+			return .localized("Pausing Download")
 		case .paused:
 			return .localized("Resume Download")
+		case .resuming:
+			return .localized("Resuming Download")
 		case .processing:
 			return .localized("Processing")
-		case .failed:
-			return .localized("Retry Download")
+		case .failed(_, let action):
+			switch action {
+			case .resume: return .localized("Resume Download")
+			case .restart: return .localized("Restart Download")
+			case .retryProcessing: return .localized("Retry Processing")
+			}
 		}
 	}
 
 	private func _performAction() {
 		switch download.state {
 		case .downloading:
-			downloadManager.cancelDownload(download)
+			downloadManager.pauseDownload(download)
 		case .paused:
 			downloadManager.resumeDownload(download)
 		case .failed:
 			downloadManager.retryDownload(download)
-		case .processing:
+		case .pausing, .resuming, .processing:
 			break
 		}
 	}

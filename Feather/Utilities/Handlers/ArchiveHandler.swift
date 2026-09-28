@@ -8,11 +8,10 @@
 import Foundation
 import UIKit.UIApplication
 import Zip
-import SwiftUI
 import IDeviceSwift
 
 final class ArchiveHandler: NSObject {
-	@ObservedObject var viewModel: InstallerStatusViewModel
+	let viewModel: InstallerStatusViewModel
 	
 	private let _fileManager = FileManager.default
 	private let _uuid = UUID().uuidString
@@ -46,14 +45,14 @@ final class ArchiveHandler: NSObject {
 	
 	func archive() async throws -> URL {
 		return try await Task.detached(priority: .background) { [self] in
-			guard let payloadUrl = await self._payloadUrl else {
+			guard let payloadUrl = self._payloadUrl else {
 				throw SigningFileHandlerError.appNotFound
 			}
 			
 			let zipUrl = self._uniqueWorkDir.appendingPathComponent("Archive.zip")
 			let ipaUrl = self._uniqueWorkDir.appendingPathComponent("Archive.ipa")
 			
-			try await Zip.zipFiles(
+			try Zip.zipFiles(
 				paths: [payloadUrl],
 				zipFilePath: zipUrl,
 				password: nil,
@@ -70,21 +69,38 @@ final class ArchiveHandler: NSObject {
 	}
 	
 	func moveToArchive(_ package: URL, shouldOpen: Bool = false) async throws -> URL? {
-		let appendingString = "\(_app.name!)_\(_app.version!)_\(Int(Date().timeIntervalSince1970)).ipa"
+		let name = _safeFilenameComponent(_app.name ?? _app.identifier ?? "App")
+		let version = _safeFilenameComponent(_app.version ?? "Unknown")
+		let appendingString = "\(name)_\(version)_\(Int(Date().timeIntervalSince1970)).ipa"
 		let dest = _fileManager.archives.appendingPathComponent(appendingString)
 		
-		try? _fileManager.moveItem(
+		try _fileManager.moveItem(
 			at: package,
 			to: dest
 		)
 		
 		if shouldOpen {
-			await MainActor.run {
-				UIApplication.open(FileManager.default.archives.toSharedDocumentsURL()!)
+			if let sharedArchivesURL = FileManager.default.archives.toSharedDocumentsURL() {
+				await MainActor.run {
+					UIApplication.open(sharedArchivesURL)
+				}
 			}
 		}
 		
 		return dest
+	}
+
+	func clean() {
+		try? _fileManager.removeItem(at: _uniqueWorkDir)
+	}
+
+	private func _safeFilenameComponent(_ value: String) -> String {
+		let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_. "))
+		let sanitized = value.unicodeScalars
+			.map { allowed.contains($0) ? String($0) : "_" }
+			.joined()
+			.trimmingCharacters(in: .whitespacesAndNewlines)
+		return String((sanitized.isEmpty ? "Unknown" : sanitized).prefix(80))
 	}
 	
 	static func getCompressionLevel() -> Int {

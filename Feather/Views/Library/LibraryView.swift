@@ -12,7 +12,6 @@ import NimbleViews
 // MARK: - View
 struct LibraryView: View {
 	@StateObject var downloadManager = DownloadManager.shared
-	@StateObject var updateManager = UpdateManager.shared
 
 	@State private var _selectedInfoAppPresenting: AnyApp?
 	@State private var _selectedSigningAppPresenting: AnyApp?
@@ -20,15 +19,15 @@ struct LibraryView: View {
 	@State private var _isImportingPresenting = false
 	@State private var _isDownloadingPresenting = false
 	@State private var _alertDownloadString: String = "" // for _isDownloadingPresenting
-	@State private var _updateCheckRotation = 0.0
-	@State private var _isUpdateCheckCompleteVisible = false
 
 	// MARK: Selection State
 	@State private var _selectedAppUUIDs: Set<String> = []
 	@State private var _editMode: EditMode = .inactive
 
 	@State private var _searchText = ""
+	@State private var _isSearchPresented = false
 	@State private var _selectedScope: Scope = .all
+	@FocusState private var _isSearchFocused: Bool
 
 
 	@Namespace private var _namespace
@@ -62,16 +61,24 @@ struct LibraryView: View {
 		animation: .snappy
 	) private var _importedApps: FetchedResults<Imported>
 
-	@FetchRequest(
-		entity: AltSource.entity(),
-		sortDescriptors: [NSSortDescriptor(keyPath: \AltSource.name, ascending: true)],
-		animation: .snappy
-	) private var _sources: FetchedResults<AltSource>
-
 	// MARK: Body
 	var body: some View {
-		NBNavigationView(.localized("Library")) {
-			NBListAdaptable {
+		NBNavigationView("", displayMode: .inline) {
+			VStack(spacing: 0) {
+				if _isSearchPresented {
+					Picker("", selection: $_selectedScope) {
+						ForEach(Scope.allCases, id: \.self) { scope in
+							Text(scope.displayName).tag(scope)
+						}
+					}
+					.pickerStyle(.segmented)
+					.padding(.horizontal)
+					.padding(.top, 4)
+					.padding(.bottom, 6)
+					.transition(.move(edge: .top).combined(with: .opacity))
+				}
+
+				NBListAdaptable {
 				if !downloadManager.downloads.isEmpty {
 					NBSection(
 						.localized("Downloads"),
@@ -125,11 +132,6 @@ struct LibraryView: View {
 					}
 				}
 			}
-			.searchable(text: $_searchText, placement: .platform())
-			.compatSearchScopes($_selectedScope) {
-				ForEach(Scope.allCases, id: \.displayName) { scope in
-					Text(scope.displayName).tag(scope)
-				}
 			}
 			.scrollDismissesKeyboard(.interactively)
 			.overlay {
@@ -154,45 +156,126 @@ struct LibraryView: View {
 				}
 			}
 			.toolbar {
-				ToolbarItem(placement: .topBarLeading) {
-					EditButton()
-				}
-
-				if _editMode.isEditing {
-					NBToolbarButton(
-						.localized("Delete"),
-						systemImage: "trash",
-						isDisabled: _selectedAppUUIDs.isEmpty
-					) {
-						_bulkDeleteSelectedApps()
-					}
-				} else {
-					ToolbarItem(placement: .topBarTrailing) {
-						Button {
-							Task {
-								await _checkForUpdates()
+				ToolbarItem(placement: .principal) {
+					HStack(spacing: 8) {
+						if _editMode.isEditing {
+							Button(.localized("Done")) {
+								withAnimation {
+									_editMode = .inactive
+									_selectedAppUUIDs.removeAll()
+								}
 							}
-						} label: {
-							Image(systemName: _isUpdateCheckCompleteVisible ? "checkmark.circle.fill" : "arrow.triangle.2.circlepath")
-								.rotationEffect(.degrees(_updateCheckRotation))
-								.animation(
-									updateManager.isChecking
-										? .linear(duration: 0.8).repeatForever(autoreverses: false)
-										: .default,
-									value: _updateCheckRotation
-								)
-						}
-						.disabled(updateManager.isChecking)
-						.accessibilityLabel(.localized("Check for Updates"))
-					}
+							.transition(.opacity)
 
-					NBToolbarMenu(
-						systemImage: "plus",
-						style: .icon,
-						placement: .topBarTrailing
-					) {
-						_importActions()
+							Spacer()
+
+							Text(.localized("Library"))
+								.font(.headline)
+								.lineLimit(1)
+								.transition(.opacity)
+
+							Spacer()
+
+							Button(role: .destructive) {
+								_bulkDeleteSelectedApps()
+							} label: {
+								Image(systemName: "trash")
+									.font(.system(size: 17, weight: .medium))
+									.frame(width: 36, height: 36)
+									.contentShape(Rectangle())
+							}
+							.disabled(_selectedAppUUIDs.isEmpty)
+							.accessibilityLabel(.localized("Delete"))
+							.transition(.opacity)
+						} else {
+							HStack(spacing: 8) {
+								Image(systemName: "magnifyingglass")
+									.font(.system(size: 15, weight: .medium))
+									.foregroundColor(_isSearchPresented ? .secondary : .primary)
+									.frame(width: 36, height: 36)
+								
+								if _isSearchPresented {
+									TextField(.localized("Search"), text: $_searchText)
+										.font(.system(size: 16))
+										.focused($_isSearchFocused)
+										.textInputAutocapitalization(.never)
+										.disableAutocorrection(true)
+										.onAppear {
+											_isSearchFocused = true
+										}
+										.transition(.opacity)
+									
+									if !_searchText.isEmpty {
+										Button {
+											_searchText = ""
+										} label: {
+											Image(systemName: "xmark.circle.fill")
+												.font(.system(size: 14))
+												.foregroundColor(.secondary)
+										}
+										.buttonStyle(.plain)
+										.padding(.trailing, 8)
+									}
+								}
+							}
+							.frame(height: 36)
+							.frame(maxWidth: _isSearchPresented ? .infinity : 36)
+							.background(
+								_isSearchPresented
+									? Color(UIColor.secondarySystemFill)
+									: Color.clear,
+								in: Capsule()
+							)
+							.contentShape(Capsule())
+							.onTapGesture {
+								if !_isSearchPresented {
+									withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+										_isSearchPresented = true
+									}
+								}
+							}
+
+							if !_isSearchPresented {
+								Spacer()
+
+								Text(.localized("Library"))
+									.font(.headline)
+									.lineLimit(1)
+									.transition(.opacity)
+
+								Spacer()
+
+								Menu {
+									_importActions()
+								} label: {
+									Image(systemName: "plus")
+										.font(.system(size: 17, weight: .medium))
+										.foregroundColor(.accentColor)
+										.frame(width: 36, height: 36)
+										.contentShape(Rectangle())
+								}
+								.transition(.opacity)
+							} else {
+								Button {
+									_isSearchFocused = false
+									withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+										_isSearchPresented = false
+										_searchText = ""
+									}
+								} label: {
+									Image(systemName: "xmark")
+										.font(.system(size: 14, weight: .semibold))
+										.foregroundColor(.primary)
+										.frame(width: 36, height: 36)
+										.background(Color(UIColor.secondarySystemFill), in: Circle())
+								}
+								.buttonStyle(.plain)
+								.transition(.scale.combined(with: .opacity))
+								.accessibilityLabel(.localized("Cancel"))
+							}
+						}
 					}
+					.frame(width: UIScreen.main.bounds.width - 32)
 				}
 			}
 			.environment(\.editMode, $_editMode)
@@ -218,7 +301,7 @@ struct LibraryView: View {
 						for url in urls {
 							let id = "FeatherManualDownload_\(UUID().uuidString)"
 							let dl = downloadManager.startArchive(from: url, id: id)
-							try? downloadManager.handlePachageFile(url: url, dl: dl)
+							downloadManager.retryProcessing(dl)
 						}
 					}
 				)
@@ -246,9 +329,6 @@ struct LibraryView: View {
 					_selectedAppUUIDs.removeAll()
 				}
 			}
-			.onChange(of: updateManager.isChecking) { isChecking in
-				_handleUpdateCheckStateChange(isChecking)
-			}
 		}
 	}
 }
@@ -262,6 +342,12 @@ extension LibraryView {
 		}
 		Button(.localized("Import from URL"), systemImage: "globe") {
 			_isDownloadingPresenting = true
+		}
+		Divider()
+		Button(.localized("Edit Library"), systemImage: "pencil") {
+			withAnimation {
+				_editMode = .active
+			}
 		}
 	}
 }
@@ -297,35 +383,6 @@ extension LibraryView {
 		return allApps
 	}
 
-	private func _checkForUpdates() async {
-		let localApps = _signedApps.map { $0 as AppInfoPresentable } + _importedApps.map { $0 as AppInfoPresentable }
-		await updateManager.checkForUpdates(
-			sources: Array(_sources),
-			localApps: localApps
-		)
-	}
-
-	private func _handleUpdateCheckStateChange(_ isChecking: Bool) {
-		if isChecking {
-			_isUpdateCheckCompleteVisible = false
-			_updateCheckRotation = 0
-			withAnimation(.linear(duration: 0.8).repeatForever(autoreverses: false)) {
-				_updateCheckRotation = 360
-			}
-		} else {
-			withAnimation(.none) {
-				_updateCheckRotation = 0
-			}
-
-			_isUpdateCheckCompleteVisible = true
-			Task { @MainActor in
-				try? await Task.sleep(nanoseconds: 900_000_000)
-				if !updateManager.isChecking {
-					_isUpdateCheckCompleteVisible = false
-				}
-			}
-		}
-	}
 }
 
 // MARK: - Extension: View (Sort)

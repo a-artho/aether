@@ -215,41 +215,49 @@ public class InstallationAppProxy: NSObject {
 }
 
 extension InstallationAppProxy {
-	private static var iconCache: [String: UIImage] = [:]
+	private static let iconCache = InstalledIconCache()
 	private static var iconRequests: [String: Task<UIImage?, Error>] = [:]
 	private static let iconCacheQueue = DispatchQueue(label: "InstallationAppProxy.iconCache")
+	private static let iconRequestGate = InstalledIconRequestGate(limit: 3)
 
-	static public func getAppIconCached(for id: String) async throws -> UIImage? {
-		if let cached = iconCacheQueue.sync(execute: { iconCache[id] }) {
+	static public func getAppIconCached(
+		for id: String,
+		cacheVersion: String? = nil
+	) async throws -> UIImage? {
+		let cacheKey = cacheVersion.map { "\(id)|\($0)" } ?? id
+		if let cached = iconCache.image(for: cacheKey) {
 			return cached
 		}
 
 		let request = iconCacheQueue.sync { () -> Task<UIImage?, Error> in
-			if let existing = iconRequests[id] {
+			if let existing = iconRequests[cacheKey] {
 				return existing
 			}
 			let request = Task.detached(priority: .userInitiated) {
 				try await getAppIcon(for: id)
 			}
-			iconRequests[id] = request
+			iconRequests[cacheKey] = request
 			return request
 		}
 
 		do {
 			let image = try await request.value
 			iconCacheQueue.sync {
-				iconRequests[id] = nil
-				if let image { iconCache[id] = image }
+				iconRequests[cacheKey] = nil
 			}
+			if let image { iconCache.insert(image, for: cacheKey) }
 			return image
 		} catch {
-			_ = iconCacheQueue.sync { iconRequests.removeValue(forKey: id) }
+			_ = iconCacheQueue.sync { iconRequests.removeValue(forKey: cacheKey) }
 			throw error
 		}
 	}
 
 	static public func getAppIcon(for id: String) async throws -> UIImage? {
 		try await Task.detached(priority: .userInitiated) {
+			await iconRequestGate.acquire()
+			defer { Task { await iconRequestGate.release() } }
+
 			let heartbeat = HeartbeatManager.shared
 			var springServices: SpringBoardServicesClientHandle?
 
@@ -292,5 +300,64 @@ extension InstallationAppProxy {
 			defer { idevice_data_free(bytes, UInt(outResultLen)) }
 			return UIImage(data: Data(bytes: bytes, count: outResultLen))
 		}.value
+	}
+}
+
+private final class InstalledIconCache: NSObject, @unchecked Sendable {
+	private let cache = NSCache<NSString, UIImage>()
+
+	override init() {
+		super.init()
+		cache.countLimit = 128
+		cache.totalCostLimit = 32 * 1024 * 1024
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(clear),
+			name: UIApplication.didReceiveMemoryWarningNotification,
+			object: nil
+		)
+	}
+
+	deinit {
+		NotificationCenter.default.removeObserver(self)
+	}
+
+	func image(for key: String) -> UIImage? {
+		cache.object(forKey: key as NSString)
+	}
+
+	func insert(_ image: UIImage, for key: String) {
+		let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 1
+		cache.setObject(image, forKey: key as NSString, cost: cost)
+	}
+
+	@objc private func clear() {
+		cache.removeAllObjects()
+	}
+}
+
+private actor InstalledIconRequestGate {
+	private let limit: Int
+	private var active = 0
+	private var waiters: [CheckedContinuation<Void, Never>] = []
+
+	init(limit: Int) {
+		self.limit = max(1, limit)
+	}
+
+	func acquire() async {
+		if active < limit {
+			active += 1
+			return
+		}
+		await withCheckedContinuation { waiters.append($0) }
+	}
+
+	func release() {
+		if waiters.isEmpty {
+			active = max(0, active - 1)
+		} else {
+			waiters.removeFirst().resume()
+		}
 	}
 }

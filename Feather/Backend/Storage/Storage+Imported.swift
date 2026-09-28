@@ -75,4 +75,19 @@ extension Storage {
 		request.predicate = NSPredicate(format: "uuid == %@", uuid)
 		return try context.count(for: request) > 0
 	}
+
+	@MainActor
+	func removeImported(uuid: String) throws {
+		let importedRequest: NSFetchRequest<Imported> = Imported.fetchRequest()
+		importedRequest.predicate = NSPredicate(format: "uuid == %@", uuid)
+		try context.fetch(importedRequest).forEach(context.delete)
+
+		let metadataRequest: NSFetchRequest<AppSourceMetadata> = AppSourceMetadata.fetchRequest()
+		metadataRequest.predicate = NSPredicate(format: "appUUID == %@", uuid)
+		try context.fetch(metadataRequest).forEach(context.delete)
+
+		if context.hasChanges {
+			try context.save()
+		}
+	}
 }

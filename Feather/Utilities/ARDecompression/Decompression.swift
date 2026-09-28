@@ -34,13 +34,26 @@ func extractFile(at fileURL: inout URL) throws {
 		
 		let extractionDirectory = fileURL.deletingLastPathComponent().appendingPathComponent(UUID().uuidString)
 		try fileManager.createDirectory(at: extractionDirectory, withIntermediateDirectories: true)
+		let standardizedExtractionDirectory = extractionDirectory.standardizedFileURL
+		let extractionRoot = standardizedExtractionDirectory.path + "/"
 		
 		for entry in tarContainer {
-			let entryPath = extractionDirectory.appendingPathComponent(entry.info.name)
+			let entryPath = extractionDirectory
+				.appendingPathComponent(entry.info.name)
+				.standardizedFileURL
+			guard entryPath == standardizedExtractionDirectory
+				|| entryPath.path.hasPrefix(extractionRoot)
+			else {
+				throw ARError.badArchive("Archive entry escapes its extraction directory")
+			}
 			
 			if entry.info.type == .directory {
 				try fileManager.createDirectory(at: entryPath, withIntermediateDirectories: true)
 			} else if entry.info.type == .regular, let entryData = entry.data {
+				try fileManager.createDirectory(
+					at: entryPath.deletingLastPathComponent(),
+					withIntermediateDirectories: true
+				)
 				try entryData.write(to: entryPath)
 			}
 		}

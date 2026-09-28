@@ -12,11 +12,25 @@ enum FRIconAppearance: Int {
 	case dark = 1
 }
 
-final class FRIconCache {
+final class FRIconCache: NSObject {
 	static let shared = FRIconCache()
-	private init() {}
-
 	private let cache = NSCache<NSString, UIImage>()
+
+	private override init() {
+		super.init()
+		cache.countLimit = 128
+		cache.totalCostLimit = 32 * 1024 * 1024
+		NotificationCenter.default.addObserver(
+			self,
+			selector: #selector(invalidateAll),
+			name: UIApplication.didReceiveMemoryWarningNotification,
+			object: nil
+		)
+	}
+
+	deinit {
+		NotificationCenter.default.removeObserver(self)
+	}
 
 	private func key(url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool) -> NSString {
 		"\(url.path)#\(appearance.rawValue)#\(tint)#\(isTinted)#\(dynamic)" as NSString
@@ -27,10 +41,15 @@ final class FRIconCache {
 	}
 
 	func insert(_ image: UIImage, for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool) {
-		cache.setObject(image, forKey: key(url: url, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic))
+		let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 1
+		cache.setObject(
+			image,
+			forKey: key(url: url, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic),
+			cost: cost
+		)
 	}
 
-	func invalidateAll() {
+	@objc func invalidateAll() {
 		cache.removeAllObjects()
 	}
 }
