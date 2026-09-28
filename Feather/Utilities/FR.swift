@@ -46,7 +46,7 @@ enum FR {
 				download: download,
 				transactionIdentifier: download.importIdentifier
 			)
-			do {
+		do {
 				let recovered = try await handler.recoverCommittedImport()
 				await MainActor.run {
 					completion(.success(recovered))
@@ -188,11 +188,22 @@ enum FR {
 	static func movePairing(_ url: URL) {
 		let fileManager = FileManager.default
 		let dest = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
+		let stagedImport = dest.deletingLastPathComponent()
+			.appendingPathComponent(".pairing-import-\(UUID().uuidString)")
+
+			do {
+			try fileManager.copyItem(at: url, to: stagedImport)
+			try fileManager.removeFileIfNeeded(at: dest)
+			try fileManager.moveItem(at: stagedImport, to: dest)
+			// Imported and on-device records are separate formats. Keep both, but
+			// make this explicitly imported record the one used for future installs.
+			HeartbeatManager.useImportedPairingFile()
+		} catch {
+			try? fileManager.removeItem(at: stagedImport)
+			return
+		}
 		
-		try? fileManager.removeFileIfNeeded(at: dest)
-		
-		try? fileManager.copyItem(at: url, to: dest)
-		
+		HeartbeatManager.shared.resetRSDTunnel()
 		HeartbeatManager.shared.start(true)
 	}
 	

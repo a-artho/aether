@@ -123,8 +123,16 @@
 	</array>
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
+		<string>App-Prefs</string>
+		<string>prefs</string>
 		<string>localdevvpn</string>
 	</array>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_remotepairing-pairable-host._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Feather needs local network access to pair this device for iDevice installs.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

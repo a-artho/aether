@@ -11,9 +11,6 @@ import IDeviceSwift
 
 // MARK: - View
 struct TunnelView: View {
-	@State private var _isImportingPairingPresenting = false
-	
-	@State var doesHavePairingFile = false
 	@State private var isLocalDevVpnAvailable = false
 	
 	// MARK: Body
@@ -24,24 +21,6 @@ struct TunnelView: View {
 				} else {
 					_tunnelInfo()
 					TunnelHeaderView()
-				}
-			} footer: {
-				if doesHavePairingFile {
-					Text(.localized("Seems like you've gotten your hands on your pairing file!"))
-				} else {
-					Text(.localized("No pairing file found, please import it."))
-				}
-			}
-			
-			Section {
-				Button {
-					_isImportingPairingPresenting = true
-				} label: {
-					HStack(spacing: 12) {
-						SettingsIconBadge(systemImage: "square.and.arrow.down.fill", backgroundColor: .blue)
-						Text(.localized("Import Pairing File"))
-							.foregroundColor(.primary)
-					}
 				}
 				if #available(iOS 17.4, *) {
 				} else {
@@ -68,20 +47,7 @@ struct TunnelView: View {
 				}
 			}
 			
-			NBSection(.localized("Help")) {
-				Button {
-					UIApplication.open("https://github.com/claration/Impactor#pairing-file")
-				} label: {
-					HStack(spacing: 12) {
-						SettingsIconBadge(systemImage: "questionmark.circle.fill", backgroundColor: .purple)
-						Text(.localized("Pairing File Guide"))
-							.foregroundColor(.primary)
-						Spacer()
-						Image(systemName: "arrow.up.forward.app")
-							.font(.footnote)
-							.foregroundColor(Color(UIColor.tertiaryLabel))
-					}
-				}
+			NBSection(.localized("VPN")) {
 				if isLocalDevVpnAvailable {
 					Button {
 						UIApplication.open("localdevvpn://enable?scheme=feather")
@@ -109,21 +75,7 @@ struct TunnelView: View {
 				}
 			}
 		}
-		.sheet(isPresented: $_isImportingPairingPresenting) {
-			FileImporterRepresentableView(
-				allowedContentTypes:  [.xmlPropertyList, .plist, .mobiledevicepairing],
-				onDocumentsPicked: { urls in
-					guard let selectedFileURL = urls.first else { return }
-					FR.movePairing(selectedFileURL)
-					doesHavePairingFile = true
-				}
-			)
-			.ignoresSafeArea()
-		}
 		.onAppear {
-			doesHavePairingFile = FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile())
-				? true
-				: false
 			if let url = URL(string: "localdevvpn://") {
 				isLocalDevVpnAvailable = UIApplication.shared.canOpenURL(url)
 			} else {

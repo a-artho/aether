@@ -34,7 +34,7 @@ public enum DeviceDiagnosticStatus: Equatable {
 		case .tunnelUnavailable:
 			return .localized("Device tunnel unavailable. Make sure LocalDevVPN is connected.")
 		case .pairingMissing:
-			return .localized("Pairing file is missing. Import one in Installation settings.")
+			return .localized("Pairing file is missing. Add one in Pairing File settings.")
 		case .invalidPairing:
 			return .localized("Pairing file is invalid.")
 		case .checking:
@@ -54,7 +54,7 @@ public enum DeviceConnectionError: LocalizedError {
 	public var errorDescription: String? {
 		switch self {
 		case .pairingMissing:
-			return .localized("Pairing file is missing. Import one in Installation settings.")
+			return .localized("Pairing file is missing. Add one in Pairing File settings.")
 		case .tunnelUnavailable(let reason):
 			return .localized("Device tunnel unavailable: %@. Make sure LocalDevVPN is connected.", arguments: reason)
 		case .invalidPairing:
@@ -90,7 +90,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	private var transitionDeadline: TimeInterval = 0
 
 	public init() {
-		hasPairingFile = FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile())
+		hasPairingFile = HeartbeatManager.hasPairingFile()
 
 		// 1. Monitor network changes (NWPathMonitor is an event trigger, not source of truth)
 		pathMonitor.pathUpdateHandler = { [weak self] _ in
@@ -179,7 +179,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	@discardableResult
 	public func ensureConnected() async throws -> Bool {
-		hasPairingFile = FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile())
+		hasPairingFile = HeartbeatManager.hasPairingFile()
 		guard hasPairingFile else {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
 			throw DeviceConnectionError.pairingMissing
@@ -224,7 +224,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	public func reconcile(force: Bool = false) async {
 		let reconciliationGeneration = transitionGeneration
-		hasPairingFile = FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile())
+		hasPairingFile = HeartbeatManager.hasPairingFile()
 		guard hasPairingFile else {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
 			return

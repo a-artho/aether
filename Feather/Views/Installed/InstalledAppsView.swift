@@ -10,6 +10,7 @@ import SwiftUI
 @MainActor
 struct InstalledAppsView: View {
 	@AppStorage("Feather.installationMethod") private var installationMethod = 0
+	@AppStorage("Feather.serverMethod") private var serverMethod = 0
 	@StateObject private var store: InstalledAppsStore
 	@ObservedObject private var installationManager = AppInstallationManager.shared
 	@ObservedObject private var connection = DeviceConnectionManager.shared
@@ -35,12 +36,12 @@ struct InstalledAppsView: View {
 	}
 
 	var body: some View {
-		NBNavigationView(.localized("Device"), displayMode: .inline) {
+		NBNavigationView(_installationMethodName, displayMode: .inline) {
 			ZStack(alignment: .top) {
 				ScrollViewReader { scrollProxy in
 					List {
 						Section {
-							_modeVpnCard
+							_vpnCard
 								.listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
 								.listRowBackground(Color.clear)
 								.listRowSeparator(.hidden)
@@ -149,6 +150,27 @@ struct InstalledAppsView: View {
 				}
 			}
 			.toolbar {
+				ToolbarItem(placement: .topBarLeading) {
+					Button {
+						installationMethod = installationMethod == 1 ? 0 : 1
+					} label: {
+						Image(systemName: "arrow.left.arrow.right")
+					}
+					.accessibilityLabel(.localized("Switch Installation Mode"))
+				}
+
+				ToolbarItem(placement: .principal) {
+					HStack(spacing: 6) {
+						Circle()
+							.fill(_installationMethodIsReady ? .green : .red)
+							.frame(width: 8, height: 8)
+						Text(_installationMethodName)
+							.font(.headline)
+					}
+					.accessibilityElement(children: .combine)
+					.accessibilityLabel(_installationMethodAccessibilityLabel)
+				}
+
 				ToolbarItem(placement: .topBarTrailing) {
 					Button {
 						tabManager.isSettingsPresented = true
@@ -164,39 +186,8 @@ struct InstalledAppsView: View {
 		}
 	}
 
-	private var _modeVpnCard: some View {
+	private var _vpnCard: some View {
 		VStack(spacing: 0) {
-			Button {
-				tabManager.openInstallationSettings()
-			} label: {
-				HStack(spacing: 12) {
-					SettingsIconBadge(
-						systemImage: _installationMethodIcon,
-						backgroundColor: _installationMethodColor,
-						iconSize: installationMethod == 1 ? 16 : 14
-					)
-
-					Text(.localized("Mode"))
-						.foregroundColor(.primary)
-
-					Spacer()
-
-					Text(_installationMethodName)
-						.foregroundColor(.secondary)
-
-					Image(systemName: "chevron.right")
-						.font(.footnote.weight(.semibold))
-						.foregroundColor(Color(UIColor.tertiaryLabel))
-				}
-				.contentShape(Rectangle())
-			}
-			.buttonStyle(.plain)
-			.padding(.horizontal, 16)
-			.padding(.vertical, 12)
-
-			Divider()
-				.padding(.leading, 56)
-
 			HStack(spacing: 12) {
 				SettingsIconBadge(
 					systemImage: "network",
@@ -235,15 +226,28 @@ struct InstalledAppsView: View {
 	}
 
 	private var _installationMethodName: String {
-		installationMethod == 1 ? .localized("idevice") : .localized("Server")
+		installationMethod == 1 ? .localized("iDevice") : .localized("Server")
 	}
 
-	private var _installationMethodIcon: String {
-		installationMethod == 1 ? "iphone" : "server.rack"
+	private var _installationMethodIsReady: Bool {
+		if installationMethod == 1 {
+			return connection.isConnected
+		}
+
+		if serverMethod == 1 {
+			return true
+		}
+
+		return ServerInstaller.getUrl("server", ext: "crt") != nil
+			&& ServerInstaller.getUrl("server", ext: "pem") != nil
+			&& ServerInstaller.getUrl("commonName", ext: "txt") != nil
 	}
 
-	private var _installationMethodColor: Color {
-		installationMethod == 1 ? .purple : .blue
+	private var _installationMethodAccessibilityLabel: String {
+		let status = _installationMethodIsReady
+			? String.localized("Ready")
+			: String.localized("Needs attention")
+		return "\(_installationMethodName), \(status)"
 	}
 
 	@ViewBuilder

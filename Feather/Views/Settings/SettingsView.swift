@@ -59,8 +59,6 @@ struct SettingsView: View {
 						SettingsRowLabel(.localized("Certificates"), systemImage: "checkmark.seal.fill", backgroundColor: .green)
 					}
                  
-				} footer: {
-					Text(.localized("Add and manage certificates used for signing applications."))
 				}
                 
 				NBSection(.localized("Features")) {
@@ -73,18 +71,15 @@ struct SettingsView: View {
 					NavigationLink(destination: InstallationView()) {
 						SettingsRowLabel(.localized("Installation"), systemImage: "arrow.down.circle.fill", backgroundColor: .blue)
 					}
-				} footer: {
-					Text(.localized("Configure the apps way of installing, its zip compression levels, and custom modifications to apps."))
+					NavigationLink(destination: PairingFileView()) {
+						SettingsRowLabel(.localized("Pairing File"), systemImage: "key.fill", backgroundColor: .purple)
+					}
 				}
-                
-				_directories()
                 
 				Section {
 					NavigationLink(destination: ResetView()) {
 						SettingsRowLabel(.localized("Reset"), systemImage: "trash.fill", backgroundColor: .red)
 					}
-				} footer: {
-					Text(.localized("Reset the applications sources, certificates, apps, and general contents."))
 				}
 			}
 			.navigationDestination(isPresented: Binding(
@@ -105,9 +100,12 @@ struct SettingsView: View {
 			}
 			.toolbar {
 				ToolbarItem(placement: .topBarTrailing) {
-					Button(.localized("Done")) {
+					Button {
 						dismiss()
+					} label: {
+						Image(systemName: "xmark")
 					}
+					.accessibilityLabel(.localized("Close Settings"))
 				}
 			}
 			.onAppear {
@@ -124,56 +122,6 @@ struct SettingsView: View {
 		DispatchQueue.main.async {
 			_activeSettingsPage = page
 			_tabManager.requestedSettingsPage = nil
-		}
-	}
-}
-
-// MARK: - View Extension
-extension SettingsView {
-	@ViewBuilder
-	private func _directories() -> some View {
-		NBSection(.localized("Misc")) {
-			Button {
-				UIApplication.open(URL.documentsDirectory.toSharedDocumentsURL()!)
-			} label: {
-				HStack(spacing: 12) {
-					SettingsIconBadge(systemImage: "folder.fill", backgroundColor: .blue)
-					Text(.localized("Open Documents"))
-						.foregroundColor(.primary)
-					Spacer()
-					Image(systemName: "arrow.up.forward.app")
-						.font(.footnote)
-						.foregroundColor(Color(UIColor.tertiaryLabel))
-				}
-			}
-			Button {
-				UIApplication.open(FileManager.default.archives.toSharedDocumentsURL()!)
-			} label: {
-				HStack(spacing: 12) {
-					SettingsIconBadge(systemImage: "archivebox.fill", backgroundColor: .purple)
-					Text(.localized("Open Archives"))
-						.foregroundColor(.primary)
-					Spacer()
-					Image(systemName: "arrow.up.forward.app")
-						.font(.footnote)
-						.foregroundColor(Color(UIColor.tertiaryLabel))
-				}
-			}
-			Button {
-				UIApplication.open(FileManager.default.certificates.toSharedDocumentsURL()!)
-			} label: {
-				HStack(spacing: 12) {
-					SettingsIconBadge(systemImage: "checkmark.seal.fill", backgroundColor: .teal)
-					Text(.localized("Open Certificates"))
-						.foregroundColor(.primary)
-					Spacer()
-					Image(systemName: "arrow.up.forward.app")
-						.font(.footnote)
-						.foregroundColor(Color(UIColor.tertiaryLabel))
-				}
-			}
-		} footer: {
-			Text(.localized("All of the apps files are contained in the documents directory, here are some quick links to these."))
 		}
 	}
 }

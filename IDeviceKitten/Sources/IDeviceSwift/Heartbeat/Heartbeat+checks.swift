@@ -140,13 +140,14 @@ extension HeartbeatManager {
 	/// Retrieves and reads pairing file (if any)
 	/// - Returns: Pointer to pairing file
 	func getPairing() throws -> IdevicePairingFile {
-		guard fileManager.fileExists(atPath: Self.pairingFile()) else {
+		let pairingFilePath = Self.activePairingFile()
+		guard fileManager.fileExists(atPath: pairingFilePath) else {
 			throw IDeviceConnectionError.pairingFileMissing
 		}
 
 		var pairingFile: IdevicePairingFile?
 
-		if let error = idevice_pairing_file_read(Self.pairingFile(), &pairingFile) {
+		if let error = idevice_pairing_file_read(pairingFilePath, &pairingFile) {
 			if let pairingFile { idevice_pairing_file_free(pairingFile) }
 			throw IDeviceSwiftError(error)
 		}
@@ -158,13 +159,14 @@ extension HeartbeatManager {
 	}
 
 	func getPairingRsd() throws -> RpPairingFileHandle {
-		guard fileManager.fileExists(atPath: Self.pairingFile()) else {
+		let pairingFilePath = Self.activePairingFile()
+		guard fileManager.fileExists(atPath: pairingFilePath) else {
 			throw IDeviceConnectionError.pairingFileMissing
 		}
 
 		var pairingFile: RpPairingFileHandle?
 
-		if let error = rp_pairing_file_read(Self.pairingFile(), &pairingFile) {
+		if let error = rp_pairing_file_read(pairingFilePath, &pairingFile) {
 			if let pairingFile { rp_pairing_file_free(pairingFile) }
 			let reason = IDeviceSwiftError(error).localizedDescription
 			throw IDeviceConnectionError.rsdPairingFileUnreadable(reason)
