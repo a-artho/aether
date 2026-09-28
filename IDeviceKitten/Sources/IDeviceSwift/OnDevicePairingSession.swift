@@ -117,7 +117,6 @@ public final class OnDevicePairingSession: @unchecked Sendable {
 		defer { server.cancel() }
 		try server.start()
 		let connection = try server.acceptConnection()
-		defer { server.closeConnection() }
 
 		lock.lock()
 		let wasCancelled = cancellationRequested
@@ -139,6 +138,12 @@ public final class OnDevicePairingSession: @unchecked Sendable {
 		if let pairingError {
 			throw IDeviceSwiftError(pairingError)
 		}
+
+		// `pairable_host_accept_fd` returns as soon as it writes Pair-Setup M6;
+		// iOS still has to receive and commit that final response. Keep the
+		// original socket and the public relay alive briefly instead of tearing
+		// them down immediately on the host-side return.
+		try server.waitForDeviceToFinishPairing()
 
 		guard let pairingFile else {
 			throw OnDevicePairingSessionError.unavailable
@@ -185,7 +190,7 @@ public final class OnDevicePairingSession: @unchecked Sendable {
 				pairable_host_prepare(
 					name,
 					model,
-					false,
+					true,
 					&hostHandle,
 					&serviceIdentifier,
 					&txtData,
@@ -404,12 +409,32 @@ private final class OnDevicePairingSocketServer: @unchecked Sendable {
 		}
 	}
 
-	func closeConnection() {
+
+	/// The native host considers Pair-Setup complete immediately after writing
+	/// M6. iOS commits the record just after that write, so closing the relay at
+	/// this point invalidates the device's control channel. Wait for iOS to end
+	/// the connection or give the final response a small, bounded grace window.
+	func waitForDeviceToFinishPairing() throws {
 		lock.lock()
-		let descriptor = connection
-		connection = -1
+		let relay = activeRelay
+		let wasCancelled = cancellationRequested
 		lock.unlock()
-		_close(descriptor)
+
+		if wasCancelled {
+			throw OnDevicePairingSessionError.cancelled
+		}
+		guard let relay else {
+			throw OnDevicePairingSessionError.unavailable
+		}
+
+		relay.waitForDeviceToClose(timeout: 2)
+
+		lock.lock()
+		let cancelledAfterWait = cancellationRequested
+		lock.unlock()
+		if cancelledAfterWait {
+			throw OnDevicePairingSessionError.cancelled
+		}
 	}
 
 	func cancel() {
@@ -535,7 +560,9 @@ private final class OnDevicePairingRelay: @unchecked Sendable {
 	private let inbound: NWConnection
 	private let outbound: NWConnection
 	private let lock = NSLock()
+	private let deviceClosed = DispatchSemaphore(value: 0)
 	private var isCancelled = false
+	private var hasDeviceClosed = false
 
 	init(inbound: NWConnection, outbound: NWConnection) {
 		self.inbound = inbound
@@ -546,6 +573,7 @@ private final class OnDevicePairingRelay: @unchecked Sendable {
 		inbound.stateUpdateHandler = { [weak self] state in
 			switch state {
 			case .failed, .cancelled:
+				self?._noteDeviceClosed()
 				self?.cancel()
 			default:
 				break
@@ -567,6 +595,14 @@ private final class OnDevicePairingRelay: @unchecked Sendable {
 		outbound.start(queue: queue)
 	}
 
+	func waitForDeviceToClose(timeout: TimeInterval) {
+		lock.lock()
+		let alreadyClosed = hasDeviceClosed
+		lock.unlock()
+		guard !alreadyClosed else { return }
+		_ = deviceClosed.wait(timeout: .now() + timeout)
+	}
+
 	func cancel() {
 		lock.lock()
 		guard !isCancelled else {
@@ -577,6 +613,17 @@ private final class OnDevicePairingRelay: @unchecked Sendable {
 		lock.unlock()
 		inbound.cancel()
 		outbound.cancel()
+	}
+
+	private func _noteDeviceClosed() {
+		lock.lock()
+		guard !hasDeviceClosed else {
+			lock.unlock()
+			return
+		}
+		hasDeviceClosed = true
+		lock.unlock()
+		deviceClosed.signal()
 	}
 
 	private func _pump(from source: NWConnection, to destination: NWConnection) {

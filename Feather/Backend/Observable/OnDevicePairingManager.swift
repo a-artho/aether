@@ -20,6 +20,7 @@ final class OnDevicePairingManager: ObservableObject {
 	enum State: Equatable {
 		case idle
 		case waitingForSettings
+		case pairingWithoutCode
 		case awaitingCode(String)
 		case cancelling
 		case completed
@@ -37,7 +38,7 @@ final class OnDevicePairingManager: ObservableObject {
 
 	var isActive: Bool {
 		switch state {
-		case .waitingForSettings, .awaitingCode, .cancelling:
+		case .waitingForSettings, .pairingWithoutCode, .awaitingCode, .cancelling:
 			return true
 		case .idle, .completed, .failed:
 			return false
@@ -121,6 +122,18 @@ final class OnDevicePairingManager: ObservableObject {
 
 	private func _receive(code: String, for identifier: UUID) {
 		guard sessionIdentifier == identifier, session != nil else { return }
+		if code == "000000" {
+			state = .pairingWithoutCode
+			#if !targetEnvironment(macCatalyst)
+			if #available(iOS 26.0, *), hasContinuedProcessingTask {
+				BackgroundTaskManager.shared.showPairingProgress(
+					.localized("Finishing code-free pairing"),
+					for: identifier
+				)
+			}
+			#endif
+			return
+		}
 		UIPasteboard.general.string = code
 		state = .awaitingCode(code)
 		#if !targetEnvironment(macCatalyst)
@@ -257,7 +270,7 @@ final class OnDevicePairingManager: ObservableObject {
 		)
 		try record.write(
 			to: destination,
-			options: [.atomic, .completeFileProtection]
+			options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
 		)
 	}
 

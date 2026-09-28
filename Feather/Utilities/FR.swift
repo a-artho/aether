@@ -187,11 +187,15 @@ enum FR {
 	
 	static func movePairing(_ url: URL) {
 		let fileManager = FileManager.default
-		let dest = URL.documentsDirectory.appendingPathComponent("pairingFile.plist")
+		let dest = HeartbeatManager.importedPairingFileURL()
 		let stagedImport = dest.deletingLastPathComponent()
 			.appendingPathComponent(".pairing-import-\(UUID().uuidString)")
 
-			do {
+		do {
+			try fileManager.createDirectory(
+				at: dest.deletingLastPathComponent(),
+				withIntermediateDirectories: true
+			)
 			try fileManager.copyItem(at: url, to: stagedImport)
 			try fileManager.removeFileIfNeeded(at: dest)
 			try fileManager.moveItem(at: stagedImport, to: dest)

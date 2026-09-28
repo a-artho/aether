@@ -18,6 +18,7 @@ final class AppTabManager: ObservableObject {
 		case signing
 		case archive
 		case installation
+		case pairingFile = "pairing-file"
 		case reset
 	}
 	

@@ -32,7 +32,7 @@ public class SystemLogManager: NSObject {
 	public weak var delegate: SystemLogManagerDelegate?
 
 	private func _connect() async throws {
-		guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
+		guard HeartbeatManager.hasPairingFile() else {
 			throw IDeviceConnectionError.pairingFileMissing
 		}
 

@@ -208,7 +208,7 @@ public class InstallationAppProxy: NSObject {
 	}
 
 	private static func _requirePairingFile() throws {
-		guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
+		guard HeartbeatManager.hasPairingFile() else {
 			throw IDeviceConnectionError.pairingFileMissing
 		}
 	}

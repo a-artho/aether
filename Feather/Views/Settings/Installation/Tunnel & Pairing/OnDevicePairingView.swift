@@ -18,6 +18,8 @@ struct OnDevicePairingView: View {
 				switch pairing.state {
 				case .waitingForSettings:
 					_waitingContent
+				case .pairingWithoutCode:
+					_pinlessContent
 				case .awaitingCode(let code):
 					_codeContent(code)
 				case .cancelling:
@@ -67,7 +69,7 @@ struct OnDevicePairingView: View {
 			VStack(alignment: .leading, spacing: 8) {
 				Text(.localized("Feather is ready to pair."))
 					.font(.title3.weight(.semibold))
-				Text(.localized("Open Developer Mode, choose Pair with Feather, then enter your passcode. The pairing code will appear here."))
+				Text(.localized("Open Developer Mode, choose Pair with Feather, then enter your passcode. Feather will finish pairing automatically."))
 					.foregroundStyle(.secondary)
 			}
 
@@ -76,9 +78,27 @@ struct OnDevicePairingView: View {
 			}
 			.buttonStyle(.borderedProminent)
 
-			Text(.localized("Feather stays active while Settings asks for your passcode, then shows the pairing code here and in the Dynamic Island."))
+			Text(.localized("Feather stays active while Settings completes the secure pairing."))
 				.font(.footnote)
 				.foregroundStyle(.secondary)
+		}
+	}
+
+	private var _pinlessContent: some View {
+		VStack(alignment: .leading, spacing: 20) {
+			Image(systemName: "lock.shield.fill")
+				.font(.system(size: 34, weight: .semibold))
+				.foregroundStyle(.green)
+
+			VStack(alignment: .leading, spacing: 8) {
+				Text(.localized("Finishing secure pairing"))
+					.font(.title3.weight(.semibold))
+				Text(.localized("No pairing code is needed. Keep Developer Mode open while Feather completes the connection."))
+					.foregroundStyle(.secondary)
+			}
+
+			ProgressView()
+				.controlSize(.large)
 		}
 	}
 

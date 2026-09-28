@@ -32,7 +32,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		var remotePath: String?
 
 		try await Task.detached(priority: .utility) {
-			guard FileManager.default.fileExists(atPath: HeartbeatManager.pairingFile()) else {
+			guard HeartbeatManager.hasPairingFile() else {
 				throw IDeviceConnectionError.pairingFileMissing
 			}
 

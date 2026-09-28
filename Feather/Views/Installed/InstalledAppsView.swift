@@ -6,6 +6,7 @@
 import IDeviceSwift
 import NimbleViews
 import SwiftUI
+import UIKit
 
 @MainActor
 struct InstalledAppsView: View {
@@ -16,6 +17,7 @@ struct InstalledAppsView: View {
 	@ObservedObject private var connection = DeviceConnectionManager.shared
 	@ObservedObject private var tabManager = AppTabManager.shared
 	@State private var topCardMaxY: CGFloat = 160
+	@State private var modeSelectionFeedback = UISelectionFeedbackGenerator()
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
 
@@ -149,10 +151,15 @@ struct InstalledAppsView: View {
 					}
 				}
 			}
+			.onAppear {
+				modeSelectionFeedback.prepare()
+			}
 			.toolbar {
 				ToolbarItem(placement: .topBarLeading) {
 					Button {
+						modeSelectionFeedback.selectionChanged()
 						installationMethod = installationMethod == 1 ? 0 : 1
+						modeSelectionFeedback.prepare()
 					} label: {
 						Image(systemName: "arrow.left.arrow.right")
 					}
@@ -256,33 +263,46 @@ struct InstalledAppsView: View {
 			ProgressView()
 				.padding(.vertical, 20)
 		} else if !connection.hasPairingFile && store.apps.isEmpty {
-			_statusView(
+			TabPlaceholderView(
 				title: .localized("Pairing File Missing"),
 				description: .localized("Import a pairing file to view sideloaded apps."),
 				systemImage: "key.slash"
-			)
+			) {
+				Button {
+					tabManager.openSettings(page: .pairingFile)
+				} label: {
+					NBButton(.localized("Pair"), style: .text)
+				}
+				.buttonStyle(.borderless)
+			}
 		} else if !connection.isConnected && store.apps.isEmpty {
-			_statusView(
+			TabPlaceholderView(
 				title: .localized("LocalDevVPN Is Off"),
 				description: .localized("Turn on VPN to view sideloaded apps."),
-				systemImage: "network.slash",
-				actionTitle: .localized("Turn On VPN"),
-				action: {
+				systemImage: "network.slash"
+			) {
+				Button {
 					connection.setConnection(enabled: true)
+				} label: {
+					NBButton(.localized("Turn On VPN"), style: .text)
 				}
-			)
+				.buttonStyle(.borderless)
+			}
 		} else if let errorMessage = store.errorMessage, store.apps.isEmpty {
-			_statusView(
+			TabPlaceholderView(
 				title: .localized("Unable to Load Installed Apps"),
 				description: errorMessage,
-				systemImage: "iphone.slash",
-				actionTitle: .localized("Retry"),
-				action: {
+				systemImage: "iphone.slash"
+			) {
+				Button {
 					Task { await store.refresh() }
+				} label: {
+					NBButton(.localized("Retry"), style: .text)
 				}
-			)
+				.buttonStyle(.borderless)
+			}
 		} else {
-			_statusView(
+			TabPlaceholderView(
 				title: .localized("No Sideloaded Apps"),
 				description: .localized("Installed sideloaded apps will appear here."),
 				systemImage: "square.stack.3d.up.slash"
@@ -290,34 +310,6 @@ struct InstalledAppsView: View {
 		}
 	}
 
-	private func _statusView(
-		title: String,
-		description: String,
-		systemImage: String,
-		actionTitle: String? = nil,
-		action: (() -> Void)? = nil
-	) -> some View {
-		VStack(spacing: 12) {
-			Image(systemName: systemImage)
-				.font(.system(size: 40))
-				.foregroundStyle(.secondary)
-			Text(title)
-				.font(.headline)
-				.foregroundStyle(.primary)
-			Text(description)
-				.font(.subheadline)
-				.foregroundStyle(.secondary)
-				.multilineTextAlignment(.center)
-				.padding(.horizontal, 28)
-			if let actionTitle, let action {
-				Button(actionTitle, action: action)
-					.buttonStyle(.borderedProminent)
-					.padding(.top, 4)
-			}
-		}
-		.frame(maxWidth: .infinity)
-		.padding(.vertical, 16)
-	}
 }
 
 private struct InstalledAppCellView: View {

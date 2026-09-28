@@ -20,6 +20,8 @@ public class HeartbeatManager {
 
 	static public let shared = HeartbeatManager()
 	private static let pairingRecordSourceKey = "feather.activePairingRecordSource"
+	private static let pairingMigrationLock = NSLock()
+	private static var hasCompletedPairingMigration = false
 
 	typealias IdevicePairingFile = OpaquePointer
 	typealias RpPairingFileHandle = OpaquePointer
@@ -80,36 +82,36 @@ public class HeartbeatManager {
 		}
 	}
 
-	/// Returns the legacy/imported pairing file path.
-	///
-	/// This remains in Documents for compatibility with the existing importer and
-	/// desktop tools that write a record directly into Feather's container.
-	static public func pairingFile() -> String {
-		FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent("pairingFile.plist").relativePath
+	/// Feather's visible Documents root, shared by both pairing record types.
+	static public func pairingDirectoryURL() -> URL {
+		migratePairingRecordsToDocumentsIfNeeded()
+		return pairingDirectory()
 	}
 
-	/// Returns the private location reserved for a record created on the device.
-	///
-	/// A Remote Pairing record contains the host's long-term private key, so a
-	/// self-created record must not be placed in the file-sharing Documents folder.
+	static public func importedPairingFileURL() -> URL {
+		migratePairingRecordsToDocumentsIfNeeded()
+		return importedPairingFile()
+	}
+
+	/// Returns the imported pairing file path.
+	static public func pairingFile() -> String {
+		importedPairingFileURL().path
+	}
+
+	/// Returns the on-device Remote Pairing record location.
 	static public func onDevicePairingFileURL() -> URL {
-		let applicationSupport = FileManager.default.urls(
-			for: .applicationSupportDirectory,
-			in: .userDomainMask
-		).first!
-		let directory = applicationSupport.appendingPathComponent(
-			Bundle.main.bundleIdentifier ?? "Feather",
-			isDirectory: true
-		)
-		return directory.appendingPathComponent("onDeviceRPPairing.plist")
+		migratePairingRecordsToDocumentsIfNeeded()
+		return onDevicePairingFile()
 	}
 
 	static public func hasOnDevicePairingFile() -> Bool {
-		FileManager.default.fileExists(atPath: onDevicePairingFileURL().path)
+		migratePairingRecordsToDocumentsIfNeeded()
+		return FileManager.default.fileExists(atPath: onDevicePairingFile().path)
 	}
 
 	static public func hasImportedPairingFile() -> Bool {
-		FileManager.default.fileExists(atPath: pairingFile())
+		migratePairingRecordsToDocumentsIfNeeded()
+		return FileManager.default.fileExists(atPath: importedPairingFile().path)
 	}
 
 	/// Returns the selected pairing record, falling back to the only available
@@ -166,6 +168,83 @@ public class HeartbeatManager {
 		try FileManager.default.removeItem(at: url)
 		if UserDefaults.standard.string(forKey: pairingRecordSourceKey) == PairingRecordSource.onDevice.rawValue {
 			UserDefaults.standard.removeObject(forKey: pairingRecordSourceKey)
+		}
+	}
+
+	private static func pairingDirectory() -> URL {
+		FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+	}
+
+	private static func importedPairingFile() -> URL {
+		pairingDirectory().appendingPathComponent("pairingFile.plist")
+	}
+
+	private static func onDevicePairingFile() -> URL {
+		pairingDirectory().appendingPathComponent("onDeviceRPPairing.plist")
+	}
+
+	private static func legacyOnDevicePairingFile() -> URL {
+		let applicationSupport = FileManager.default.urls(
+			for: .applicationSupportDirectory,
+			in: .userDomainMask
+		).first!
+		return applicationSupport
+			.appendingPathComponent(Bundle.main.bundleIdentifier ?? "Feather", isDirectory: true)
+			.appendingPathComponent("onDeviceRPPairing.plist")
+	}
+
+	/// Moves records written by earlier Feather builds into Documents.
+	/// This is safe to run repeatedly and never replaces a current record.
+	private static func migratePairingRecordsToDocumentsIfNeeded() {
+		pairingMigrationLock.lock()
+		defer { pairingMigrationLock.unlock() }
+		guard !hasCompletedPairingMigration,
+			  UIApplication.shared.isProtectedDataAvailable else {
+			return
+		}
+
+		let fileManager = FileManager.default
+		let source = legacyOnDevicePairingFile()
+		let destination = onDevicePairingFile()
+		guard fileManager.fileExists(atPath: source.path) else {
+			hasCompletedPairingMigration = true
+			return
+		}
+		guard !fileManager.fileExists(atPath: destination.path) else {
+			hasCompletedPairingMigration = true
+			return
+		}
+
+		movePairingRecordIfNeeded(
+			from: source,
+			to: destination,
+			fileManager: fileManager
+		)
+		hasCompletedPairingMigration = fileManager.fileExists(atPath: destination.path)
+	}
+
+	private static func movePairingRecordIfNeeded(
+		from source: URL,
+		to destination: URL,
+		fileManager: FileManager
+	) {
+		guard source != destination,
+			  fileManager.fileExists(atPath: source.path),
+			  !fileManager.fileExists(atPath: destination.path) else {
+			return
+		}
+
+		do {
+			try fileManager.moveItem(at: source, to: destination)
+		} catch {
+			// A copy/remove fallback handles the unlikely case that the two
+			// container locations cannot be renamed atomically.
+			do {
+				try fileManager.copyItem(at: source, to: destination)
+				try fileManager.removeItem(at: source)
+			} catch {
+				try? fileManager.removeItem(at: destination)
+			}
 		}
 	}
 }

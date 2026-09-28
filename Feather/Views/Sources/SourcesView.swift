@@ -73,18 +73,17 @@ struct SourcesView: View {
 			.scrollDismissesKeyboard(.interactively)
 			.overlay {
 				if _filteredSources.isEmpty {
-					if #available(iOS 17, *) {
-						ContentUnavailableView {
-							Label(.localized("No Repositories"), systemImage: "globe.desk.fill")
-						} description: {
-							Text(.localized("Get started by adding your first repository."))
-						} actions: {
-							Button {
-								_isAddingPresenting = true
-							} label: {
-								NBButton(.localized("Add Source"), style: .text)
-							}
+					TabPlaceholderView(
+						title: .localized("No Repositories"),
+						description: .localized("Get started by adding your first repository."),
+						systemImage: "globe.desk.fill"
+					) {
+						Button {
+							_isAddingPresenting = true
+						} label: {
+							NBButton(.localized("Add Source"), style: .text)
 						}
+						.buttonStyle(.borderless)
 					}
 				}
 			}

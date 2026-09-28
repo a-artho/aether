@@ -46,7 +46,7 @@ struct SettingsView: View {
 					}
 				}
                 
-				NBSection(.localized("Certificates")) {
+				Section {
                     
 					if let cert = selectedCertificate {
 						CertificatesCellView(cert: cert)
@@ -61,7 +61,7 @@ struct SettingsView: View {
                  
 				}
                 
-				NBSection(.localized("Features")) {
+				Section {
 					NavigationLink(destination: ConfigurationView()) {
 						SettingsRowLabel(.localized("Signing Options"), systemImage: "signature", backgroundColor: .orange)
 					}
@@ -94,6 +94,7 @@ struct SettingsView: View {
 					case .signing: ConfigurationView()
 					case .archive: ArchiveView()
 					case .installation: InstallationView()
+					case .pairingFile: PairingFileView()
 					case .reset: ResetView()
 					}
 				}

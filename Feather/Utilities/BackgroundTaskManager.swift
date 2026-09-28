@@ -65,6 +65,15 @@ class BackgroundTaskManager: ObservableObject {
 		)
 	}
 
+	func showPairingProgress(_ subtitle: String, for sessionIdentifier: UUID) {
+		_updateTask(
+			for: sessionIdentifier.uuidString,
+			title: .localized("Pairing Feather"),
+			subtitle: subtitle,
+			progress: 0.6
+		)
+	}
+
 	func stopPairingTask(for sessionIdentifier: UUID, success: Bool) {
 		_stopTask(for: sessionIdentifier.uuidString, success: success)
 	}
