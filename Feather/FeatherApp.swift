@@ -70,12 +70,43 @@ struct FeatherApp: App {
 				AppTabManager.shared.openInstallationSettings()
 				return
 			}
+			if url.host == "open-on-device-pairing" {
+				if OnDevicePairingManager.isSupported {
+					OnDevicePairingManager.shared.begin()
+				}
+				AppTabManager.shared.openSettings(page: .pairingFile)
+				return
+			}
 			if url.host == "open-search" {
 				NotificationCenter.default.post(name: Notification.Name("Feather.openSearch"), object: nil)
 				return
 			}
 			if url.host == "close-search" {
 				NotificationCenter.default.post(name: Notification.Name("Feather.closeSearch"), object: nil)
+				return
+			}
+			if url.host == "open-first-source" {
+				AppTabManager.shared.switchTo(.sources)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					NotificationCenter.default.post(name: Notification.Name("Feather.openFirstSource"), object: nil)
+				}
+				return
+			}
+			if url.host == "open-add-source" {
+				AppTabManager.shared.switchTo(.sources)
+				let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+				let prepopulateURL = components?.queryItems?.first(where: { $0.name == "url" })?.value ?? ""
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					NotificationCenter.default.post(
+						name: Notification.Name("Feather.openAddSource"),
+						object: nil,
+						userInfo: prepopulateURL.isEmpty ? nil : ["url": prepopulateURL]
+					)
+				}
+				return
+			}
+			if url.host == "trigger-save-source" {
+				NotificationCenter.default.post(name: Notification.Name("Feather.triggerSaveSource"), object: nil)
 				return
 			}
 			if url.host == "test-scroll" {
@@ -175,7 +206,7 @@ struct FeatherApp: App {
 			}
 			/// feather://source/<url>
 			if let fullPath = url.validatedScheme(after: "/source/") {
-				FR.handleSource(fullPath) { }
+				FR.handleSource(fullPath)
 			}
 			/// feather://install/<url.ipa>
 			if

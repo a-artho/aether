@@ -18,42 +18,31 @@ struct SourcesAddView: View {
 	@Environment(\.dismiss) var dismiss
 
 	private let _dataService = NBFetchService()
+
+	@State private var _isImporting = false
+	@State private var _isSaving = false
+	@State private var _sourceURL: String
+	private let _initialURL: String
 	
-	@State private var _filteredRecommendedSourcesData: [(url: URL, data: ASRepository)] = []
-	private func _refreshFilteredRecommendedSourcesData() {
-		let filtered = recommendedSourcesData
-			.filter { (url, data) in
-				let id = data.id ?? url.absoluteString
-				return !Storage.shared.sourceExists(id)
-			}
-			.sorted { lhs, rhs in
-				let lhsName = lhs.data.name ?? ""
-				let rhsName = rhs.data.name ?? ""
-				return lhsName.localizedCaseInsensitiveCompare(rhsName) == .orderedAscending
-			}
-		_filteredRecommendedSourcesData = filtered
+	init(initialURL: String = "") {
+		self._initialURL = initialURL
+		self.__sourceURL = State(initialValue: initialURL)
 	}
 	
-	@State var recommendedSourcesData: [(url: URL, data: ASRepository)] = []
-	let recommendedSources: [URL] = [
-		"https://raw.githubusercontent.com/claration/Feather/refs/heads/main/app-repo.json",
-		"https://raw.githubusercontent.com/Aidoku/Aidoku/altstore/apps.json",
-		"https://github.com/chachillie/Flycast-iOS/raw/main/flycast-ios.json",
-		"https://xitrix.github.io/iTorrent/AltStore.json",
-		"https://altstore.oatmealdome.me/",
-		"https://raw.githubusercontent.com/LiveContainer/LiveContainer/refs/heads/main/apps.json",
-		"https://pokemmo.com/altstore",
-		"https://provenance-emu.com/apps.json",
-		"https://community-apps.sidestore.io/sidecommunity.json",
-		"https://alt.getutm.app",
-		"https://raw.githubusercontent.com/paigely/Navic/refs/heads/master/app-repo.json",
-		"https://stikdebug.xyz/index.json",
-		"https://apps.manicemu.site/altstore",
-		"https://alt.crystall1ne.dev"
-	].map { URL(string: $0)! }
+	private var _isSaveDisabled: Bool {
+		_sourceURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || _isSaving || _isImporting
+	}
 	
-	@State private var _isImporting = false
-	@State private var _sourceURL = ""
+	private func _saveSource() {
+		guard !_isSaveDisabled else { return }
+		_isSaving = true
+		FR.handleSource(_sourceURL) { success in
+			_isSaving = false
+			if success {
+				dismiss()
+			}
+		}
+	}
 	
 	// MARK: Body
 	var body: some View {
@@ -63,20 +52,33 @@ struct SourcesAddView: View {
 					TextField(.localized("Enter Source URL"), text: $_sourceURL)
 						.keyboardType(.URL)
 						.textInputAutocapitalization(.never)
+						.disabled(_isSaving || _isImporting)
+						.onSubmit {
+							if !_isSaveDisabled {
+								_saveSource()
+							}
+						}
 				} footer: {
-					Text(.localized("The only supported repositories are AltStore repositories."))
-					Text(verbatim: "[\(String.localized("Learn more about how to setup a repository..."))](https://faq.altstore.io/developers/make-a-source)")
+					Text(.localized("The only supported repos are AltStore repos."))
+					Text(verbatim: "[\(String.localized("Learn more about how to setup a repo..."))](https://faq.altstore.io/developers/make-a-source)")
 				}
 				
 				Section {
-					Button(.localized("Import"), systemImage: "square.and.arrow.down") {
+					Button {
 						_isImporting = true
 						_fetchImportedRepositories(UIPasteboard.general.string) {
 							dismiss()
 						}
+					} label: {
+						SettingsRowLabel(
+							.localized("Import"),
+							systemImage: "square.and.arrow.down.fill",
+							backgroundColor: .blue
+						)
 					}
+					.disabled(_isSaving || _isImporting)
 					
-					Button(.localized("Export"), systemImage: "doc.on.doc") {
+					Button {
 						let sources = Storage.shared.getSources()
 						guard !sources.isEmpty else {
 							UIAlertController.showAlertWithOk(
@@ -85,8 +87,8 @@ struct SourcesAddView: View {
 							)
 							return
 						}
-						UIPasteboard.general.string = sources.map {
-							$0.sourceURL!.absoluteString
+						UIPasteboard.general.string = sources.compactMap {
+							$0.sourceURL?.absoluteString
 						}.joined(separator: "\n")
 						UIAlertController.showAlertWithOk(
 							title: .localized("Success"),
@@ -94,47 +96,29 @@ struct SourcesAddView: View {
 						) {
 							dismiss()
 						}
+					} label: {
+						SettingsRowLabel(
+							.localized("Export"),
+							systemImage: "doc.on.doc.fill",
+							backgroundColor: .orange
+						)
 					}
+					.disabled(_isSaving || _isImporting)
 				} footer: {
 					Text(.localized("Supports importing from KravaSign/MapleSign and ESign."))
-				}
-				
-				if !_filteredRecommendedSourcesData.isEmpty {
-					NBSection(.localized("Featured")) {
-						ForEach(_filteredRecommendedSourcesData, id: \.url) { (url, source) in
-							HStack(spacing: 2) {
-								FRIconCellView(
-									title: source.name ?? .localized("Unknown"),
-									subtitle: url.absoluteString,
-									iconUrl: source.currentIconURL
-								)
-								Button {
-									Storage.shared.addSource(url, repository: source) { _ in
-										_refreshFilteredRecommendedSourcesData()
-									}
-								} label: {
-									NBButton(.localized("Add"), systemImage: "arrow.down", style: .text)
-								}
-							}
-						}
-					} footer: {
-						Text(.localized("Open an [issue](https://github.com/claration/Feather/issues) on GitHub if you want your source to be featured."))
-					}
 				}
 			}
 			.toolbar {
 				NBToolbarButton(role: .cancel)
 				
-				if !_isImporting {
+				if !_isSaving && !_isImporting {
 					NBToolbarButton(
-						.localized("Save"),
-						style: .text,
+						systemImage: "checkmark",
+						style: .icon,
 						placement: .confirmationAction,
-						isDisabled: _sourceURL.isEmpty
+						isDisabled: _isSaveDisabled
 					) {
-						FR.handleSource(_sourceURL) {
-							dismiss()
-						}
+						_saveSource()
 					}
 				} else {
 					ToolbarItem(placement: .confirmationAction) {
@@ -142,30 +126,35 @@ struct SourcesAddView: View {
 					}
 				}
 			}
-			.animation(.default, value: _filteredRecommendedSourcesData.map { $0.data.id ?? "" })
-			.task {
-				await _fetchRecommendedRepositories()
+			.onAppear {
+				if !_initialURL.isEmpty {
+					_sourceURL = _initialURL
+				}
+			}
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.triggerSaveSource"))) { _ in
+				_saveSource()
 			}
 		}
-	}
-	
-	private func _fetchRecommendedRepositories() async {
-		let fetched = await _concurrentFetchRepositories(from: recommendedSources)
-		await MainActor.run {
-			recommendedSourcesData = fetched
-			_refreshFilteredRecommendedSourcesData()
-		}
+		.presentationDetents([.height(370)])
 	}
 	
 	private func _fetchImportedRepositories(
 		_ code: String?,
-		competion: @escaping () -> Void
+		completion: @escaping () -> Void
 	) {
-		guard let code else { return }
+		guard let code else {
+			_isImporting = false
+			UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Clipboard is empty."))
+			return
+		}
 		
 		let handler = ASDeobfuscator(with: code)
 		let repoUrls = handler.decode().compactMap { URL(string: $0) }
-		guard !repoUrls.isEmpty else { return }
+		guard !repoUrls.isEmpty else {
+			_isImporting = false
+			UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("No valid sources found in clipboard."))
+			return
+		}
 		
 		Task {
 			let fetched = await _concurrentFetchRepositories(from: repoUrls)
@@ -174,7 +163,8 @@ struct SourcesAddView: View {
 
 			await MainActor.run {
 				Storage.shared.addSources(repos: dict) { _ in
-					competion()
+					_isImporting = false
+					completion()
 				}
 			}
 		}
@@ -184,28 +174,29 @@ struct SourcesAddView: View {
 		from urls: [URL]
 	) async -> [(url: URL, data: ASRepository)] {
 		var results: [(url: URL, data: ASRepository)] = []
-		
 		let dataService = _dataService
 		
-		await withTaskGroup(of: Void.self) { group in
+		await withTaskGroup(of: (url: URL, data: ASRepository)?.self) { group in
 			for url in urls {
 				group.addTask {
 					await withCheckedContinuation { continuation in
 						dataService.fetch<ASRepository>(from: url) { (result: RepositoryDataHandler) in
 							switch result {
 							case .success(let repo):
-								Task { @MainActor in
-									results.append((url: url, data: repo))
-								}
+								continuation.resume(returning: (url: url, data: repo))
 							case .failure(let error):
 								Logger.misc.error("Failed to fetch \(url): \(error.localizedDescription)")
+								continuation.resume(returning: nil)
 							}
-							continuation.resume()
 						}
 					}
 				}
 			}
-			await group.waitForAll()
+			for await item in group {
+				if let item {
+					results.append(item)
+				}
+			}
 		}
 		
 		return results

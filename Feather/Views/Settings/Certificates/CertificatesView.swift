@@ -103,6 +103,9 @@ extension CertificatesView {
 		
 		Button {
 			_selectedCertBinding.wrappedValue = index
+			if let uuid = cert.uuid {
+				UserDefaults.standard.set(uuid, forKey: "feather.selectedCertUUID")
+			}
 		} label: {
 			CertificatesCellView(
 				cert: cert
@@ -126,9 +129,7 @@ extension CertificatesView {
 					_actions(for: cert)
 				}
 			}
-			.transaction {
-				$0.animation = nil
-			}
+			.animation(.spring(response: 0.25, dampingFraction: 0.7), value: _selectedCertBinding.wrappedValue)
 		}
 		.buttonStyle(.plain)
 	}
@@ -136,6 +137,9 @@ extension CertificatesView {
 	@ViewBuilder
 	private func _actions(for cert: CertificatePair) -> some View {
 		Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
+			if let uuid = cert.uuid, UserDefaults.standard.string(forKey: "feather.selectedCertUUID") == uuid {
+				UserDefaults.standard.removeObject(forKey: "feather.selectedCertUUID")
+			}
 			Storage.shared.deleteCertificate(for: cert)
 		}
 	}
@@ -151,7 +155,7 @@ extension CertificatesView {
 			_isRenamingPresenting = true
 		}
 		Divider()
-		Button(.localized("Check Revokage"), systemImage: "person.text.rectangle") {
+		Button(.localized("Check Revocation"), systemImage: "person.text.rectangle") {
 			Storage.shared.revokagedCertificate(for: cert)
 		}
 	}

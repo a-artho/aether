@@ -36,7 +36,9 @@ struct CertificatesInfoView: View {
 				
 				Section {
 					Button {
-						UIApplication.open(Storage.shared.getUuidDirectory(for: cert)!.toSharedDocumentsURL()!)
+						if let dir = Storage.shared.getUuidDirectory(for: cert), let sharedURL = dir.toSharedDocumentsURL() {
+							UIApplication.open(sharedURL)
+						}
 					} label: {
 						SettingsRowLabel(.localized("Open in Files"), systemImage: "folder.fill", backgroundColor: .blue)
 					}

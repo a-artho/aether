@@ -29,7 +29,9 @@ struct LibraryInfoView: View {
 				
 				Section {
 					Button(.localized("Open in Files"), systemImage: "folder") {
-						UIApplication.open(Storage.shared.getUuidDirectory(for: app)!.toSharedDocumentsURL()!)
+						if let dir = Storage.shared.getUuidDirectory(for: app), let sharedURL = dir.toSharedDocumentsURL() {
+							UIApplication.open(sharedURL)
+						}
 					}
 				}
 			}
@@ -102,7 +104,8 @@ extension LibraryInfoView {
 			}
 			NavigationLink(.localized("Entitlements")) {
 				if 
-					let path = Bundle(url: Storage.shared.getAppDirectory(for: app)!)?.executableURL?.path,
+					let appDir = Storage.shared.getAppDirectory(for: app),
+					let path = Bundle(url: appDir)?.executableURL?.path,
 					let data = LCGetMachOEntitlements(path),
 					let rawDict = (try? PropertyListSerialization.propertyList(
 						from: data,

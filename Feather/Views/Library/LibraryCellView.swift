@@ -14,12 +14,17 @@ struct LibraryCellView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@Environment(\.editMode) private var editMode
 
+	private var _certificate: CertificatePair? {
+		guard app.isSigned else { return nil }
+		return Storage.shared.getCertificate(from: app)
+	}
+
 	var certInfo: Date.ExpirationInfo? {
-		Storage.shared.getCertificate(from: app)?.expiration?.expirationInfo()
+		_certificate?.expiration?.expirationInfo()
 	}
 	
 	var certRevoked: Bool {
-		Storage.shared.getCertificate(from: app)?.revoked == true
+		_certificate?.revoked == true
 	}
 	
 	var app: AppInfoPresentable
@@ -138,13 +143,14 @@ extension LibraryCellView {
 
 	private var _certificateStatus: (label: String, color: Color)? {
 		guard app.isSigned else { return nil }
+		let cert = _certificate
 
-		if certRevoked {
+		if cert?.revoked == true {
 			return (.localized("Revoked"), .red)
 		}
 
-		if let certInfo {
-			return (certInfo.formatted, certInfo.color)
+		if let info = cert?.expiration?.expirationInfo() {
+			return (info.formatted, info.color)
 		}
 
 		return (.localized("Install"), .accentColor)

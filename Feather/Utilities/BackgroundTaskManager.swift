@@ -45,7 +45,7 @@ class BackgroundTaskManager: ObservableObject {
 			for: sessionIdentifier.uuidString,
 			kind: .pairing,
 			title: .localized("Pairing Feather"),
-			subtitle: .localized("Open Developer Mode"),
+			subtitle: .localized("Open Settings"),
 			progress: 0,
 			onExpiration: onExpiration
 		)

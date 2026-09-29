@@ -14,29 +14,31 @@ struct OnDevicePairingView: View {
 
 	var body: some View {
 		NavigationStack {
-			VStack(alignment: .leading, spacing: 20) {
-				switch pairing.state {
-				case .waitingForSettings:
-					_waitingContent
-				case .pairingWithoutCode:
-					_pinlessContent
-				case .awaitingCode(let code):
-					_codeContent(code)
-				case .cancelling:
-					ProgressView(.localized("Closing secure pairing…"))
-						.frame(maxWidth: .infinity, maxHeight: .infinity)
-				case .completed:
-					_completionContent
-				case .failed(let message):
-					_failureContent(message)
-				case .idle:
-					ProgressView()
-						.frame(maxWidth: .infinity, maxHeight: .infinity)
+			ScrollView {
+				VStack(alignment: .leading, spacing: 20) {
+					switch pairing.state {
+					case .waitingForSettings:
+						_waitingContent
+					case .pairingWithoutCode:
+						_pinlessContent
+					case .awaitingCode(let code):
+						_codeContent(code)
+					case .cancelling:
+						ProgressView(.localized("Closing secure pairing…"))
+							.frame(maxWidth: .infinity, maxHeight: .infinity)
+					case .completed:
+						_completionContent
+					case .failed(let message):
+						_failureContent(message)
+					case .idle:
+						ProgressView()
+							.frame(maxWidth: .infinity, maxHeight: .infinity)
+					}
 				}
+				.padding(24)
+				.frame(maxWidth: .infinity, alignment: .topLeading)
 			}
-			.padding(24)
-			.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-			.navigationTitle(.localized("Pair This Device"))
+			.navigationTitle(.localized("On-Device Pairing"))
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .topBarTrailing) {
@@ -66,21 +68,65 @@ struct OnDevicePairingView: View {
 				.font(.system(size: 34, weight: .semibold))
 				.foregroundStyle(.blue)
 
-			VStack(alignment: .leading, spacing: 8) {
-				Text(.localized("Feather is ready to pair."))
+			VStack(alignment: .leading, spacing: 6) {
+				Text(.localized("Feather is ready to pair"))
 					.font(.title3.weight(.semibold))
-				Text(.localized("Open Developer Mode, choose Pair with Feather, then enter your passcode. Feather will finish pairing automatically."))
+				Text(.localized("To pair this device, follow these steps in Settings:"))
+					.font(.subheadline)
 					.foregroundStyle(.secondary)
 			}
 
-			Button(.localized("Open Developer Mode")) {
-				_openDeveloperMode()
+			VStack(alignment: .leading, spacing: 14) {
+				_instructionStep(
+					number: 1,
+					title: .localized("Open Settings"),
+					detail: .localized("Tap the button below to switch to the Settings app.")
+				)
+				_instructionStep(
+					number: 2,
+					title: .localized("Go to Developer Mode"),
+					detail: .localized("Navigate to Privacy & Security → Developer Mode.")
+				)
+				_instructionStep(
+					number: 3,
+					title: .localized("Pair with Feather"),
+					detail: .localized("Choose Pair with Feather and enter your device passcode. Pairing will complete automatically.")
+				)
+			}
+			.padding(.vertical, 4)
+
+			Button {
+				_openSettings()
+			} label: {
+				Text(.localized("Open Settings"))
+					.frame(maxWidth: .infinity)
 			}
 			.buttonStyle(.borderedProminent)
+			.controlSize(.large)
 
-			Text(.localized("Feather stays active while Settings completes the secure pairing."))
+			Text(.localized("Feather stays active in the background while Settings completes the secure pairing."))
 				.font(.footnote)
 				.foregroundStyle(.secondary)
+		}
+	}
+
+	private func _instructionStep(number: Int, title: String, detail: String) -> some View {
+		HStack(alignment: .top, spacing: 12) {
+			Text("\(number)")
+				.font(.caption.weight(.bold))
+				.foregroundStyle(.white)
+				.frame(width: 22, height: 22)
+				.background(Circle().fill(Color.blue))
+
+			VStack(alignment: .leading, spacing: 2) {
+				Text(title)
+					.font(.subheadline.weight(.semibold))
+					.foregroundStyle(.primary)
+
+				Text(detail)
+					.font(.caption)
+					.foregroundStyle(.secondary)
+			}
 		}
 	}
 
@@ -93,7 +139,7 @@ struct OnDevicePairingView: View {
 			VStack(alignment: .leading, spacing: 8) {
 				Text(.localized("Finishing secure pairing"))
 					.font(.title3.weight(.semibold))
-				Text(.localized("No pairing code is needed. Keep Developer Mode open while Feather completes the connection."))
+				Text(.localized("No pairing code is needed. Keep Settings open in Developer Mode while Feather completes the connection."))
 					.foregroundStyle(.secondary)
 			}
 
@@ -111,7 +157,7 @@ struct OnDevicePairingView: View {
 			VStack(alignment: .leading, spacing: 8) {
 				Text(.localized("Enter this code in Settings"))
 					.font(.title3.weight(.semibold))
-				Text(.localized("After confirming your passcode, paste this code to finish pairing. It was copied automatically."))
+				Text(.localized("In Settings → Privacy & Security → Developer Mode, paste this pairing code after confirming your passcode. It was copied automatically."))
 					.foregroundStyle(.secondary)
 			}
 
@@ -127,10 +173,14 @@ struct OnDevicePairingView: View {
 			}
 			.buttonStyle(.bordered)
 
-			Button(.localized("Open Developer Mode")) {
-				_openDeveloperMode()
+			Button {
+				_openSettings()
+			} label: {
+				Text(.localized("Open Settings"))
+					.frame(maxWidth: .infinity)
 			}
 			.buttonStyle(.borderedProminent)
+			.controlSize(.large)
 		}
 	}
 
@@ -162,11 +212,14 @@ struct OnDevicePairingView: View {
 		}
 	}
 
-	private func _openDeveloperMode() {
+	private func _openSettings() {
 		pairing.prepareForSettings()
-		guard let developerModeURL = URL(string: "App-Prefs:root=Privacy&path=DEVELOPER_MODE") else { return }
-		UIApplication.shared.open(developerModeURL) { didOpen in
-			guard !didOpen, let appSettingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+		if let settingsURL = URL(string: "App-Prefs:"), UIApplication.shared.canOpenURL(settingsURL) {
+			UIApplication.shared.open(settingsURL) { didOpen in
+				guard !didOpen, let appSettingsURL = URL(string: UIApplication.openSettingsURLString) else { return }
+				UIApplication.shared.open(appSettingsURL)
+			}
+		} else if let appSettingsURL = URL(string: UIApplication.openSettingsURLString) {
 			UIApplication.shared.open(appSettingsURL)
 		}
 	}

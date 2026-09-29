@@ -16,8 +16,10 @@ struct SourcesView: View {
 	@StateObject var viewModel = SourcesViewModel.shared
 	@State private var _isAddingPresenting = false
 	@State private var _addingSourceLoading = false
+	@State private var _initialAddSourceURL = ""
 	@State private var _searchText = ""
 	@State private var _isSearchPresented = false
+	@State private var _selectedSourceForNav: AltSource? = nil
 	@FocusState private var _isSearchFocused: Bool
 	
 	private var _filteredSources: [AltSource] {
@@ -43,7 +45,7 @@ struct SourcesView: View {
 							HStack(spacing: 18) {
 								Image("Repositories").appIconStyle()
 								NBTitleWithSubtitleView(
-									title: .localized("All Repositories"),
+									title: .localized("All Repos"),
 									subtitle: .localized("See all apps from your sources")
 								)
 							}
@@ -58,7 +60,7 @@ struct SourcesView: View {
 						.buttonStyle(.plain)
 					}
 					
-					NBSection(.localized("Repositories")) {
+					NBSection(.localized("Repos")) {
 						ForEach(_filteredSources) { source in
 							NavigationLink {
 								SourceAppsView(object: [source], viewModel: viewModel)
@@ -74,8 +76,8 @@ struct SourcesView: View {
 			.overlay {
 				if _filteredSources.isEmpty {
 					TabPlaceholderView(
-						title: .localized("No Repositories"),
-						description: .localized("Get started by adding your first repository."),
+						title: .localized("No Repos"),
+						description: .localized("Get started by adding your first repo."),
 						systemImage: "globe.desk.fill"
 					) {
 						Button {
@@ -85,6 +87,7 @@ struct SourcesView: View {
 						}
 						.buttonStyle(.borderless)
 					}
+					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
 				}
 			}
 			.toolbar {
@@ -160,20 +163,39 @@ struct SourcesView: View {
 			.refreshable {
 				await viewModel.fetchSources(_sources, refresh: true)
 			}
-			.sheet(isPresented: $_isAddingPresenting) {
-				SourcesAddView()
+			.sheet(isPresented: $_isAddingPresenting, onDismiss: { _initialAddSourceURL = "" }) {
+				SourcesAddView(initialURL: _initialAddSourceURL)
+					.id(_initialAddSourceURL)
 			}
 			.animation(.spring(response: 0.35, dampingFraction: 0.82), value: _isSearchPresented)
+			.animation(.snappy(duration: 0.25), value: _searchText)
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openSearch"))) { _ in
 				withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
 					_isSearchPresented = true
 				}
+			}
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openAddSource"))) { notification in
+				_initialAddSourceURL = notification.userInfo?["url"] as? String ?? ""
+				_isAddingPresenting = true
 			}
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.closeSearch"))) { _ in
 				_isSearchFocused = false
 				withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
 					_isSearchPresented = false
 					_searchText = ""
+				}
+			}
+			.navigationDestination(isPresented: Binding(
+				get: { _selectedSourceForNav != nil },
+				set: { if !$0 { _selectedSourceForNav = nil } }
+			)) {
+				if let source = _selectedSourceForNav {
+					SourceAppsView(object: [source], viewModel: viewModel)
+				}
+			}
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openFirstSource"))) { _ in
+				if let first = _sources.first {
+					_selectedSourceForNav = first
 				}
 			}
 		}

@@ -127,6 +127,7 @@ struct LibraryView: View {
 						}
 						.buttonStyle(.borderless)
 					}
+					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
 				}
 			}
 			.toolbar {
@@ -219,6 +220,7 @@ struct LibraryView: View {
 			}
 			.environment(\.editMode, $_editMode)
 			.animation(.spring(response: 0.35, dampingFraction: 0.82), value: _isSearchPresented)
+			.animation(.snappy(duration: 0.25), value: _searchText)
 			.sheet(item: $_selectedInfoAppPresenting) { app in
 				LibraryInfoView(app: app.base)
 			}
@@ -250,9 +252,11 @@ struct LibraryView: View {
 					_alertDownloadString = ""
 				}
 				Button(.localized("OK")) {
-					if let url = URL(string: _alertDownloadString) {
+					let trimmed = _alertDownloadString.trimmingCharacters(in: .whitespacesAndNewlines)
+					if let url = URL(string: trimmed) {
 						_ = downloadManager.startDownload(from: url, id: "FeatherManualDownload_\(UUID().uuidString)")
 					}
+					_alertDownloadString = ""
 				}
 			}
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openSearch"))) { _ in

@@ -38,6 +38,11 @@ extension Storage {
 	}
 	
 	func deleteCertificate(for cert: CertificatePair) {
+		if let uuid = cert.uuid {
+			Self._provisionLock.lock()
+			Self._provisionCache.removeValue(forKey: uuid)
+			Self._provisionLock.unlock()
+		}
 		if let url = getUuidDirectory(for: cert) {
 			try? FileManager.default.removeItem(at: url)
 		}
@@ -89,12 +94,30 @@ extension Storage {
 		return FileManager.default.getPath(in: url, for: type.rawValue)
 	}
 	
+	private static var _provisionCache: [String: Certificate] = [:]
+	private static let _provisionLock = NSLock()
+
 	func getProvisionFileDecoded(for cert: CertificatePair) -> Certificate? {
+		if let uuid = cert.uuid {
+			Self._provisionLock.lock()
+			if let cached = Self._provisionCache[uuid] {
+				Self._provisionLock.unlock()
+				return cached
+			}
+			Self._provisionLock.unlock()
+		}
+
 		guard let url = getFile(.provision, from: cert) else {
 			return nil
 		}
 		
 		let read = CertificateReader(url)
+		if let decoded = read.decoded, let uuid = cert.uuid {
+			Self._provisionLock.lock()
+			Self._provisionCache[uuid] = decoded
+			Self._provisionLock.unlock()
+			return decoded
+		}
 		return read.decoded
 	}
 	

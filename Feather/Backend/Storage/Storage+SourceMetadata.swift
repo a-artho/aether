@@ -182,11 +182,11 @@ extension Storage {
 	}
 
 	func deleteSourceMetadata(kind: SourceLinkedAppKind) {
-		let request: NSFetchRequest<AppSourceMetadata> = AppSourceMetadata.fetchRequest()
+		let request: NSFetchRequest<NSFetchRequestResult> = AppSourceMetadata.fetchRequest()
 		request.predicate = NSPredicate(format: "appKind == %@", kind.rawValue)
 
 		do {
-			let deleteRequest = NSBatchDeleteRequest(fetchRequest: request as! NSFetchRequest<NSFetchRequestResult>)
+			let deleteRequest = NSBatchDeleteRequest(fetchRequest: request)
 			try context.execute(deleteRequest)
 		} catch {
 		}

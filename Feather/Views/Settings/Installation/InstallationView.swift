@@ -11,7 +11,10 @@ import NimbleViews
 // MARK: - View
 struct InstallationView: View {
 	@AppStorage("Feather.installationMethod") private var _installationMethod: Int = 0
+	@AppStorage("Feather.spoofing.simulationMayBeActive") private var _isSpoofingActive = false
+	@ObservedObject private var _connection = DeviceConnectionManager.shared
 	@State private var _showMethodChangedAlert = false
+	@State private var _showStopSpoofingAlert = false
 
 	private let _installationMethods: [String] = [
 		.localized("Server"),
@@ -22,7 +25,10 @@ struct InstallationView: View {
 	var body: some View {
 		NBList(.localized("Installation"), displayMode: .inline) {
 			Section {
-				Picker(selection: $_installationMethod) {
+				Picker(selection: Binding(
+					get: { _installationMethod },
+					set: { _selectInstallationMethod($0) }
+				)) {
 					ForEach(_installationMethods.indices, id: \.description) { index in
 						Text(_installationMethods[index]).tag(index)
 					}
@@ -39,26 +45,39 @@ struct InstallationView: View {
 			}
 			
 			if _installationMethod == 0 {
-				ServerView()
-			} else if _installationMethod == 1 {
-				TunnelView()
+				ServerView(embedInList: false)
 			}
-		}
-		.onChange(of: _installationMethod) { newValue in
-			guard newValue == 1 else { return }
-			_showMethodChangedAlert = true
 		}
 		.alert(.localized("Advanced Installation Method"), isPresented: $_showMethodChangedAlert) {
 			Button(.localized("Switch Back"), role: .destructive) {
-				_installationMethod = 0
+				_selectInstallationMethod(0)
 			}
 			Button(.localized("OK"), role: .cancel) {}
 		} message: {
 			Text(.localized("idevice warning"))
 		}
+		.alert(.localized("Stop Spoofing First"), isPresented: $_showStopSpoofingAlert) {
+			Button(.localized("OK"), role: .cancel) {}
+		} message: {
+			Text(.localized("Stop the simulated location before switching to Server mode."))
+		}
 
 
 		.animation(.default, value: _installationMethod)
 	}
-}
 
+	private func _selectInstallationMethod(_ method: Int) {
+		guard method != _installationMethod else { return }
+		if method == 0 && _isSpoofingActive {
+			_showStopSpoofingAlert = true
+			return
+		}
+		guard _connection.setInstallationMode(method) else {
+			_showStopSpoofingAlert = true
+			return
+		}
+		if method == 1 {
+			_showMethodChangedAlert = true
+		}
+	}
+}

@@ -2,6 +2,8 @@ NAME := Feather
 SCHEME := Feather
 PLATFORMS := iphoneos maccatalyst
 
+export DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
+
 TMP := $(TMPDIR)/$(NAME)
 CERT_JSON_URL := https://backloop.dev/pack.json
 
@@ -47,6 +49,14 @@ $(PLATFORMS): deps
 	mkdir -p $(TMP)/$@/Payload
 	cp -R $(TMP)/$@/dst/Applications/*.app $(TMP)/$@/Payload/Feather.app
 	chmod -R 0755 $(TMP)/$@/Payload/Feather.app
+	@if [ "$@" = "iphoneos" ]; then \
+		TUNNEL="$(TMP)/$@/Payload/Feather.app/PlugIns/FeatherTunnel.appex"; \
+		if [ ! -d "$$TUNNEL" ]; then \
+			echo "Missing embedded FeatherTunnel.appex" >&2; \
+			exit 1; \
+		fi; \
+		codesign --force --sign - --timestamp=none --entitlements FeatherTunnel/FeatherTunnel.entitlements "$$TUNNEL"; \
+	fi
 	codesign --force --sign - --timestamp=none $(TMP)/$@/Payload/Feather.app
 	cp deps/* $(TMP)/$@/Payload/Feather.app/ || true
 

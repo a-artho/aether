@@ -126,16 +126,25 @@
 		<string>App-Prefs</string>
 		<string>prefs</string>
 		<string>localdevvpn</string>
+		<string>itms-apps</string>
 	</array>
 	<key>NSBonjourServices</key>
 	<array>
+		<string>_remotepairing._tcp</string>
 		<string>_remotepairing-pairable-host._tcp</string>
+		<string>_apple-mobdev2._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Feather needs local network access to pair this device for iDevice installs.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Feather uses your location to center the spoofing map and keep an active simulated location session while it is running.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Feather uses your location to center the spoofing map and return to your current location.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>location</string>
+		<string>processing</string>
 	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>

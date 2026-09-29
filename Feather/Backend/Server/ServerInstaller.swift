@@ -117,10 +117,10 @@ class ServerInstaller: Identifiable, ObservableObject {
 	}
 		
 	func getServerMethod() -> Int {
-		UserDefaults.standard.integer(forKey: "Feather.serverMethod")
+		UserDefaults.standard.object(forKey: "Feather.serverMethod") as? Int ?? 1
 	}
 	
 	func getIPFix() -> Bool {
-		UserDefaults.standard.bool(forKey: "Feather.ipFix")
+		UserDefaults.standard.object(forKey: "Feather.ipFix") as? Bool ?? true
 	}
 }

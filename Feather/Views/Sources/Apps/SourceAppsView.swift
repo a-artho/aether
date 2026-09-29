@@ -38,6 +38,8 @@ struct SourceAppsView: View {
 	@State var isLoading = true
 	@State var hasLoadedOnce = false
 	@State private var _searchText = ""
+	@State private var _isSearchPresented = false
+	@FocusState private var _isSearchFocused: Bool
 
 	private var _navigationTitle: String {
 		if object.count == 1 {
@@ -66,56 +68,115 @@ struct SourceAppsView: View {
 					onSelect: {self._selectedRoute = $0}
 				)
 				.ignoresSafeArea()
-			} else {
+			} else if isLoading {
 				ProgressView()
+			} else {
+				TabPlaceholderView(
+					title: .localized("No Apps"),
+					description: .localized("This repo does not contain any available apps."),
+					systemImage: "square.dashed"
+				)
 			}
 		}
-		.navigationTitle(_navigationTitle)
-		.searchable(text: $_searchText, placement: .platform())
-		.toolbarTitleMenu {
+		.navigationTitle(_isSearchPresented ? "" : _navigationTitle)
+		.navigationBarBackButtonHidden(_isSearchPresented)
+		.toolbarTitleMenuIf(!_isSearchPresented) {
+			_sortActions()
+
 			if
 				let _sourceContexts,
 				_sourceContexts.count == 1
 			{
-				if let url = _sourceContexts[0].repository.website {
-					Button(.localized("Visit Website"), systemImage: "globe") {
-						UIApplication.open(url)
+				Section {
+					if let url = _sourceContexts[0].repository.website {
+						Button(.localized("Visit Website"), systemImage: "globe") {
+							UIApplication.open(url)
+						}
+					}
+
+					if let url = _sourceContexts[0].repository.patreonURL {
+						Button(.localized("Visit Patreon"), systemImage: "dollarsign.circle") {
+							UIApplication.open(url)
+						}
+					}
+
+					Button(.localized("Copy"), systemImage: "doc.on.doc") {
+						guard !object.isEmpty else {
+							UIAlertController.showAlertWithOk(
+								title: .localized("Error"),
+								message: .localized("No sources to copy")
+							)
+							return
+						}
+						UIPasteboard.general.string = object.compactMap {
+							$0.sourceURL?.absoluteString
+						}.joined(separator: "\n")
+						UIAlertController.showAlertWithOk(
+							title: .localized("Success"),
+							message: .localized("Sources copied to clipboard")
+						)
 					}
 				}
-				
-				if let url = _sourceContexts[0].repository.patreonURL {
-					Button(.localized("Visit Patreon"), systemImage: "dollarsign.circle") {
-						UIApplication.open(url)
-					}
-				}
-			}
-			
-			Divider()
-			
-			Button(.localized("Copy"), systemImage: "doc.on.doc") {
-				guard !object.isEmpty else {
-					UIAlertController.showAlertWithOk(
-						title: .localized("Error"),
-						message: .localized("No sources to copy")
-					)
-					return
-				}
-				UIPasteboard.general.string = object.map {
-					$0.sourceURL!.absoluteString
-				}.joined(separator: "\n")
-				UIAlertController.showAlertWithOk(
-					title: .localized("Success"),
-					message: .localized("Sources copied to clipboard")
-				)
 			}
 		}
 		.toolbar {
-			NBToolbarMenu(
-				systemImage: "line.3.horizontal.decrease",
-				style: .icon,
-				placement: .topBarTrailing
-			) {
-				_sortActions()
+			if _isSearchPresented {
+				ToolbarItem(placement: .principal) {
+					HStack(spacing: 8) {
+						Image(systemName: "magnifyingglass")
+							.font(.system(size: 15, weight: .semibold))
+							.foregroundColor(.secondary)
+							.padding(.leading, 12)
+
+						TextField(.localized("Search"), text: $_searchText)
+							.font(.system(size: 16))
+							.focused($_isSearchFocused)
+							.textInputAutocapitalization(.never)
+							.disableAutocorrection(true)
+							.onAppear {
+								_isSearchFocused = true
+							}
+
+						if !_searchText.isEmpty {
+							Button {
+								_searchText = ""
+							} label: {
+								Image(systemName: "xmark.circle.fill")
+									.font(.system(size: 14))
+									.foregroundColor(.secondary)
+							}
+							.buttonStyle(.plain)
+							.padding(.trailing, 8)
+						}
+					}
+					.frame(height: 36)
+					.frame(width: min(500, UIScreen.main.bounds.width - 74))
+					.background(Color(UIColor.secondarySystemFill), in: Capsule())
+				}
+
+				ToolbarItem(placement: .topBarTrailing) {
+					Button {
+						_isSearchFocused = false
+						withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+							_isSearchPresented = false
+							_searchText = ""
+						}
+					} label: {
+						Image(systemName: "xmark")
+					}
+					.accessibilityLabel(.localized("Cancel"))
+				}
+			} else {
+				ToolbarItem(placement: .topBarTrailing) {
+					Button {
+						withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+							_isSearchPresented = true
+						}
+					} label: {
+						Image(systemName: "magnifyingglass")
+					}
+					.accessibilityLabel(.localized("Search"))
+				}
 			}
 		}
 		.onAppear {
@@ -137,6 +198,18 @@ struct SourceAppsView: View {
 				source: route.source,
 				app: route.app
 			)
+		}
+		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openSearch"))) { _ in
+			withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+				_isSearchPresented = true
+			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.closeSearch"))) { _ in
+			_isSearchFocused = false
+			withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+				_isSearchPresented = false
+				_searchText = ""
+			}
 		}
 	}
 	
@@ -227,6 +300,18 @@ extension View {
 	) -> some View {
 		if #available(iOS 17, *) {
 			self.navigationDestination(item: item, destination: destination)
+		} else {
+			self
+		}
+	}
+
+	@ViewBuilder
+	func toolbarTitleMenuIf<Content: View>(
+		_ condition: Bool,
+		@ViewBuilder content: () -> Content
+	) -> some View {
+		if condition {
+			self.toolbarTitleMenu(content: content)
 		} else {
 			self
 		}

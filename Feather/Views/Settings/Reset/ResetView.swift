@@ -9,6 +9,7 @@ import SwiftUI
 import NimbleViews
 import Nuke
 import CoreData
+import IDeviceSwift
 
 // MARK: - View
 struct ResetView: View {
@@ -16,6 +17,7 @@ struct ResetView: View {
 	var body: some View {
 		NBList(.localized("Reset")) {
 			_cache()
+			_installation()
 			_coredata()
 			_all()
 		}
@@ -86,12 +88,33 @@ extension ResetView {
 	}
 	
 	@ViewBuilder
+	private func _installation() -> some View {
+		Section {
+			Button {
+				Self.resetAlert(title: .localized("Reset Pairing")) {
+					Self.resetPairing()
+				}
+			} label: {
+				SettingsRowLabel(.localized("Reset Pairing"), systemImage: "key.fill", backgroundColor: .purple)
+			}
+			
+			Button {
+				Self.resetAlert(title: .localized("Reset Tunneling")) {
+					Self.resetTunneling()
+				}
+			} label: {
+				SettingsRowLabel(.localized("Reset Tunneling"), systemImage: "network", backgroundColor: .green)
+			}
+		}
+	}
+
+	@ViewBuilder
 	private func _coredata() -> some View {
 		Section {
 			Button {
 				Self.resetAlert(
 					title: .localized("Reset Sources"),
-					message: Storage.shared.countContent(for: AltSource.self)
+					message: Self._formattedCount(for: AltSource.self, label: .localized("Sources"))
 				) {
 					Self.resetSources()
 				}
@@ -102,7 +125,7 @@ extension ResetView {
 			Button {
 				Self.resetAlert(
 					title: .localized("Reset Signed Apps"),
-					message: Storage.shared.countContent(for: Signed.self)
+					message: Self._formattedCount(for: Signed.self, label: .localized("Signed Apps"))
 				) {
 					Self.deleteSignedApps()
 				}
@@ -113,7 +136,7 @@ extension ResetView {
 			Button {
 				Self.resetAlert(
 					title: .localized("Reset Imported Apps"),
-					message: Storage.shared.countContent(for: Imported.self)
+					message: Self._formattedCount(for: Imported.self, label: .localized("Imported Apps"))
 				) {
 					Self.deleteImportedApps()
 				}
@@ -124,7 +147,7 @@ extension ResetView {
 			Button {
 				Self.resetAlert(
 					title: .localized("Reset Certificates"),
-					message: Storage.shared.countContent(for: CertificatePair.self)
+					message: Self._formattedCount(for: CertificatePair.self, label: .localized("Certificates"))
 				) {
 					Self.resetCertificates()
 				}
@@ -142,11 +165,12 @@ extension ResetView {
 					Self.resetUserDefaults()
 				}
 			} label: {
-				HStack(spacing: 12) {
-					SettingsIconBadge(systemImage: "gearshape.fill", backgroundColor: .red)
-					Text(.localized("Reset Settings"))
-						.foregroundColor(.red)
-				}
+				SettingsRowLabel(
+					.localized("Reset Settings"),
+					systemImage: "gearshape.fill",
+					backgroundColor: .red,
+					textColor: .red
+				)
 			}
 			
 			Button {
@@ -154,13 +178,19 @@ extension ResetView {
 					Self.resetAll()
 				}
 			} label: {
-				HStack(spacing: 12) {
-					SettingsIconBadge(systemImage: "trash.fill", backgroundColor: .red)
-					Text(.localized("Reset All"))
-						.foregroundColor(.red)
-				}
+				SettingsRowLabel(
+					.localized("Reset All"),
+					systemImage: "trash.fill",
+					backgroundColor: .red,
+					textColor: .red
+				)
 			}
 		}
+	}
+
+	private static func _formattedCount<T: NSManagedObject>(for type: T.Type, label: String) -> String {
+		let count = Storage.shared.countContent(for: type)
+		return "\(count) \(label)"
 	}
 }
 
@@ -216,6 +246,27 @@ extension ResetView {
 		try? FileManager.default.removeFileIfNeeded(at: FileManager.default.unsigned)
 	}
 	
+	static func resetPairing() {
+		let fm = FileManager.default
+		let pairingDir = HeartbeatManager.pairingDirectoryURL()
+		try? fm.removeItem(at: pairingDir)
+		try? fm.removeItem(at: HeartbeatManager.importedPairingFileURL())
+		try? fm.removeItem(at: HeartbeatManager.onDevicePairingFileURL())
+		UserDefaults.standard.removeObject(forKey: "feather.activePairingRecordSource")
+		HeartbeatManager.shared.resetRSDTunnel()
+	}
+	
+	static func resetTunneling() {
+		Task { @MainActor in
+			await EmbeddedTunnelManager.shared.resetConfiguration()
+			try? await EmbeddedTunnelManager.shared.resetNetworkConfiguration()
+		}
+		UserDefaults.standard.removeObject(forKey: "Feather.tunnelMethod")
+		UserDefaults.standard.removeObject(forKey: EmbeddedTunnelManager.interfaceAddressKey)
+		UserDefaults.standard.removeObject(forKey: EmbeddedTunnelManager.peerAddressKey)
+		UserDefaults.standard.removeObject(forKey: EmbeddedTunnelManager.allowIntermediateAddressesKey)
+	}
+
 	static func resetCertificates(resetAll: Bool = false) {
 		if !resetAll { UserDefaults.standard.set(0, forKey: "feather.selectedCert") }
 		Storage.shared.clearContext(request: CertificatePair.fetchRequest())
@@ -229,6 +280,8 @@ extension ResetView {
 	static func resetAll() {
 		clearWorkCache()
 		clearNetworkCache()
+		resetPairing()
+		resetTunneling()
 		resetSources()
 		deleteSignedApps()
 		deleteImportedApps()

@@ -32,7 +32,7 @@ public enum DeviceDiagnosticStatus: Equatable {
 		case .ready:
 			return .localized("Connected and ready.")
 		case .tunnelUnavailable:
-			return .localized("Device tunnel unavailable. Make sure LocalDevVPN is connected.")
+			return .localized("Device tunnel unavailable. Turn on the selected tunneling provider.")
 		case .pairingMissing:
 			return .localized("Pairing file is missing. Add one in Pairing File settings.")
 		case .invalidPairing:
@@ -56,7 +56,7 @@ public enum DeviceConnectionError: LocalizedError {
 		case .pairingMissing:
 			return .localized("Pairing file is missing. Add one in Pairing File settings.")
 		case .tunnelUnavailable(let reason):
-			return .localized("Device tunnel unavailable: %@. Make sure LocalDevVPN is connected.", arguments: reason)
+			return .localized("Device tunnel unavailable: %@. Turn on the selected tunneling provider.", arguments: reason)
 		case .invalidPairing:
 			return .localized("Pairing file is invalid.")
 		case .serviceUnavailable(let reason):
@@ -68,10 +68,15 @@ public enum DeviceConnectionError: LocalizedError {
 @MainActor
 public final class DeviceConnectionManager: ObservableObject {
 	public static let shared = DeviceConnectionManager()
+	public static let installationMethodKey = "Feather.installationMethod"
+	public static let autoTunnelLifecycleKey = "Feather.autoTunnelLifecycle"
+	private static let unresolvedSimulationKey = "Feather.spoofing.simulationMayBeActive"
 
 	@Published public private(set) var state: DeviceConnectionState = .disconnected
 	@Published public private(set) var diagnostic: DeviceDiagnosticStatus = .tunnelUnavailable
 	@Published public private(set) var hasPairingFile: Bool = false
+	@Published public private(set) var tunnelMethod: DeviceTunnelMethod
+	@Published public private(set) var isAutoTunnelLifecycleEnabled: Bool
 
 	public var isConnected: Bool {
 		state == .connected
@@ -84,6 +89,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	private let pathMonitor = NWPathMonitor()
 	private let monitorQueue = DispatchQueue(label: "feather.network.monitor")
 	private var didBecomeActiveObserver: NSObjectProtocol?
+	private var didEnterBackgroundObserver: NSObjectProtocol?
 	private var transitionTask: Task<Void, Never>?
 	private var transitionGeneration: UUID?
 	private var transitionExpectedState: Bool?
@@ -94,6 +100,14 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	public init() {
 		hasPairingFile = HeartbeatManager.hasPairingFile()
+		tunnelMethod = DeviceTunnelMethod(
+			rawValue: UserDefaults.standard.string(forKey: "Feather.tunnelMethod") ?? ""
+		) ?? .inApp
+		isAutoTunnelLifecycleEnabled = UserDefaults.standard.bool(forKey: Self.autoTunnelLifecycleKey)
+		HeartbeatManager.shared.ipAddress = EmbeddedTunnelManager.shared.peerIPOnly
+		_log(
+			"Device connection initialized with \(tunnelMethod.displayName); pairing file \(hasPairingFile ? "available" : "missing")."
+		)
 
 		// 1. Monitor network changes (NWPathMonitor is an event trigger, not source of truth)
 		pathMonitor.pathUpdateHandler = { [weak self] _ in
@@ -110,13 +124,27 @@ public final class DeviceConnectionManager: ObservableObject {
 			queue: .main
 		) { [weak self] _ in
 			Task { @MainActor [weak self] in
-				await self?.reconcile()
+				guard let self else { return }
+				self.handleAppForeground()
+				await self.reconcile()
 			}
 		}
 
-		// Initial check
-		Task {
-			await reconcile()
+		// 3. Background lifecycle (auto-close tunnel if idle)
+		didEnterBackgroundObserver = NotificationCenter.default.addObserver(
+			forName: UIApplication.didEnterBackgroundNotification,
+			object: nil,
+			queue: .main
+		) { [weak self] _ in
+			Task { @MainActor [weak self] in
+				self?.handleAppBackground()
+			}
+		}
+
+		// Restore the selected install mode's expected connection state. Server mode
+		// deliberately does not launch LocalDevVPN when Feather opens.
+		Task { @MainActor [weak self] in
+			self?._restoreInstallationMode()
 		}
 	}
 
@@ -124,6 +152,9 @@ public final class DeviceConnectionManager: ObservableObject {
 		pathMonitor.cancel()
 		if let didBecomeActiveObserver {
 			NotificationCenter.default.removeObserver(didBecomeActiveObserver)
+		}
+		if let didEnterBackgroundObserver {
+			NotificationCenter.default.removeObserver(didEnterBackgroundObserver)
 		}
 		transitionTask?.cancel()
 	}
@@ -140,43 +171,164 @@ public final class DeviceConnectionManager: ObservableObject {
 		await reconcile()
 	}
 
+	public func setTunnelMethod(_ method: DeviceTunnelMethod) {
+		guard state == .disconnected else { return }
+		guard tunnelMethod != method else { return }
+		tunnelMethod = method
+		UserDefaults.standard.set(method.rawValue, forKey: "Feather.tunnelMethod")
+		diagnostic = .tunnelUnavailable
+		_log("Tunneling provider changed to \(method.displayName).", category: "Tunnel", level: .notice)
+	}
+
+	// MARK: - Installation Mode
+
+	public var isIDeviceInstallationMode: Bool {
+		UserDefaults.standard.integer(forKey: Self.installationMethodKey) == 1
+	}
+
+	/// Selects the installation mode and applies its connection policy.
+	///
+	/// iDevice mode owns the tunnel lifecycle: it connects as soon as a pairing
+	/// record is available. Server mode tears the tunnel down. A possibly active
+	/// location simulation is a safety boundary because clearing it requires the
+	/// developer tunnel to remain available.
+	@discardableResult
+	public func setInstallationMode(_ method: Int) -> Bool {
+		let normalizedMethod = method == 1 ? 1 : 0
+		if normalizedMethod == 0,
+		   UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey) {
+			_log(
+				"Kept iDevice mode selected because a simulated location may still be active.",
+				category: "Spoofing",
+				level: .warning
+			)
+			return false
+		}
+
+		let previousMethod = UserDefaults.standard.integer(forKey: Self.installationMethodKey)
+		UserDefaults.standard.set(normalizedMethod, forKey: Self.installationMethodKey)
+		guard previousMethod != normalizedMethod else {
+			if normalizedMethod == 1 {
+				_connectForIDeviceMode()
+			}
+			return true
+		}
+
+		if normalizedMethod == 1 {
+			_log("iDevice mode selected; preparing the device tunnel.", category: "Tunnel", level: .notice)
+			_connectForIDeviceMode()
+		} else {
+			_log("Server mode selected; disconnecting the device tunnel.", category: "Tunnel", level: .notice)
+			setConnection(enabled: false, force: true)
+		}
+		return true
+	}
+
+	/// Re-attempts the automatic iDevice connection without exposing a separate
+	/// manual connection control in the interface.
+	public func reconnectForIDeviceMode() {
+		guard isIDeviceInstallationMode else { return }
+		_connectForIDeviceMode()
+	}
+
+	/// Checks whether any long-running operation requires the device tunnel to stay open in background.
+	public var hasActiveTunnelDependencies: Bool {
+		// 1. Location spoofing
+		if UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey) {
+			return true
+		}
+		// 2. Active app installation
+		if AppInstallationManager.shared.isInstalling {
+			return true
+		}
+		// 3. Active on-device pairing session
+		if OnDevicePairingManager.shared.isActive {
+			return true
+		}
+		return false
+	}
+
+	public func setAutoTunnelLifecycle(_ enabled: Bool) {
+		guard isAutoTunnelLifecycleEnabled != enabled else { return }
+		isAutoTunnelLifecycleEnabled = enabled
+		UserDefaults.standard.set(enabled, forKey: Self.autoTunnelLifecycleKey)
+		_log("Auto tunnel lifecycle set to \(enabled).", category: "Tunnel", level: .notice)
+		if enabled && isIDeviceInstallationMode && !isConnected && !isUpdating {
+			_connectForIDeviceMode()
+		}
+	}
+
+	public func handleAppForeground() {
+		guard isAutoTunnelLifecycleEnabled, isIDeviceInstallationMode else { return }
+		guard !isConnected, !isUpdating else { return }
+		_log("App foregrounded; automatically starting device tunnel.", category: "Tunnel", level: .notice)
+		_connectForIDeviceMode()
+	}
+
+	public func handleAppBackground() {
+		guard isAutoTunnelLifecycleEnabled, isIDeviceInstallationMode else { return }
+		if hasActiveTunnelDependencies {
+			_log(
+				"App backgrounded; keeping device tunnel active because operations are in progress (spoofing: \(UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey)), installing: \(AppInstallationManager.shared.isInstalling), pairing: \(OnDevicePairingManager.shared.isActive)).",
+				category: "Tunnel",
+				level: .notice
+			)
+			return
+		}
+		guard isConnected, !isUpdating else { return }
+		_log("App backgrounded with no active tasks; automatically closing device tunnel.", category: "Tunnel", level: .notice)
+		setConnection(enabled: false)
+	}
+
+	private func _restoreInstallationMode() {
+		guard isIDeviceInstallationMode else {
+			state = .disconnected
+			diagnostic = .tunnelUnavailable
+			return
+		}
+		_connectForIDeviceMode()
+	}
+
+	private func _connectForIDeviceMode() {
+		hasPairingFile = HeartbeatManager.hasPairingFile()
+		guard hasPairingFile else {
+			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
+			return
+		}
+		setConnection(enabled: true)
+	}
+
 	// MARK: - Toggle Connection
 
-	public func setConnection(enabled: Bool) {
+	public func setConnection(enabled: Bool, force: Bool = false) {
 		guard !isUpdating else { return }
-		guard (enabled && state != .connected) || (!enabled && state != .disconnected) else { return }
+		guard force || (enabled && state != .connected) || (!enabled && state != .disconnected) else { return }
 
-		let action = enabled ? "enable" : "disable"
-		guard let url = URL(string: "localdevvpn://\(action)?scheme=feather") else { return }
-
+		let method = tunnelMethod
 		let generation = UUID()
 		transitionGeneration = generation
 		transitionExpectedState = enabled
-		transitionDeadline = CACurrentMediaTime() + 6.0
+		transitionDeadline = method == .inApp ? .infinity : CACurrentMediaTime() + 6.0
 		state = enabled ? .connecting : .disconnecting
 		diagnostic = .checking
+		_log("\(enabled ? "Connecting" : "Disconnecting") with \(method.displayName).", category: "Tunnel", level: .notice)
 
 		Task { [weak self] in
 			guard let self else { return }
 			await self._resetRSDTunnel()
 			guard self.transitionGeneration == generation else { return }
 
-			if enabled {
-				// On older iOS, start legacy heartbeat thread.
-				HeartbeatManager.shared.start(true)
-			}
-
-			self._startTransitionPolling(generation: generation, expectedState: enabled)
-
-			UIApplication.shared.open(url, options: [:]) { [weak self] didOpen in
-				Task { @MainActor [weak self] in
-					guard let self else { return }
-					guard didOpen else {
-						self._cancelTransition()
-						await self.reconcile(force: true)
-						return
-					}
-				}
+			switch method {
+			case .localDevVPN:
+				self._setLocalDevVPNConnection(
+					enabled: enabled,
+					generation: generation
+				)
+			case .inApp:
+				await self._setEmbeddedTunnelConnection(
+					enabled: enabled,
+					generation: generation
+				)
 			}
 		}
 	}
@@ -188,21 +340,34 @@ public final class DeviceConnectionManager: ObservableObject {
 		hasPairingFile = HeartbeatManager.hasPairingFile()
 		guard hasPairingFile else {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
+			_log("Device action blocked because the pairing file is missing.", level: .warning)
 			throw DeviceConnectionError.pairingMissing
+		}
+
+		let method = tunnelMethod
+		if method == .inApp {
+			await EmbeddedTunnelManager.shared.refresh()
+			let embeddedReady = EmbeddedTunnelManager.shared.isConnected
+			guard embeddedReady else {
+				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+				_log("Device action blocked because the in-app tunnel is not ready.", category: "Tunnel", level: .warning)
+				throw DeviceConnectionError.tunnelUnavailable("In-app tunnel is not ready")
+			}
 		}
 
 		let isRsd = HeartbeatManager.shared.isRsd
 		let probe: (isConnected: Bool, error: String?) = await Task.detached(priority: .userInitiated) {
 			if isRsd {
-				return HeartbeatManager.shared.checkRSDEndpoint(timeoutInSeconds: 0.5)
+				return HeartbeatManager.shared.checkRSDEndpoint(timeoutInSeconds: 1.5)
 			} else {
-				return HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 0.5)
+				return HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 1.5)
 			}
 		}.value
 
 		guard probe.isConnected else {
 			await _resetRSDTunnel()
 			_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+			_log("Device endpoint probe failed: \(probe.error ?? "port unreachable").", level: .warning)
 			throw DeviceConnectionError.tunnelUnavailable(probe.error ?? "Port unreachable")
 		}
 
@@ -215,15 +380,18 @@ public final class DeviceConnectionManager: ObservableObject {
 
 		if checkResult.isConnected {
 			_finishTransition(to: .connected, diagnostic: .ready)
+			_log("Device transport and pairing were verified.", level: .notice)
 			return true
 		} else {
 			await _resetRSDTunnel()
 			if checkResult.errorCode == -9 {
 				_finishTransition(to: .disconnected, diagnostic: .invalidPairing)
+				_log("Device rejected the pairing record.", level: .error)
 				throw DeviceConnectionError.invalidPairing
 			} else {
 				let message = checkResult.error ?? "Device service unavailable"
 				_finishTransition(to: .disconnected, diagnostic: .error(message))
+				_log("Device service check failed: \(message)", level: .error)
 				throw DeviceConnectionError.serviceUnavailable(message)
 			}
 		}
@@ -255,6 +423,11 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	private func _reconcile(force: Bool) async {
 		let reconciliationGeneration = transitionGeneration
+		let method = tunnelMethod
+		guard isIDeviceInstallationMode else {
+			_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+			return
+		}
 		hasPairingFile = HeartbeatManager.hasPairingFile()
 		guard hasPairingFile else {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
@@ -265,13 +438,27 @@ public final class DeviceConnectionManager: ObservableObject {
 		let now = CACurrentMediaTime()
 		let isExpired = now >= transitionDeadline
 
-		// Step 1: Fast non-blocking endpoint probe (under 0.5s)
+		if method == .inApp {
+			HeartbeatManager.shared.ipAddress = EmbeddedTunnelManager.shared.peerIPOnly
+			await EmbeddedTunnelManager.shared.refresh()
+			let embeddedReady = EmbeddedTunnelManager.shared.isConnected
+			guard embeddedReady else {
+				if expectedState == true && !force && !isExpired {
+					return
+				}
+				await _resetRSDTunnel()
+				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+				return
+			}
+		}
+
+		// Step 1: Fast non-blocking endpoint probe
 		let isRsd = HeartbeatManager.shared.isRsd
 		let probe: (isConnected: Bool, error: String?) = await Task.detached(priority: .utility) {
 			if isRsd {
-				return HeartbeatManager.shared.checkRSDEndpoint(timeoutInSeconds: 0.5)
+				return HeartbeatManager.shared.checkRSDEndpoint(timeoutInSeconds: 1.5)
 			} else {
-				return HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 0.5)
+				return HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 1.5)
 			}
 		}.value
 
@@ -336,6 +523,58 @@ public final class DeviceConnectionManager: ObservableObject {
 		}.value
 	}
 
+	private func _setLocalDevVPNConnection(enabled: Bool, generation: UUID) {
+		let action = enabled ? "enable" : "disable"
+		guard let url = URL(string: "localdevvpn://\(action)?scheme=feather") else {
+			_cancelTransition()
+			_log("Could not create the LocalDevVPN connection URL.", category: "Tunnel", level: .error)
+			return
+		}
+
+		if enabled {
+			// On older iOS, start the legacy heartbeat alongside LocalDevVPN.
+			HeartbeatManager.shared.start(true)
+		}
+		_startTransitionPolling(generation: generation, expectedState: enabled)
+
+		UIApplication.shared.open(url, options: [:]) { [weak self] didOpen in
+			Task { @MainActor [weak self] in
+				guard let self else { return }
+				guard didOpen else {
+					self._cancelTransition()
+					self._log("LocalDevVPN did not accept the connection request.", category: "Tunnel", level: .error)
+					await self.reconcile(force: true)
+					return
+				}
+				self._log("Sent \(enabled ? "connect" : "disconnect") request to LocalDevVPN.", category: "Tunnel")
+			}
+		}
+	}
+
+	private func _setEmbeddedTunnelConnection(enabled: Bool, generation: UUID) async {
+		if enabled {
+			do {
+				try await EmbeddedTunnelManager.shared.start()
+				guard transitionGeneration == generation else { return }
+				// The embedded tunnel also carries the pre-RSD legacy service.
+				HeartbeatManager.shared.start(true)
+				transitionDeadline = CACurrentMediaTime() + 10.0
+				_startTransitionPolling(generation: generation, expectedState: true)
+				await reconcile()
+			} catch {
+				guard transitionGeneration == generation else { return }
+				_finishTransition(to: .disconnected, diagnostic: .error(error.localizedDescription))
+				_log("In-app tunnel failed to start: \(error.localizedDescription)", category: "Tunnel", level: .error)
+			}
+		} else {
+			await EmbeddedTunnelManager.shared.stop()
+			guard transitionGeneration == generation else { return }
+			transitionDeadline = CACurrentMediaTime() + 2.0
+			_startTransitionPolling(generation: generation, expectedState: false)
+			await reconcile(force: true)
+		}
+	}
+
 	private func _startTransitionPolling(generation: UUID, expectedState: Bool) {
 		transitionTask?.cancel()
 		transitionTask = Task { [weak self] in
@@ -368,6 +607,8 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _finishTransition(to newState: DeviceConnectionState, diagnostic newDiagnostic: DeviceDiagnosticStatus) {
+		let previousState = state
+		let previousDiagnostic = diagnostic
 		transitionGeneration = nil
 		transitionExpectedState = nil
 		transitionDeadline = 0
@@ -375,5 +616,25 @@ public final class DeviceConnectionManager: ObservableObject {
 		transitionTask = nil
 		state = newState
 		diagnostic = newDiagnostic
+		if previousState != newState || previousDiagnostic != newDiagnostic {
+			_log("Device state is now \(_stateDescription(newState)): \(newDiagnostic.localizedDescription)")
+		}
+	}
+
+	private func _stateDescription(_ state: DeviceConnectionState) -> String {
+		switch state {
+		case .disconnected: return "disconnected"
+		case .connecting: return "connecting"
+		case .connected: return "connected"
+		case .disconnecting: return "disconnecting"
+		}
+	}
+
+	private func _log(
+		_ message: String,
+		category: String = "Device",
+		level: DebugLogItem.Level = .info
+	) {
+		DebugLogManager.shared.log(message, category: category, level: level)
 	}
 }

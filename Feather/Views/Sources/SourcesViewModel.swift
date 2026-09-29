@@ -42,13 +42,14 @@ final class SourcesViewModel: ObservableObject {
 		isFinished = false
 		defer { isFinished = true }
 		
-		self.sources = [:]
 		let sourcesArray = sources.map {
 			SourceRequest(
 				key: $0.objectID.uriRepresentation().absoluteString,
 				sourceURL: $0.sourceURL
 			)
 		}
+		let validKeys = Set(sourcesArray.map(\.key))
+		self.sources = self.sources.filter { validKeys.contains($0.key) }
 		let dataService = _dataService
 		
 		for startIndex in stride(from: 0, to: sourcesArray.count, by: batchSize) {

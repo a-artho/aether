@@ -53,7 +53,8 @@ final class Storage: ObservableObject {
 	}
 	
 	func clearContext<T: NSManagedObject>(request: NSFetchRequest<T>) {
-		let deleteRequest = NSBatchDeleteRequest(fetchRequest: (request as? NSFetchRequest<NSFetchRequestResult>)!)
+		guard let fetchRequest = request as? NSFetchRequest<NSFetchRequestResult> else { return }
+		let deleteRequest = NSBatchDeleteRequest(fetchRequest: fetchRequest)
 		_ = try? context.execute(deleteRequest)
 	}
 	

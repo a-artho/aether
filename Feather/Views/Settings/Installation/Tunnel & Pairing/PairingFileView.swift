@@ -34,18 +34,18 @@ struct PairingFileView: View {
 			}
 
 			Section {
-				if OnDevicePairingManager.isSupported {
-					Button {
-						_onDevicePairing.begin()
-						_isOnDevicePairingPresenting = true
-					} label: {
-						_pairingActionLabel(
-							title: .localized("Pair This Device"),
-							icon: "iphone.and.arrow.forward",
-							color: .purple
-						)
-					}
+				Button {
+					_onDevicePairing.begin()
+					_isOnDevicePairingPresenting = true
+				} label: {
+					_pairingActionLabel(
+						title: .localized("On-Device Pairing"),
+						icon: "iphone.and.arrow.forward",
+						color: .purple,
+						isEnabled: OnDevicePairingManager.isSupported
+					)
 				}
+				.disabled(!OnDevicePairingManager.isSupported)
 
 				if HeartbeatManager.hasOnDevicePairingFile(), _activePairingRecordSource != .onDevice {
 					Button {
@@ -86,10 +86,12 @@ struct PairingFileView: View {
 				Button {
 					UIApplication.open("https://github.com/claration/Impactor#pairing-file")
 				} label: {
-					HStack(spacing: 12) {
-						SettingsIconBadge(systemImage: "questionmark.circle.fill", backgroundColor: .purple)
-						Text(.localized("Pairing File Guide"))
-							.foregroundColor(.primary)
+					HStack {
+						SettingsRowLabel(
+							.localized("Pairing File Guide"),
+							systemImage: "questionmark.circle.fill",
+							backgroundColor: .purple
+						)
 						Spacer()
 						Image(systemName: "arrow.up.forward.app")
 							.font(.footnote)
@@ -109,7 +111,15 @@ struct PairingFileView: View {
 			)
 			.ignoresSafeArea()
 		}
-		.sheet(isPresented: $_isOnDevicePairingPresenting) {
+		.sheet(isPresented: Binding(
+			get: { _isOnDevicePairingPresenting || _onDevicePairing.isActive },
+			set: {
+				_isOnDevicePairingPresenting = $0
+				if !$0 && _onDevicePairing.isActive {
+					_onDevicePairing.cancel()
+				}
+			}
+		)) {
 			OnDevicePairingView()
 				.onDisappear {
 					_refreshPairingState()
@@ -136,12 +146,13 @@ struct PairingFileView: View {
 		}
 	}
 
-	private func _pairingActionLabel(title: String, icon: String, color: Color) -> some View {
-		HStack(spacing: 12) {
-			SettingsIconBadge(systemImage: icon, backgroundColor: color)
-			Text(title)
-				.foregroundColor(.primary)
-		}
+	private func _pairingActionLabel(title: String, icon: String, color: Color, isEnabled: Bool = true) -> some View {
+		SettingsRowLabel(
+			title,
+			systemImage: icon,
+			backgroundColor: isEnabled ? color : Color(UIColor.systemGray4),
+			textColor: isEnabled ? .primary : .secondary
+		)
 	}
 
 	private func _useOnDevicePairingRecord() {

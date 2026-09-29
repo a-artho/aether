@@ -12,6 +12,7 @@ import UIKit
 // MARK: - View
 struct SettingsView: View {
 	@Environment(\.dismiss) private var dismiss
+	@AppStorage("feather.selectedCertUUID") private var _storedSelectedCertUUID: String = ""
 	@AppStorage("feather.selectedCert") private var _storedSelectedCert: Int = 0
 	@State private var _currentIcon: String? = UIApplication.shared.alternateIconName
 	@State private var _activeSettingsPage: AppTabManager.SettingsPage? = nil
@@ -25,6 +26,11 @@ struct SettingsView: View {
 	) private var _certificates: FetchedResults<CertificatePair>
 	
 	private var selectedCertificate: CertificatePair? {
+		if !_storedSelectedCertUUID.isEmpty {
+			if let match = _certificates.first(where: { $0.uuid == _storedSelectedCertUUID }) {
+				return match
+			}
+		}
 		guard
 			_storedSelectedCert >= 0,
 			_storedSelectedCert < _certificates.count
@@ -38,16 +44,6 @@ struct SettingsView: View {
 		NBNavigationView(.localized("Settings"), displayMode: .inline) {
 			Form {
 				Section {
-					NavigationLink(destination: AppearanceView()) {
-						SettingsRowLabel(.localized("Appearance"), systemImage: "paintbrush.fill", backgroundColor: .blue)
-					}
-					NavigationLink(destination: AppIconView(currentIcon: $_currentIcon)) {
-						SettingsRowLabel(.localized("App Icon"), systemImage: "app.badge.fill", backgroundColor: .indigo)
-					}
-				}
-                
-				Section {
-                    
 					if let cert = selectedCertificate {
 						CertificatesCellView(cert: cert)
 					} else {
@@ -58,7 +54,6 @@ struct SettingsView: View {
 					NavigationLink(destination: CertificatesView()) {
 						SettingsRowLabel(.localized("Certificates"), systemImage: "checkmark.seal.fill", backgroundColor: .green)
 					}
-                 
 				}
                 
 				Section {
@@ -68,15 +63,27 @@ struct SettingsView: View {
 					NavigationLink(destination: ArchiveView()) {
 						SettingsRowLabel(.localized("Archive & Compression"), systemImage: "archivebox.fill", backgroundColor: .cyan)
 					}
-					NavigationLink(destination: InstallationView()) {
-						SettingsRowLabel(.localized("Installation"), systemImage: "arrow.down.circle.fill", backgroundColor: .blue)
-					}
 					NavigationLink(destination: PairingFileView()) {
 						SettingsRowLabel(.localized("Pairing File"), systemImage: "key.fill", backgroundColor: .purple)
+					}
+					NavigationLink(destination: TunnelView()) {
+						SettingsRowLabel(.localized("Tunneling"), systemImage: "network", backgroundColor: .green)
+					}
+					NavigationLink(destination: ServerView()) {
+						SettingsRowLabel(.localized("Server Config"), systemImage: "server.rack", backgroundColor: .blue)
+					}
+				}
+
+				Section {
+					NavigationLink(destination: AppearanceView()) {
+						SettingsRowLabel(.localized("Appearance"), systemImage: "paintbrush.fill", backgroundColor: .blue)
 					}
 				}
                 
 				Section {
+					NavigationLink(destination: LogsView()) {
+						SettingsRowLabel(.localized("Logs"), systemImage: "doc.text.magnifyingglass", backgroundColor: .purple)
+					}
 					NavigationLink(destination: ResetView()) {
 						SettingsRowLabel(.localized("Reset"), systemImage: "trash.fill", backgroundColor: .red)
 					}
@@ -93,9 +100,12 @@ struct SettingsView: View {
 					case .certificates: CertificatesView()
 					case .signing: ConfigurationView()
 					case .archive: ArchiveView()
-					case .installation: InstallationView()
+					case .serverConfig, .installation: ServerView()
 					case .pairingFile: PairingFileView()
+					case .tunnel: TunnelView()
+					case .logs: LogsView()
 					case .reset: ResetView()
+					case .root: EmptyView()
 					}
 				}
 			}
@@ -121,7 +131,11 @@ struct SettingsView: View {
 	private func _presentRequestedPageIfNeeded() {
 		guard let page = _tabManager.requestedSettingsPage else { return }
 		DispatchQueue.main.async {
-			_activeSettingsPage = page
+			if page == .root {
+				_activeSettingsPage = nil
+			} else {
+				_activeSettingsPage = page
+			}
 			_tabManager.requestedSettingsPage = nil
 		}
 	}

@@ -56,12 +56,20 @@ struct SettingsRowLabel: View {
 	let systemImage: String
 	var backgroundColor: Color = .blue
 	var iconSize: CGFloat = 15
+	var textColor: Color = .primary
 
-	init(_ title: String, systemImage: String, backgroundColor: Color = .blue, iconSize: CGFloat = 15) {
+	init(
+		_ title: String,
+		systemImage: String,
+		backgroundColor: Color = .blue,
+		iconSize: CGFloat = 15,
+		textColor: Color = .primary
+	) {
 		self.title = title
 		self.systemImage = systemImage
 		self.backgroundColor = backgroundColor
 		self.iconSize = iconSize
+		self.textColor = textColor
 	}
 
 	var body: some View {
@@ -72,7 +80,7 @@ struct SettingsRowLabel: View {
 				iconSize: iconSize
 			)
 			Text(title)
-				.foregroundColor(.primary)
+				.foregroundColor(textColor)
 		}
 	}
 }

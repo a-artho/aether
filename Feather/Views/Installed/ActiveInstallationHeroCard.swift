@@ -83,6 +83,7 @@ struct ActiveInstallationHeroCard: View {
 								Spacer()
 								Text("\(Int(currentProgress * 100))%")
 									.font(.system(size: 11, weight: .semibold, design: .rounded))
+									.monospacedDigit()
 									.foregroundColor(.secondary)
 							}
 						} else {
@@ -94,6 +95,7 @@ struct ActiveInstallationHeroCard: View {
 				}
 			}
 		}
+		.animation(.spring(response: 0.35, dampingFraction: 0.8), value: viewModel.statusLabel)
 		.padding(14)
 		.background(Color(UIColor.secondarySystemGroupedBackground))
 		.clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))

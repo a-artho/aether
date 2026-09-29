@@ -86,10 +86,19 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 				profiles = []
 			}
 			updateApplications(with: installedApps, profiles: profiles)
+			DebugLogManager.shared.log(
+				"Loaded \(apps.count) sideloaded app\(apps.count == 1 ? "" : "s") from the device.",
+				category: "Device"
+			)
 		} catch is CancellationError {
 			return
 		} catch {
 			errorMessage = error.localizedDescription
+			DebugLogManager.shared.log(
+				"Could not load sideloaded apps: \(error.localizedDescription)",
+				category: "Device",
+				level: .error
+			)
 		}
 	}
 

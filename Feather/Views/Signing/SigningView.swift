@@ -31,6 +31,10 @@ struct SigningView: View {
 	) private var certificates: FetchedResults<CertificatePair>
 	
 	private func _selectedCert() -> CertificatePair? {
+		let storedUUID = UserDefaults.standard.string(forKey: "feather.selectedCertUUID") ?? ""
+		if !storedUUID.isEmpty, let match = certificates.first(where: { $0.uuid == storedUUID }) {
+			return match
+		}
 		guard certificates.indices.contains(_temporaryCertificate) else { return nil }
 		return certificates[_temporaryCertificate]
 	}
@@ -120,6 +124,11 @@ struct SigningView: View {
 			.animation(.smooth, value: _isSigning)
 		}
 		.onAppear {
+			let storedUUID = UserDefaults.standard.string(forKey: "feather.selectedCertUUID") ?? ""
+			if !storedUUID.isEmpty, let idx = certificates.firstIndex(where: { $0.uuid == storedUUID }) {
+				_temporaryCertificate = idx
+			}
+			
 			// ppq protection
 			if
 				_optionsManager.options.ppqProtection,

@@ -13,7 +13,7 @@ import UIKit
 // dear god help me
 struct AppearanceView: View {
 	@AppStorage("Feather.userInterfaceStyle")
-	private var _userIntefacerStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
+	private var _userInterfaceStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
 	
 	@AppStorage("Feather.shouldTintIcons")
 	private var _shouldTintIcons: Bool = false
@@ -31,6 +31,8 @@ struct AppearanceView: View {
 	@AppStorage("Feather.userTintColor")
 	private var _selectedColorHex: String = "#848ef9"
 	
+	@State private var _currentIcon: String? = UIApplication.shared.alternateIconName
+	
 	private var _tintColorBinding: Binding<Color> {
 		Binding(
 			get: { Color(hex: _selectedColorHex) },
@@ -42,7 +44,7 @@ struct AppearanceView: View {
 	var body: some View {
 		NBList(.localized("Appearance")) {
 			Section {
-				Picker(.localized("Appearance"), selection: $_userIntefacerStyle) {
+				Picker(.localized("Appearance"), selection: $_userInterfaceStyle) {
 					ForEach(UIUserInterfaceStyle.allCases.sorted(by: { $0.rawValue < $1.rawValue }), id: \.rawValue) { style in
 						Text(style.label).tag(style.rawValue)
 					}
@@ -59,6 +61,12 @@ struct AppearanceView: View {
 			Section {
 				ColorPicker(selection: _tintColorBinding, supportsOpacity: false) {
 					SettingsRowLabel(.localized("Custom Theme Color"), systemImage: "eyedropper.halffull", backgroundColor: .blue)
+				}
+			}
+
+			Section {
+				NavigationLink(destination: AppIconView(currentIcon: $_currentIcon)) {
+					SettingsRowLabel(.localized("App Icon"), systemImage: "app.badge.fill", backgroundColor: .indigo)
 				}
 			}
 			
@@ -91,9 +99,15 @@ struct AppearanceView: View {
 				.pickerStyle(.inline)
 			}
 		}
-		.onChange(of: _userIntefacerStyle) { value in
+		.onChange(of: _userInterfaceStyle) { value in
 			if let style = UIUserInterfaceStyle(rawValue: value) {
-				UIApplication.topViewController()?.view.window?.overrideUserInterfaceStyle = style
+				for scene in UIApplication.shared.connectedScenes {
+					if let windowScene = scene as? UIWindowScene {
+						for window in windowScene.windows {
+							window.overrideUserInterfaceStyle = style
+						}
+					}
+				}
 			}
 		}
 	}

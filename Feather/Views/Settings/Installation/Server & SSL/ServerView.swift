@@ -48,17 +48,32 @@ extension ServerView {
 
 // MARK: - View
 struct ServerView: View {
-	@AppStorage("Feather.ipFix") private var _ipFix: Bool = false
-	@AppStorage("Feather.serverMethod") private var _serverMethod: Int = 0
+	@AppStorage("Feather.ipFix") private var _ipFix: Bool = true
+	@AppStorage("Feather.serverMethod") private var _serverMethod: Int = 1
 	private let _serverMethods: [String] = [.localized("Fully Local"), .localized("Semi Local")]
+	private let _embedInList: Bool
+
+	init(embedInList: Bool = true) {
+		self._embedInList = embedInList
+	}
 	
 	private let _dataService = NBFetchService()
 	private let _serverPackUrl = "https://backloop.dev/pack.json"
 	
 	// MARK: Body
 	var body: some View {
-		Group {
-			Section {
+		if _embedInList {
+			NBList(.localized("Server Config"), displayMode: .inline) {
+				_content
+			}
+		} else {
+			_content
+		}
+	}
+
+	@ViewBuilder
+	private var _content: some View {
+		Section {
 				Picker(selection: $_serverMethod) {
 					ForEach(_serverMethods.indices, id: \.description) { index in
 						Text(_serverMethods[index]).tag(index)
@@ -70,35 +85,44 @@ struct ServerView: View {
 					SettingsRowLabel(.localized("Only use localhost address"), systemImage: "lifepreserver.fill", backgroundColor: .orange)
 				}
 				.disabled(_serverMethod != 1)
+			} footer: {
+				if _serverMethod == 1 {
+					Text(.localized("Semi Local uses an online manifest service over HTTPS and serves the application locally over HTTP. Using localhost (127.0.0.1) prevents Wi-Fi network address mismatches. No SSL certificates are required."))
+				} else {
+					Text(.localized("Fully Local hosts both the manifest and application on-device using a local HTTPS server. Requires trusted SSL certificates."))
+				}
 			}
 			
-			Section {
-				Button {
-					FR.downloadSSLCertificates(from: _serverPackUrl) { success in
-						if success {
-							DispatchQueue.main.async {
-								UIAlertController.showAlertWithOk(
-									title: .localized("SSL Certificates"),
-									message: .localized("Certificates updated successfully.")
-								)
-							}
-						} else {
-							DispatchQueue.main.async {
-								UIAlertController.showAlertWithOk(
-									title: .localized("SSL Certificates"),
-									message: .localized("Failed to download, check your internet connection and try again.")
-								)
+			if _serverMethod == 0 {
+				Section {
+					Button {
+						FR.downloadSSLCertificates(from: _serverPackUrl) { success in
+							if success {
+								DispatchQueue.main.async {
+									UIAlertController.showAlertWithOk(
+										title: .localized("SSL Certificates"),
+										message: .localized("Certificates updated successfully.")
+									)
+								}
+							} else {
+								DispatchQueue.main.async {
+									UIAlertController.showAlertWithOk(
+										title: .localized("SSL Certificates"),
+										message: .localized("Failed to download, check your internet connection and try again.")
+									)
+								}
 							}
 						}
+					} label: {
+						SettingsRowLabel(
+							.localized("Update SSL Certificates"),
+							systemImage: "arrow.down.doc.fill",
+							backgroundColor: .green
+						)
 					}
-				} label: {
-					HStack(spacing: 12) {
-						SettingsIconBadge(systemImage: "arrow.down.doc.fill", backgroundColor: .green)
-						Text(.localized("Update SSL Certificates"))
-							.foregroundColor(.primary)
-					}
+				} footer: {
+					Text(.localized("Download the local server SSL certificates and profiles needed for Fully Local HTTPS mode."))
 				}
 			}
 		}
-	}
 }

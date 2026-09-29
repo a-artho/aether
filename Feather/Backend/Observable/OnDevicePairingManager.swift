@@ -33,7 +33,7 @@ final class OnDevicePairingManager: ObservableObject {
 		if #available(iOS 27.0, *) {
 			return true
 		}
-		return false
+		return ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
 	}
 
 	var isActive: Bool {
@@ -57,7 +57,9 @@ final class OnDevicePairingManager: ObservableObject {
 
 	func begin() {
 		guard Self.isSupported else {
-			state = .failed(.localized("On-device pairing is not available on this version of iOS."))
+			let message: String = .localized("On-device pairing is only supported on iOS 27 and onwards.")
+			state = .failed(message)
+			_log(message, level: .warning)
 			return
 		}
 		guard session == nil else { return }
@@ -68,10 +70,11 @@ final class OnDevicePairingManager: ObservableObject {
 		sessionIdentifier = identifier
 		cancellationFailure = nil
 		state = .waitingForSettings
+		_log("On-device pairing started. Waiting for Settings.", level: .notice)
 		#if !targetEnvironment(macCatalyst)
 		// Settings takes the foreground during Remote Pairing. Keep Feather's
 		// network listener runnable until the code exchange has finished.
-		BackgroundAudioManager.shared.start()
+		BackgroundAudioManager.shared.start("pairing")
 		#endif
 		_startContinuedProcessingTask(for: identifier)
 		_startTimeout(for: identifier)
@@ -106,6 +109,7 @@ final class OnDevicePairingManager: ObservableObject {
 	/// available time for the actual passcode and PIN exchange.
 	func prepareForSettings() {
 		guard let identifier = sessionIdentifier, isActive else { return }
+		_log("Preparing protected background time for pairing.")
 		#if !targetEnvironment(macCatalyst)
 		if #available(iOS 26.0, *), hasContinuedProcessingTask {
 			BackgroundTaskManager.shared.markPairingSettingsOpened(for: identifier)
@@ -124,6 +128,7 @@ final class OnDevicePairingManager: ObservableObject {
 		guard sessionIdentifier == identifier, session != nil else { return }
 		if code == "000000" {
 			state = .pairingWithoutCode
+			_log("Pairing continued without a code.", level: .notice)
 			#if !targetEnvironment(macCatalyst)
 			if #available(iOS 26.0, *), hasContinuedProcessingTask {
 				BackgroundTaskManager.shared.showPairingProgress(
@@ -136,6 +141,7 @@ final class OnDevicePairingManager: ObservableObject {
 		}
 		UIPasteboard.general.string = code
 		state = .awaitingCode(code)
+		_log("Pairing code received and displayed.", level: .notice)
 		#if !targetEnvironment(macCatalyst)
 		if #available(iOS 26.0, *), hasContinuedProcessingTask {
 			BackgroundTaskManager.shared.showPairingCode(code, for: identifier)
@@ -155,7 +161,7 @@ final class OnDevicePairingManager: ObservableObject {
 			_endBackgroundGracePeriod()
 			_stopContinuedProcessingTask(for: identifier, success: _didCompleteSuccessfully(result))
 			#if !targetEnvironment(macCatalyst)
-			BackgroundAudioManager.shared.stop()
+			BackgroundAudioManager.shared.stop("pairing")
 			#endif
 		}
 
@@ -166,19 +172,24 @@ final class OnDevicePairingManager: ObservableObject {
 				HeartbeatManager.useOnDevicePairingFile()
 				HeartbeatManager.shared.resetRSDTunnel()
 				state = .completed
+				_log("Pairing completed and the pairing record was saved.", level: .notice)
 				Task {
 					await DeviceConnectionManager.shared.refresh()
 				}
 			} catch {
 				state = .failed(error.localizedDescription)
+				_log("Could not save the pairing record: \(error.localizedDescription)", level: .error)
 			}
 		case .failure(let failure):
 			if let cancellationFailure {
 				state = .failed(cancellationFailure)
+				_log("Pairing stopped: \(cancellationFailure)", level: .warning)
 			} else if case .cancelling = state {
 				state = .idle
+				_log("Pairing cancelled.")
 			} else {
 				state = .failed(failure.message)
+				_log("Pairing failed: \(failure.message)", level: .error)
 			}
 		}
 	}
@@ -191,6 +202,7 @@ final class OnDevicePairingManager: ObservableObject {
 
 		cancellationFailure = failure
 		state = .cancelling
+		_log(failure == nil ? "Cancelling pairing." : "Pairing cancellation requested.", level: .warning)
 		session.cancel()
 	}
 
@@ -272,6 +284,10 @@ final class OnDevicePairingManager: ObservableObject {
 			to: destination,
 			options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
 		)
+	}
+
+	private func _log(_ message: String, level: DebugLogItem.Level = .info) {
+		DebugLogManager.shared.log(message, category: "Pairing", level: level)
 	}
 
 }

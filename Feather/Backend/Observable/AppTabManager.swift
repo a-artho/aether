@@ -17,9 +17,13 @@ final class AppTabManager: ObservableObject {
 		case certificates
 		case signing
 		case archive
+		case serverConfig = "server-config"
 		case installation
 		case pairingFile = "pairing-file"
+		case tunnel
+		case logs
 		case reset
+		case root
 	}
 	
 	@Published var selectedTab: TabEnum = .sources
@@ -42,6 +46,13 @@ final class AppTabManager: ObservableObject {
 
 	func openSettings(page: SettingsPage? = nil) {
 		requestedSettingsPage = page
+		if isSettingsPresented {
+			isSettingsPresented = false
+			DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+				self.isSettingsPresented = true
+			}
+			return
+		}
 		if selectedTab != .installed {
 			withAnimation(.easeInOut(duration: 0.25)) {
 				self.selectedTab = .installed

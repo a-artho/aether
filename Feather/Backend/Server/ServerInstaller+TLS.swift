@@ -17,8 +17,8 @@ import SystemConfiguration.CaptiveNetwork
 extension ServerInstaller {
 	// MARK: Setup
 	static let env: Environment = {
-		var env = try! Environment.detect()
-		try! LoggingSystem.bootstrap(from: &env)
+		var env = (try? Environment.detect()) ?? .development
+		_ = try? LoggingSystem.bootstrap(from: &env)
 		return env
 	}()
 	
@@ -107,25 +107,23 @@ extension ServerInstaller {
 		
 		if getifaddrs(&ifaddr) == 0 {
 			var ptr = ifaddr
-			while ptr != nil {
-				let interface = ptr!.pointee
-				let addrFamily = interface.ifa_addr.pointee.sa_family
-				
-				if addrFamily == UInt8(AF_INET) {
-					
-					let name = String(cString: interface.ifa_name)
-					if name == "en0" || name == "pdp_ip0" {
-						
-						var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-						if getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
-						               &hostname, socklen_t(hostname.count),
-						               nil, socklen_t(0), NI_NUMERICHOST) == 0 {
-							address = String(cString: hostname)
+			while let currentPtr = ptr {
+				let interface = currentPtr.pointee
+				if let ifaAddr = interface.ifa_addr {
+					let addrFamily = ifaAddr.pointee.sa_family
+					if addrFamily == UInt8(AF_INET) {
+						let name = String(cString: interface.ifa_name)
+						if name == "en0" || name == "pdp_ip0" {
+							var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+							if getnameinfo(ifaAddr, socklen_t(ifaAddr.pointee.sa_len),
+							               &hostname, socklen_t(hostname.count),
+							               nil, socklen_t(0), NI_NUMERICHOST) == 0 {
+								address = String(cString: hostname)
+							}
 						}
-						
 					}
 				}
-				ptr = ptr!.pointee.ifa_next
+				ptr = interface.ifa_next
 			}
 			freeifaddrs(ifaddr)
 		}

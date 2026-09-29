@@ -23,7 +23,7 @@ struct AboutView: View {
 	@State private var _credits: [CreditsModel] = [
 		.init(name: "C", desc: "Developer", github: "claration"),
 		.init(name: "Asami", desc: "Developer", github: "Nyasami"),
-		.init(name: "Lakhan Lothiyi", desc: "AltStore Repositories", github: "llsc12"),
+		.init(name: "Lakhan Lothiyi", desc: "AltStore Repos", github: "llsc12"),
 	]
 	
 	let pngURL = URL(string: "https://sponsors.claration.dev/sponsors.png")!
@@ -59,7 +59,7 @@ struct AboutView: View {
 			}
 			
 			NBSection(.localized("Sponsors")) {
-				Text(.localized("💜 This couldn't of been done without my sponsors!"))
+				Text(.localized("💜 This couldn't have been done without my sponsors!"))
 					.foregroundStyle(.secondary)
 					.padding(.vertical, 2)
 				AsyncImage(url: pngURL) { phase in

@@ -11,13 +11,16 @@ import UIKit
 @MainActor
 struct InstalledAppsView: View {
 	@AppStorage("Feather.installationMethod") private var installationMethod = 0
-	@AppStorage("Feather.serverMethod") private var serverMethod = 0
+	@AppStorage("Feather.serverMethod") private var serverMethod = 1
+	@AppStorage("Feather.spoofing.simulationMayBeActive") private var isSpoofingActive = false
 	@StateObject private var store: InstalledAppsStore
 	@ObservedObject private var installationManager = AppInstallationManager.shared
 	@ObservedObject private var connection = DeviceConnectionManager.shared
 	@ObservedObject private var tabManager = AppTabManager.shared
 	@State private var topCardMaxY: CGFloat = 160
 	@State private var modeSelectionFeedback = UISelectionFeedbackGenerator()
+	@State private var isSpoofingPresented = false
+	@State private var isModeSwitchBlocked = false
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
 
@@ -43,7 +46,7 @@ struct InstalledAppsView: View {
 				ScrollViewReader { scrollProxy in
 					List {
 						Section {
-							_vpnCard
+							_deviceControlsCard
 								.listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
 								.listRowBackground(Color.clear)
 								.listRowSeparator(.hidden)
@@ -116,6 +119,7 @@ struct InstalledAppsView: View {
 						_placeholderContent
 							.frame(width: rootGeo.size.width)
 							.position(x: rootGeo.size.width / 2, y: centerY)
+							.transition(.opacity.animation(.easeInOut(duration: 0.2)))
 					}
 				}
 			}
@@ -157,9 +161,7 @@ struct InstalledAppsView: View {
 			.toolbar {
 				ToolbarItem(placement: .topBarLeading) {
 					Button {
-						modeSelectionFeedback.selectionChanged()
-						installationMethod = installationMethod == 1 ? 0 : 1
-						modeSelectionFeedback.prepare()
+						_toggleInstallationMode()
 					} label: {
 						Image(systemName: "arrow.left.arrow.right")
 					}
@@ -190,46 +192,141 @@ struct InstalledAppsView: View {
 			.sheet(isPresented: $tabManager.isSettingsPresented) {
 				SettingsView()
 			}
+			.sheet(isPresented: $isSpoofingPresented) {
+				SpoofingEntryView()
+			}
+			.alert(.localized("Stop Spoofing First"), isPresented: $isModeSwitchBlocked) {
+				Button(.localized("Open Spoofing")) {
+					isSpoofingPresented = true
+				}
+				Button(.localized("Cancel"), role: .cancel) {}
+			} message: {
+				Text(.localized("Stop the simulated location before switching to Server mode."))
+			}
 		}
 	}
 
-	private var _vpnCard: some View {
-		VStack(spacing: 0) {
-			HStack(spacing: 12) {
-				SettingsIconBadge(
-					systemImage: "network",
-					backgroundColor: .green,
-					iconSize: 15
-				)
+	private var _deviceControlsCard: some View {
+		HStack(spacing: 12) {
+			_homeAccessoryTile(
+				title: .localized("Tunnel"),
+				subtitle: _tunnelStatus.text,
+				systemImage: "network",
+				isActive: connection.isConnected,
+				activeColor: .green,
+				statusColor: _tunnelStatus.color,
+				action: {
+					if !connection.hasPairingFile {
+						tabManager.openSettings(page: .pairingFile)
+					} else if !connection.isConnected {
+						connection.reconnectForIDeviceMode()
+					} else {
+						tabManager.openSettings(page: .tunnel)
+					}
+				}
+			)
+			.accessibilityLabel("Tunnel, \(_tunnelStatus.text)")
+			.accessibilityHint(!connection.hasPairingFile ? "Opens pairing settings." : (!connection.isConnected ? "Reconnects the tunnel." : "Opens tunnel settings."))
 
-				Text(.localized("VPN"))
-					.foregroundColor(.primary)
+			_homeAccessoryTile(
+				title: .localized("Spoofing"),
+				subtitle: _spoofingStatus.text,
+				systemImage: "location.fill",
+				isActive: isSpoofingActive,
+				activeColor: Color(red: 0.35, green: 0.78, blue: 0.72),
+				statusColor: _spoofingStatus.color,
+				isDisabled: !_canOpenSpoofing,
+				action: {
+					isSpoofingPresented = true
+				}
+			)
+			.accessibilityLabel("Spoofing, \(_spoofingStatus.text)")
+			.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select iDevice mode and connect the tunnel to open spoofing controls.")
+		}
+		.opacity(installationMethod == 1 ? 1 : 0.45)
+	}
 
-				if connection.isUpdating {
-					ProgressView()
-						.controlSize(.small)
-						.padding(.leading, 4)
+	@ViewBuilder
+	private func _homeAccessoryTile(
+		title: String,
+		subtitle: String,
+		systemImage: String,
+		isActive: Bool,
+		activeColor: Color,
+		statusColor: Color,
+		isDisabled: Bool = false,
+		action: @escaping () -> Void
+	) -> some View {
+		Button(action: action) {
+			HStack(spacing: 8) {
+				Image(systemName: systemImage)
+					.font(.system(size: 17, weight: .semibold))
+					.foregroundStyle(isActive ? activeColor : Color.secondary.opacity(isDisabled ? 0.55 : 1))
+					.frame(width: 24, height: 24)
+
+				Circle()
+					.fill(statusColor)
+					.frame(width: 6, height: 6)
+
+				VStack(alignment: .leading, spacing: 2) {
+					Text(title)
+						.font(.subheadline.weight(.semibold))
+						.foregroundStyle(.primary)
+						.lineLimit(1)
+
+					Text(subtitle)
+						.font(.caption2.weight(.medium))
+						.foregroundStyle(.secondary)
+						.lineLimit(1)
+						.minimumScaleFactor(0.8)
 				}
 
-				Spacer()
-
-				Toggle("", isOn: Binding(
-					get: { connection.isConnected },
-					set: { connection.setConnection(enabled: $0) }
-				))
-				.labelsHidden()
-				.tint(.green)
-				.disabled(connection.isUpdating)
+				Spacer(minLength: 0)
 			}
-			.padding(.horizontal, 16)
-			.padding(.vertical, 10)
+			.padding(.horizontal, 10)
+			.padding(.vertical, 8)
+			.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+			.background {
+				RoundedRectangle(cornerRadius: 15, style: .continuous)
+					.fill(Color(uiColor: .secondarySystemGroupedBackground))
+			}
 		}
-		.background(Color(UIColor.secondarySystemGroupedBackground))
-		.clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-		.overlay {
-			RoundedRectangle(cornerRadius: 16, style: .continuous)
-				.stroke(Color.primary.opacity(0.06), lineWidth: 1)
+		.buttonStyle(_HomeCardButtonStyle())
+		.disabled(isDisabled)
+		.opacity(isDisabled ? 0.6 : 1.0)
+	}
+
+	private var _canOpenSpoofing: Bool {
+		installationMethod == 1 && connection.isConnected && !connection.isUpdating
+	}
+
+	private var _tunnelStatus: _DeviceControlStatus {
+		guard installationMethod == 1 else {
+			return .init(text: .localized("iDevice required"), color: .secondary)
 		}
+		if connection.isUpdating {
+			return .init(text: .localized("Connecting"), color: .orange)
+		}
+		if connection.isConnected {
+			return .init(text: .localized("Connected"), color: .green)
+		}
+		if !connection.hasPairingFile {
+			return .init(text: .localized("Needs Pairing"), color: .red)
+		}
+		return .init(text: .localized("Unavailable"), color: .red)
+	}
+
+	private var _spoofingStatus: _DeviceControlStatus {
+		guard installationMethod == 1 else {
+			return .init(text: .localized("iDevice required"), color: .secondary)
+		}
+		if isSpoofingActive {
+			return .init(text: .localized("Active"), color: .green)
+		}
+		if _canOpenSpoofing {
+			return .init(text: .localized("Ready"), color: .secondary)
+		}
+		return .init(text: .localized("Needs Tunnel"), color: .secondary)
 	}
 
 	private var _installationMethodName: String {
@@ -259,13 +356,26 @@ struct InstalledAppsView: View {
 
 	@ViewBuilder
 	private var _placeholderContent: some View {
-		if store.isLoading && store.apps.isEmpty {
+		if installationMethod == 0 {
+			TabPlaceholderView(
+				title: .localized("Switch to iDevice"),
+				description: .localized("Use iDevice mode to view sideloaded apps or spoof your device location."),
+				systemImage: "iphone"
+			) {
+				Button {
+					_switchToIDeviceMode()
+				} label: {
+					NBButton(.localized("Use iDevice"), style: .text)
+				}
+				.buttonStyle(.borderless)
+			}
+		} else if store.isLoading && store.apps.isEmpty {
 			ProgressView()
 				.padding(.vertical, 20)
 		} else if !connection.hasPairingFile && store.apps.isEmpty {
 			TabPlaceholderView(
 				title: .localized("Pairing File Missing"),
-				description: .localized("Import a pairing file to view sideloaded apps."),
+				description: .localized("Add a pairing file to view sideloaded apps or spoof device location."),
 				systemImage: "key.slash"
 			) {
 				Button {
@@ -275,16 +385,25 @@ struct InstalledAppsView: View {
 				}
 				.buttonStyle(.borderless)
 			}
+		} else if connection.isUpdating && store.apps.isEmpty {
+			TabPlaceholderView(
+				title: .localized("Connecting Tunnel"),
+				description: .localized("Feather is connecting so you can view sideloaded apps or spoof device location."),
+				systemImage: "network"
+			) {
+				ProgressView()
+					.controlSize(.small)
+			}
 		} else if !connection.isConnected && store.apps.isEmpty {
 			TabPlaceholderView(
-				title: .localized("LocalDevVPN Is Off"),
-				description: .localized("Turn on VPN to view sideloaded apps."),
+				title: .localized("Tunnel Unavailable"),
+				description: .localized("Reconnect the tunnel to view sideloaded apps or spoof device location."),
 				systemImage: "network.slash"
 			) {
 				Button {
-					connection.setConnection(enabled: true)
+					connection.reconnectForIDeviceMode()
 				} label: {
-					NBButton(.localized("Turn On VPN"), style: .text)
+					NBButton(.localized("Retry"), style: .text)
 				}
 				.buttonStyle(.borderless)
 			}
@@ -304,10 +423,38 @@ struct InstalledAppsView: View {
 		} else {
 			TabPlaceholderView(
 				title: .localized("No Sideloaded Apps"),
-				description: .localized("Installed sideloaded apps will appear here."),
+				description: .localized("Sideloaded apps will appear here. You can spoof device location above."),
 				systemImage: "square.stack.3d.up.slash"
 			)
 		}
+	}
+
+	private func _toggleInstallationMode() {
+		if installationMethod == 1 {
+			guard !isSpoofingActive else {
+				isModeSwitchBlocked = true
+				return
+			}
+			guard connection.setInstallationMode(0) else {
+				isModeSwitchBlocked = true
+				return
+			}
+		} else {
+			_ = connection.setInstallationMode(1)
+		}
+		modeSelectionFeedback.selectionChanged()
+		modeSelectionFeedback.prepare()
+	}
+
+	private func _switchToIDeviceMode() {
+		guard connection.setInstallationMode(1) else { return }
+		modeSelectionFeedback.selectionChanged()
+		modeSelectionFeedback.prepare()
+	}
+
+	private struct _DeviceControlStatus {
+		let text: String
+		let color: Color
 	}
 
 }
@@ -365,13 +512,26 @@ private struct InstalledAppIconView: View {
 				Image("App_Unknown").appIconStyle(size: 57)
 			}
 		}
+		.animation(.easeIn(duration: 0.15), value: image != nil)
 		.task(id: bundleIdentifier + "|" + cacheVersion) {
 			guard loadsIcon else { return }
-			image = try? await InstallationAppProxy.getAppIconCached(
+			let loaded = try? await InstallationAppProxy.getAppIconCached(
 				for: bundleIdentifier,
 				cacheVersion: cacheVersion
 			)
+			withAnimation(.easeIn(duration: 0.15)) {
+				image = loaded
+			}
 		}
+	}
+}
+
+private struct _HomeCardButtonStyle: ButtonStyle {
+	func makeBody(configuration: Configuration) -> some View {
+		configuration.label
+			.scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+			.opacity(configuration.isPressed ? 0.85 : 1.0)
+			.animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
 	}
 }
 

@@ -18,7 +18,7 @@ extension HeartbeatManager {
 	) -> (isConnected: Bool, error: String?, errorCode: Int32?) {
 		if isRsd {
 			if !endpointAlreadyValidated {
-				let probe = checkRSDEndpoint(timeoutInSeconds: min(timeoutInSeconds, 0.75))
+				let probe = checkRSDEndpoint(timeoutInSeconds: min(timeoutInSeconds, 1.5))
 				guard probe.isConnected else {
 					return (false, probe.error, nil)
 				}

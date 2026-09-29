@@ -219,9 +219,6 @@ enum FR {
 		from urlString: String,
 		completion: @escaping (Bool) -> Void
 	) {
-		let generator = UINotificationFeedbackGenerator()
-		generator.prepare()
-		
 		NBFetchService().fetch(from: urlString) { (result: Result<ServerView.ServerPackModel, Error>) in
 			switch result {
 			case .success(let pack):
@@ -229,22 +226,45 @@ enum FR {
 					try FileManager.forceWrite(content: pack.key, to: "server.pem")
 					try FileManager.forceWrite(content: pack.cert, to: "server.crt")
 					try FileManager.forceWrite(content: pack.info.domains.commonName, to: "commonName.txt")
-					generator.notificationOccurred(.success)
-					completion(true)
+					DispatchQueue.main.async {
+						let generator = UINotificationFeedbackGenerator()
+						generator.notificationOccurred(.success)
+						completion(true)
+					}
 				} catch {
-					completion(false)
+					DispatchQueue.main.async {
+						completion(false)
+					}
 				}
 			case .failure(_):
-				completion(false)
+				DispatchQueue.main.async {
+					completion(false)
+				}
 			}
 		}
 	}
 	
 	static func handleSource(
 		_ urlString: String,
-		competion: @escaping () -> Void
+		completion: ((Bool) -> Void)? = nil
 	) {
-		guard let url = URL(string: urlString) else { return }
+		var trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !trimmed.isEmpty else {
+			completion?(false)
+			return
+		}
+		
+		if !trimmed.lowercased().hasPrefix("http://") && !trimmed.lowercased().hasPrefix("https://") {
+			trimmed = "https://" + trimmed
+		}
+		
+		guard let url = URL(string: trimmed) else {
+			DispatchQueue.main.async {
+				UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Invalid URL."))
+				completion?(false)
+			}
+			return
+		}
 		
 		NBFetchService().fetch<ASRepository>(from: url) { (result: Result<ASRepository, Error>) in
 			switch result {
@@ -253,16 +273,23 @@ enum FR {
 
 				DispatchQueue.main.async {
 					if !Storage.shared.sourceExists(id) {
-						Storage.shared.addSource(url, repository: data, id: id) { _ in
-							competion()
+						Storage.shared.addSource(url, repository: data, id: id) { error in
+							if let error = error {
+								UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
+								completion?(false)
+							} else {
+								completion?(true)
+							}
 						}
 					} else {
-						UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Repository already added."))
+						UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Repo already added."))
+						completion?(false)
 					}
 				}
 			case .failure(let error):
 				DispatchQueue.main.async {
 					UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
+					completion?(false)
 				}
 			}
 		}

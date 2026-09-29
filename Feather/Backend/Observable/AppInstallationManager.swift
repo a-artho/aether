@@ -33,17 +33,30 @@ final class AppInstallationManager: ObservableObject {
 	}
 	
 	private var _serverMethod: Int {
-		UserDefaults.standard.integer(forKey: "Feather.serverMethod")
+		UserDefaults.standard.object(forKey: "Feather.serverMethod") as? Int ?? 1
 	}
 	
 	private init() {}
 	
 	var isInstalling: Bool {
-		activeApp != nil
+		if iDevicePreflightTask != nil || installTask != nil {
+			return true
+		}
+		guard activeApp != nil, let viewModel else {
+			return activeApp != nil
+		}
+		switch viewModel.status {
+		case .completed, .broken:
+			return false
+		default:
+			return true
+		}
 	}
 	
 	func startInstall(app: AppInfoPresentable) {
 		cancel()
+		let appName = app.name ?? app.identifier ?? .localized("app")
+		_log("Install requested for \(appName).", category: "Install", level: .notice)
 		
 		guard app.identifier != Bundle.main.bundleIdentifier || _installationMethod == 1 else {
 			UIAlertController.showAlertWithOk(
@@ -68,6 +81,7 @@ final class AppInstallationManager: ObservableObject {
 					title: .localized("Device Connection Unavailable"),
 					message: error.localizedDescription
 				)
+				self._log("Device install preflight failed: \(error.localizedDescription)", category: "Device", level: .error)
 				return
 			}
 
@@ -86,6 +100,10 @@ final class AppInstallationManager: ObservableObject {
 		self.activeApp = app
 		self.lastErrorMessage = nil
 		self._hasLaunchedSemiLocalInstall = false
+		_log(
+			"Preparing \(_installationMethod == 1 ? "device" : "server") install for \(app.name ?? app.identifier ?? .localized("app")).",
+			category: "Install"
+		)
 		
 		let statusVM = InstallerStatusViewModel(isIdevice: _installationMethod == 1)
 		self.viewModel = statusVM
@@ -99,7 +117,7 @@ final class AppInstallationManager: ObservableObject {
 		
 		#if !targetEnvironment(macCatalyst)
 		if _installationMethod == 0 {
-			BackgroundAudioManager.shared.start()
+			BackgroundAudioManager.shared.start("installation")
 		}
 		#endif
 		
@@ -143,6 +161,9 @@ final class AppInstallationManager: ObservableObject {
 				} else if method == 1 {
 					defer { handler.clean() }
 					let proxy = await InstallationProxy(viewModel: statusVM)
+					await MainActor.run {
+						self?._log("Sending install to the connected device.", category: "Install", level: .notice)
+					}
 					try await proxy.install(
 						at: packageUrl,
 						suspend: appSnapshot.identifier == Bundle.main.bundleIdentifier
@@ -161,10 +182,11 @@ final class AppInstallationManager: ObservableObject {
 					self?.archiveHandler = nil
 					self?.installer = nil
 					#if !targetEnvironment(macCatalyst)
-					BackgroundAudioManager.shared.stop()
+					BackgroundAudioManager.shared.stop("installation")
 					#endif
 					self?.lastErrorMessage = String(describing: error)
 					statusVM.status = .broken(error)
+					self?._log("Install failed: \(error.localizedDescription)", category: "Install", level: .error)
 				}
 			}
 		}
@@ -205,6 +227,7 @@ final class AppInstallationManager: ObservableObject {
 			
 			switch newStatus {
 			case .completed:
+				_log("Install completed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .notice)
 				progressTask?.cancel()
 				progressTask = nil
 				_cleanupInstallResources()
@@ -218,6 +241,7 @@ final class AppInstallationManager: ObservableObject {
 					}
 				}
 			case .broken:
+				_log("Install failed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .error)
 				progressTask?.cancel()
 				progressTask = nil
 				_cleanupInstallResources()
@@ -227,8 +251,14 @@ final class AppInstallationManager: ObservableObject {
 		} else {
 			switch newStatus {
 			case .completed:
+				_log("Device install completed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .notice)
 				_cleanupInstallResources()
 				NotificationCenter.default.post(name: Notification.Name("Feather.installedAppsRefresh"), object: nil)
+				if UIApplication.shared.applicationState == .background,
+				   DeviceConnectionManager.shared.isAutoTunnelLifecycleEnabled,
+				   !DeviceConnectionManager.shared.hasActiveTunnelDependencies {
+					DeviceConnectionManager.shared.setConnection(enabled: false)
+				}
 				Task { [weak self] in
 					try? await Task.sleep(nanoseconds: 3_000_000_000)
 					await MainActor.run {
@@ -238,7 +268,13 @@ final class AppInstallationManager: ObservableObject {
 					}
 				}
 			case .broken:
+				_log("Device install failed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .error)
 				_cleanupInstallResources()
+				if UIApplication.shared.applicationState == .background,
+				   DeviceConnectionManager.shared.isAutoTunnelLifecycleEnabled,
+				   !DeviceConnectionManager.shared.hasActiveTunnelDependencies {
+					DeviceConnectionManager.shared.setConnection(enabled: false)
+				}
 			default:
 				break
 			}
@@ -319,8 +355,16 @@ final class AppInstallationManager: ObservableObject {
 		archiveHandler = nil
 		installer = nil
 		#if !targetEnvironment(macCatalyst)
-		BackgroundAudioManager.shared.stop()
+		BackgroundAudioManager.shared.stop("installation")
 		#endif
+	}
+
+	private func _log(
+		_ message: String,
+		category: String,
+		level: DebugLogItem.Level = .info
+	) {
+		DebugLogManager.shared.log(message, category: category, level: level)
 	}
 }
 

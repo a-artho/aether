@@ -33,8 +33,8 @@ struct ConfigurationDictAddView: View {
 		}
 		.toolbar {
 			NBToolbarButton(
-				.localized("Save"),
-				style: .text,
+				systemImage: "checkmark",
+				style: .icon,
 				placement: .confirmationAction,
 				isDisabled: saveButtonDisabled
 			) {
