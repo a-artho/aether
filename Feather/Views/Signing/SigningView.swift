@@ -171,7 +171,7 @@ extension SigningView {
 					Image(uiImage: icon)
 						.appIconStyle()
 				} else {
-					FRAppIconView(app: app, size: 56)
+					FRAppIconView(app: app, size: 50)
 				}
 			}
 			

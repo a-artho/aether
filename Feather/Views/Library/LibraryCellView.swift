@@ -8,6 +8,7 @@
 import SwiftUI
 import NimbleExtensions
 import NimbleViews
+import UIKit
 
 // MARK: - View
 struct LibraryCellView: View {
@@ -31,6 +32,7 @@ struct LibraryCellView: View {
 	@Binding var selectedInfoAppPresenting: AnyApp?
 	@Binding var selectedSigningAppPresenting: AnyApp?
 	@Binding var selectedAppUUIDs: Set<String>
+	@State private var installSelectionFeedback = UISelectionFeedbackGenerator()
 	
 	// MARK: Selections
 	private var _isSelected: Bool {
@@ -64,7 +66,7 @@ struct LibraryCellView: View {
 				.buttonStyle(.borderless)
 			}
 			
-			FRAppIconView(app: app, size: 57)
+			FRAppIconView(app: app, size: 50)
 			
 			_appDetails(for: app)
 			
@@ -98,6 +100,9 @@ struct LibraryCellView: View {
 				Divider()
 				_actions(for: app)
 			}
+		}
+		.onAppear {
+			installSelectionFeedback.prepare()
 		}
 	}
 	
@@ -202,6 +207,8 @@ extension LibraryCellView {
 		Button {
 			if app.isSigned {
 				AppInstallationManager.shared.startInstall(app: app)
+				installSelectionFeedback.selectionChanged()
+				installSelectionFeedback.prepare()
 			} else {
 				selectedSigningAppPresenting = AnyApp(base: app)
 			}

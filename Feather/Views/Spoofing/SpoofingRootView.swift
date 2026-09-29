@@ -230,7 +230,7 @@ struct BottomControlsView: View {
 			} label: {
 				Text("Teleport")
 					.font(.subheadline.weight(.bold))
-					.foregroundStyle(.black)
+					.foregroundStyle(.white)
 					.frame(minWidth: 120)
 					.padding(.vertical, 12)
 					.padding(.horizontal, 12)
@@ -255,7 +255,7 @@ struct BottomControlsView: View {
 		Button(action: action) {
 			Image(systemName: systemName)
 				.font(.body.weight(.semibold))
-				.foregroundStyle(selected ? .black : .primary)
+				.foregroundStyle(selected ? .white : .primary)
 				.frame(width: diameter, height: diameter)
 				.background(Circle().fill(selected ? selectedColor : Color.primary.opacity(0.08)))
 				.contentShape(Circle())

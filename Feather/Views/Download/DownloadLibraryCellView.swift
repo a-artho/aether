@@ -46,19 +46,19 @@ struct DownloadLibraryCellView: View {
 		if let iconURL = download.sourceProvenance?.sourceAppIconURL {
 			LazyImage(url: iconURL) { state in
 				if let image = state.image {
-					image.appIconStyle(size: 57)
+					image.appIconStyle(size: 50)
 				} else {
 					_placeholderIcon
 				}
 			}
-			.processors([.resize(width: 114)])
+			.processors([.resize(width: 100)])
 		} else {
 			_placeholderIcon
 		}
 	}
 
 	private var _placeholderIcon: some View {
-		Image("App_Unknown").appIconStyle(size: 57)
+		Image("App_Unknown").appIconStyle(size: 50)
 	}
 
 	private var _title: String {

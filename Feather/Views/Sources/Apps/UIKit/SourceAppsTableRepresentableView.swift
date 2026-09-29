@@ -14,6 +14,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	@Binding var searchText: String
 	@Binding var sortOption: SourceAppsView.SortOption
 	@Binding var sortAscending: Bool
+	var showSourceBadge: Bool = false
 	var onSelect: (SourceAppsView.SourceAppRoute) -> Void
 	
 	func makeUIView(context: Context) -> UITableView {
@@ -63,14 +64,16 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		let searchChanged = context.coordinator.searchText != searchText
 		let sortOptionChanged = context.coordinator.sortOption != sortOption
 		let sortDirectionChanged = context.coordinator.sortAscending != sortAscending
+		let badgeChanged = context.coordinator.showSourceBadge != showSourceBadge
 		
 		context.coordinator.sourceContexts = sourceContexts
 		context.coordinator.searchText = searchText
 		context.coordinator.sortOption = sortOption
 		context.coordinator.sortAscending = sortAscending
+		context.coordinator.showSourceBadge = showSourceBadge
 		
-		if sourcesChanged || searchChanged || sortOptionChanged || sortDirectionChanged {
-			context.coordinator.invalidateCache(debouncingSearch: searchChanged && !sourcesChanged && !sortOptionChanged && !sortDirectionChanged)
+		if sourcesChanged || searchChanged || sortOptionChanged || sortDirectionChanged || badgeChanged {
+			context.coordinator.invalidateCache(debouncingSearch: searchChanged && !sourcesChanged && !sortOptionChanged && !sortDirectionChanged && !badgeChanged)
 		}
 	}
 	
@@ -80,6 +83,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 			searchText: searchText,
 			sortOption: sortOption,
 			sortAscending: sortAscending,
+			showSourceBadge: showSourceBadge,
 			onSelect: onSelect
 		)
 	}
@@ -91,6 +95,7 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	var searchText: String
 	var sortOption: SourceAppsView.SortOption
 	var sortAscending: Bool
+	var showSourceBadge: Bool
 	let onSelect: (SourceAppsView.SourceAppRoute) -> Void
 	
 	private var _groupedAppsByNameFirstLetter: [String: [SourceAppEntry]] = [:]
@@ -126,12 +131,14 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		searchText: String,
 		sortOption: SourceAppsView.SortOption,
 		sortAscending: Bool,
+		showSourceBadge: Bool,
 		onSelect: @escaping (SourceAppsView.SourceAppRoute) -> Void
 	) {
 		self.sourceContexts = sourceContexts
 		self.searchText = searchText
 		self.sortOption = sortOption
 		self.sortAscending = sortAscending
+		self.showSourceBadge = showSourceBadge
 		self.onSelect = onSelect
 		super.init()
 		
@@ -253,7 +260,13 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		}
 
 		cell.contentConfiguration = UIHostingConfiguration {
-			SourceAppsCellView(sourceURL: entry.sourceURL, source: entry.source, app: entry.app)
+			SourceAppsCellView(
+				sourceURL: entry.sourceURL,
+				source: entry.source,
+				app: entry.app,
+				showSourceBadge: showSourceBadge
+			)
+			.tint(Color(hex: UserDefaults.standard.string(forKey: "Feather.userTintColor") ?? "#848ef9"))
 		}
 		return cell
 	}

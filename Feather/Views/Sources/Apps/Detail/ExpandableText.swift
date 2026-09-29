@@ -19,6 +19,7 @@ struct ExpandableText: View {
 		VStack(alignment: .leading, spacing: 4) {
 			Text(text)
 				.lineLimit(expanded ? nil : lineLimit)
+				.foregroundStyle(.secondary)
 				.background(
 					Text(text)
 						.lineLimit(lineLimit)
@@ -32,7 +33,7 @@ struct ExpandableText: View {
 						})
 						.hidden()
 				)
-				.onTapGesture {pGesture in
+				.onTapGesture {
 					withAnimation {
 						expanded.toggle()
 					}

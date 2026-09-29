@@ -51,6 +51,7 @@ struct SourceAppsView: View {
 	
 	var object: [AltSource]
 	@ObservedObject var viewModel: SourcesViewModel
+	var isAllRepos: Bool = false
 	@State private var _sourceContexts: [SourceRepositoryContext]?
 	
 	// MARK: Body
@@ -65,6 +66,7 @@ struct SourceAppsView: View {
 					searchText: $_searchText,
 					sortOption: $_sortOption,
 					sortAscending: $_sortAscending,
+					showSourceBadge: isAllRepos,
 					onSelect: {self._selectedRoute = $0}
 				)
 				.ignoresSafeArea()
@@ -133,9 +135,6 @@ struct SourceAppsView: View {
 							.focused($_isSearchFocused)
 							.textInputAutocapitalization(.never)
 							.disableAutocorrection(true)
-							.onAppear {
-								_isSearchFocused = true
-							}
 
 						if !_searchText.isEmpty {
 							Button {
@@ -151,7 +150,14 @@ struct SourceAppsView: View {
 					}
 					.frame(height: 36)
 					.frame(width: min(500, UIScreen.main.bounds.width - 74))
-					.background(Color(UIColor.secondarySystemFill), in: Capsule())
+					.background {
+						if #available(iOS 26.0, *) {
+							Color.clear
+								.glassEffect(.regular, in: .capsule)
+						} else {
+							Color(UIColor.secondarySystemFill)
+						}
+					}
 				}
 
 				ToolbarItem(placement: .topBarTrailing) {
@@ -169,9 +175,7 @@ struct SourceAppsView: View {
 			} else {
 				ToolbarItem(placement: .topBarTrailing) {
 					Button {
-						withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-							_isSearchPresented = true
-						}
+						_presentSearch()
 					} label: {
 						Image(systemName: "magnifyingglass")
 					}
@@ -200,15 +204,26 @@ struct SourceAppsView: View {
 			)
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openSearch"))) { _ in
-			withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-				_isSearchPresented = true
-			}
+			_presentSearch()
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.closeSearch"))) { _ in
 			_isSearchFocused = false
 			withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
 				_isSearchPresented = false
 				_searchText = ""
+			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openApp"))) { notif in
+			let targetName = notif.userInfo?["name"] as? String
+			if let context = _sourceContexts?.first(where: { ctx in
+				ctx.repository.apps.contains(where: { app in
+					targetName == nil || app.currentName.localizedCaseInsensitiveContains(targetName!)
+				})
+			}) ?? _sourceContexts?.first,
+			let app = context.repository.apps.first(where: { app in
+				targetName == nil || app.currentName.localizedCaseInsensitiveContains(targetName!)
+			}) ?? context.repository.apps.first {
+				_selectedRoute = SourceAppRoute(sourceURL: context.sourceURL, source: context.repository, app: app)
 			}
 		}
 	}
@@ -223,6 +238,20 @@ struct SourceAppsView: View {
 		_sourceContexts = loadedSources
 		withAnimation(.easeIn(duration: 0.2)) {
 			isLoading = false
+		}
+	}
+
+	private func _presentSearch() {
+		guard !_isSearchPresented else { return }
+
+		withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+			_isSearchPresented = true
+		}
+
+		Task { @MainActor in
+			try? await Task.sleep(nanoseconds: 250_000_000)
+			guard _isSearchPresented else { return }
+			_isSearchFocused = true
 		}
 	}
 	

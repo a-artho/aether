@@ -14,6 +14,7 @@ public struct NBSection<Content, Footer>: View
 	private var _headerText: String
 	private var _headerTextSecondary: String?
 	private var _systemName: String?
+	private var _trailing: AnyView?
 	private var _content: Content
 	private var _footer: Footer
 	
@@ -26,6 +27,7 @@ public struct NBSection<Content, Footer>: View
 		self._headerText = headerText
 		self._headerTextSecondary = headerTextSecondary
 		self._systemName = systemName
+		self._trailing = nil
 		self._content = content()
 		self._footer = footer()
 	}
@@ -38,6 +40,36 @@ public struct NBSection<Content, Footer>: View
 		self._headerText = headerText
 		self._headerTextSecondary = headerTextSecondary
 		self._systemName = systemName
+		self._trailing = nil
+		self._content = content()
+		self._footer = EmptyView()
+	}
+
+	public init<Trailing: View>(
+		_ headerText: String,
+		systemName: String? = nil,
+		@ViewBuilder trailing: () -> Trailing,
+		@ViewBuilder content: () -> Content,
+		@ViewBuilder footer: () -> Footer
+	) {
+		self._headerText = headerText
+		self._headerTextSecondary = nil
+		self._systemName = systemName
+		self._trailing = AnyView(trailing())
+		self._content = content()
+		self._footer = footer()
+	}
+
+	public init<Trailing: View>(
+		_ headerText: String,
+		systemName: String? = nil,
+		@ViewBuilder trailing: () -> Trailing,
+		@ViewBuilder content: () -> Content
+	) where Footer == EmptyView {
+		self._headerText = headerText
+		self._headerTextSecondary = nil
+		self._systemName = systemName
+		self._trailing = AnyView(trailing())
 		self._content = content()
 		self._footer = EmptyView()
 	}
@@ -60,7 +92,9 @@ public struct NBSection<Content, Footer>: View
 					
 				Spacer()
                     
-				if let _headerTextSecondary {
+				if let _trailing {
+					_trailing
+				} else if let _headerTextSecondary {
 					if #available(iOS 26.0, *) {
 						Text(_headerTextSecondary)
 							.font(.caption)

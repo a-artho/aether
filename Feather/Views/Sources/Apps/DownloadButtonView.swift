@@ -10,16 +10,23 @@ import AltSourceKit
 import NimbleViews
 
 struct DownloadButtonView: View {
+	enum Style {
+		case compact
+		case prominent
+		case navigation
+	}
+
 	let sourceURL: URL?
 	let source: ASRepository?
 	let app: ASRepository.App
+	var style: Style = .compact
 	@ObservedObject private var downloadManager = DownloadManager.shared
 
 	var body: some View {
 		ZStack {
 			if let currentDownload = downloadManager.getDownload(by: app.currentUniqueId) {
 				DownloadProgressButton(download: currentDownload)
-				.compatTransition()
+					.compatTransition()
 			} else {
 				Button {
 					if let url = app.currentDownloadUrl {
@@ -30,20 +37,30 @@ struct DownloadButtonView: View {
 						)
 					}
 				} label: {
-					Text(.localized("Get"))
-						.lineLimit(0)
-						.font(.headline.bold())
-						.foregroundStyle(Color.accentColor)
-						.padding(.horizontal, 24)
-						.padding(.vertical, 6)
-						.background(Color(uiColor: .quaternarySystemFill))
-						.clipShape(Capsule())
+					switch style {
+					case .compact, .prominent:
+						Image(systemName: "icloud.and.arrow.down")
+							.font(.footnote.bold())
+							.foregroundStyle(_themeColor)
+							.frame(width: 31, height: 31)
+							.background(Color(uiColor: .quaternarySystemFill))
+							.clipShape(Circle())
+					case .navigation:
+						Image(systemName: "icloud.and.arrow.down")
+							.fontWeight(.semibold)
+							.foregroundStyle(_themeColor)
+					}
 				}
 				.buttonStyle(.borderless)
+				.tint(_themeColor)
 				.compatTransition()
 			}
 		}
 		.animation(.easeInOut(duration: 0.3), value: downloadManager.getDownload(by: app.currentUniqueId) != nil)
+	}
+
+	private var _themeColor: Color {
+		Color(hex: UserDefaults.standard.string(forKey: "Feather.userTintColor") ?? "#848ef9")
 	}
 
 	private func _sourceProvenance() -> SourceAppProvenance? {

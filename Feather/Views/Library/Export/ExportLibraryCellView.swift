@@ -12,7 +12,7 @@ struct ExportLibraryCellView: View {
 
 	var body: some View {
 		HStack(spacing: 18) {
-			FRAppIconView(app: export.app, size: 57)
+			FRAppIconView(app: export.app, size: 50)
 
 			VStack(alignment: .leading, spacing: 3) {
 				Text(export.app.name ?? .localized("Unknown"))

@@ -10,12 +10,40 @@ import NukeUI
 import NimbleViews
 
 // MARK: - View
-struct FRIconCellView: View {
+struct FRIconCellView<Subtitle: View>: View {
 	var title: String
-	var subtitle: String
+	var subtitleView: Subtitle
 	var iconUrl: URL?
-	var size: CGFloat = 56
+	var size: CGFloat = 50
 	var isCircle: Bool = false
+	
+	init(
+		title: String,
+		subtitle: String,
+		iconUrl: URL? = nil,
+		size: CGFloat = 50,
+		isCircle: Bool = false
+	) where Subtitle == Text {
+		self.title = title
+		self.subtitleView = Text(subtitle)
+		self.iconUrl = iconUrl
+		self.size = size
+		self.isCircle = isCircle
+	}
+	
+	init(
+		title: String,
+		iconUrl: URL? = nil,
+		size: CGFloat = 50,
+		isCircle: Bool = false,
+		@ViewBuilder subtitle: () -> Subtitle
+	) {
+		self.title = title
+		self.subtitleView = subtitle()
+		self.iconUrl = iconUrl
+		self.size = size
+		self.isCircle = isCircle
+	}
 	
 	// MARK: Body
 	var body: some View {
@@ -32,11 +60,18 @@ struct FRIconCellView: View {
 				standardIcon
 			}
 			
-			NBTitleWithSubtitleView(
-				title: title,
-				subtitle: subtitle,
-				linelimit: 0
-			)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(title)
+					.font(.headline)
+					.foregroundColor(.primary)
+					.lineLimit(1)
+				subtitleView
+					.font(.subheadline)
+					.foregroundColor(.secondary)
+					.lineLimit(1)
+			}
+			.padding(.vertical, 2)
+			.frame(maxWidth: .infinity, alignment: .leading)
 		}
 	}
 	

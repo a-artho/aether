@@ -85,10 +85,55 @@ struct FeatherApp: App {
 				NotificationCenter.default.post(name: Notification.Name("Feather.closeSearch"), object: nil)
 				return
 			}
+			if url.host == "open-all-repos" {
+				AppTabManager.shared.switchTo(.sources)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					NotificationCenter.default.post(name: Notification.Name("Feather.openAllRepos"), object: nil)
+				}
+				return
+			}
 			if url.host == "open-first-source" {
 				AppTabManager.shared.switchTo(.sources)
 				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
 					NotificationCenter.default.post(name: Notification.Name("Feather.openFirstSource"), object: nil)
+				}
+				return
+			}
+			if url.host == "open-source" {
+				AppTabManager.shared.switchTo(.sources)
+				let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+				let name = components?.queryItems?.first(where: { $0.name == "name" })?.value
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					var userInfo: [String: Any]? = nil
+					if let name {
+						userInfo = ["name": name]
+					}
+					NotificationCenter.default.post(
+						name: Notification.Name("Feather.openSource"),
+						object: nil,
+						userInfo: userInfo
+					)
+				}
+				return
+			}
+			if url.host == "open-app" {
+				AppTabManager.shared.switchTo(.sources)
+				let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+				let appName = components?.queryItems?.first(where: { $0.name == "name" })?.value
+				let sourceName = components?.queryItems?.first(where: { $0.name == "source" })?.value
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					if let sourceName {
+						NotificationCenter.default.post(name: Notification.Name("Feather.openSource"), object: nil, userInfo: ["name": sourceName])
+					} else {
+						NotificationCenter.default.post(name: Notification.Name("Feather.openFirstSource"), object: nil)
+					}
+					DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+						var userInfo: [String: Any]? = nil
+						if let appName {
+							userInfo = ["name": appName]
+						}
+						NotificationCenter.default.post(name: Notification.Name("Feather.openApp"), object: nil, userInfo: userInfo)
+					}
 				}
 				return
 			}

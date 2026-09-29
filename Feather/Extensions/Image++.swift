@@ -10,7 +10,7 @@ import SwiftUI
 extension Image {
 	/// Applies a standard icon style with firmware-aware corner radius
 	func appIconStyle(
-		size: CGFloat = 56,
+		size: CGFloat = 50,
 		lineWidth: CGFloat = 1,
 		isCircle: Bool = false,
 		background: Color = .clear

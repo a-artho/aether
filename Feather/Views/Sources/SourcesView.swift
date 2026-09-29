@@ -20,6 +20,7 @@ struct SourcesView: View {
 	@State private var _searchText = ""
 	@State private var _isSearchPresented = false
 	@State private var _selectedSourceForNav: AltSource? = nil
+	@State private var _openAllReposNav = false
 	@FocusState private var _isSearchFocused: Bool
 	
 	private var _filteredSources: [AltSource] {
@@ -39,7 +40,7 @@ struct SourcesView: View {
 				if !_filteredSources.isEmpty {
 					Section {
 						NavigationLink {
-							SourceAppsView(object: Array(_sources), viewModel: viewModel)
+							SourceAppsView(object: Array(_sources), viewModel: viewModel, isAllRepos: true)
 						} label: {
 							let isRegular = horizontalSizeClass != .compact
 							HStack(spacing: 18) {
@@ -58,12 +59,13 @@ struct SourcesView: View {
 							)
 						}
 						.buttonStyle(.plain)
+						.listRowSeparator(.hidden)
 					}
 					
 					NBSection(.localized("Repos")) {
 						ForEach(_filteredSources) { source in
 							NavigationLink {
-								SourceAppsView(object: [source], viewModel: viewModel)
+								SourceAppsView(object: [source], viewModel: viewModel, isAllRepos: false)
 							} label: {
 								SourcesCellView(source: source)
 							}
@@ -122,7 +124,14 @@ struct SourcesView: View {
 						}
 						.frame(height: 36)
 						.frame(width: min(500, UIScreen.main.bounds.width - 74))
-						.background(Color(UIColor.secondarySystemFill), in: Capsule())
+						.background {
+							if #available(iOS 26.0, *) {
+								Color.clear
+									.glassEffect(.regular, in: .capsule)
+							} else {
+								Color(UIColor.secondarySystemFill)
+							}
+						}
 					}
 					
 					ToolbarItem(placement: .topBarTrailing) {
@@ -190,11 +199,26 @@ struct SourcesView: View {
 				set: { if !$0 { _selectedSourceForNav = nil } }
 			)) {
 				if let source = _selectedSourceForNav {
-					SourceAppsView(object: [source], viewModel: viewModel)
+					SourceAppsView(object: [source], viewModel: viewModel, isAllRepos: false)
 				}
+			}
+			.navigationDestination(isPresented: $_openAllReposNav) {
+				SourceAppsView(object: Array(_sources), viewModel: viewModel, isAllRepos: true)
+			}
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openAllRepos"))) { _ in
+				_openAllReposNav = true
 			}
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openFirstSource"))) { _ in
 				if let first = _sources.first {
+					_selectedSourceForNav = first
+				}
+			}
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openSource"))) { notif in
+				if let name = notif.userInfo?["name"] as? String {
+					if let found = _sources.first(where: { $0.name?.localizedCaseInsensitiveContains(name) == true }) {
+						_selectedSourceForNav = found
+					}
+				} else if let first = _sources.first {
 					_selectedSourceForNav = first
 				}
 			}

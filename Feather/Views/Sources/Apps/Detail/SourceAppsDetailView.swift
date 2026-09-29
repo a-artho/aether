@@ -10,6 +10,7 @@ import Combine
 import AltSourceKit
 import NimbleViews
 import NukeUI
+import UIKit
 
 // MARK: - SourceAppsDetailView
 struct SourceAppsDetailView: View {
@@ -18,6 +19,7 @@ struct SourceAppsDetailView: View {
 	@State var cancellable: AnyCancellable? // Combine
 	@State private var _isScreenshotPreviewPresented: Bool = false
 	@State private var _selectedScreenshotIndex: Int = 0
+	@State private var _appStoreDestination: AppStoreDestination?
 	
 	var currentDownload: Download? {
 		downloadManager.getDownload(by: app.currentUniqueId)
@@ -29,16 +31,12 @@ struct SourceAppsDetailView: View {
 	
 	var body: some View {
 		ScrollView {
-			if #available(iOS 18, *) {
-				_header().flexibleHeaderContent()
-			}
-			
-			VStack(alignment: .leading, spacing: 10) {
-				HStack(spacing: 10) {
+			VStack(alignment: .leading, spacing: 24) {
+				HStack(alignment: .center, spacing: 14) {
 					if let iconURL = app.iconURL {
 						LazyImage(url: iconURL) { state in
 							if let image = state.image {
-								image.appIconStyle(size: 111, isCircle: false)
+								image.appIconStyle(size: 82, isCircle: false)
 							} else {
 								standardIcon
 							}
@@ -47,107 +45,79 @@ struct SourceAppsDetailView: View {
 						standardIcon
 					}
 
-					VStack(alignment: .leading, spacing: 2) {
-						Text(app.currentName)
-							.font(.title2)
-							.fontWeight(.semibold)
-							.foregroundColor(.primary)
-						Text(app.currentDescription ?? .localized("An awesome application"))
-							.font(.subheadline)
-							.foregroundColor(.secondary)
-						
-						Spacer()
-						
-						DownloadButtonView(sourceURL: sourceURL, source: source, app: app)
+					VStack(alignment: .leading, spacing: 6) {
+						_headerSpecs()
+
+						_headerDeveloper()
 					}
-					.lineLimit(2)
 					.frame(maxWidth: .infinity, alignment: .leading)
 				}
-				
-				Divider()
-				_infoPills(app: app)
-				Divider()
-                
-				if let screenshotURLs = app.screenshotURLs {
+				.padding(.top, 4)
+
+				if let screenshotURLs = app.screenshotURLs, !screenshotURLs.isEmpty {
 					NBSection(.localized("Screenshots")) {
 						_screenshots(screenshotURLs: screenshotURLs)
 					}
-                    
-					Divider()
 				}
-				
+
 				if
 					let currentVer = app.currentVersion,
 					let whatsNewDesc = app.currentAppVersion?.localizedDescription
 				{
 					NBSection(.localized("What's New")) {
-						AppVersionInfo(
-							version: currentVer,
-							date: app.currentDate?.date,
-							description: whatsNewDesc
-						)
-						if let versions = app.versions {
-							NavigationLink(
-								destination: VersionHistoryView(
-									sourceURL: sourceURL,
-									source: source,
-									app: app,
-									versions: versions
-								)
+						VStack(alignment: .leading, spacing: 8) {
+							AppVersionInfo(
+								version: currentVer,
+								date: app.currentDate?.date,
+								description: whatsNewDesc
+							)
+
+							if let versions = app.versions, versions.count > 1 {
+								NavigationLink(
+									destination: VersionHistoryView(
+										sourceURL: sourceURL,
+										source: source,
+										app: app,
+										versions: versions
+									)
 									.navigationTitle(.localized("Version History"))
-									.navigationBarTitleDisplayMode(.large)
-							) {
-								Text(.localized("Version History"))
+									.navigationBarTitleDisplayMode(.inline)
+								) {
+									HStack {
+										Text(.localized("Version History"))
+											.font(.subheadline.weight(.medium))
+											.foregroundStyle(Color.accentColor)
+										Spacer()
+										Image(systemName: "chevron.right")
+											.font(.caption2.weight(.semibold))
+											.foregroundStyle(Color.secondary.opacity(0.4))
+									}
+									.padding(.top, 4)
+								}
 							}
 						}
 					}
-					
-					Divider()
 				}
-				
-				if let appDesc = app.localizedDescription {
-					NBSection(.localized("Description")) {
-						VStack(alignment: .leading, spacing: 2) {
-							ExpandableText(text: appDesc, lineLimit: 3)
-						}
-						.frame(maxWidth: .infinity, alignment: .leading)
+
+				if let appDesc = app.localizedDescription, !appDesc.isEmpty {
+					NBSection(.localized("Description"), trailing: {
+						_appStoreLink()
+					}) {
+						ExpandableText(text: appDesc, lineLimit: 4)
+							.lineSpacing(3)
 					}
-					
-					Divider()
+				} else if _appStoreDestination != nil {
+					NBSection(.localized("Description"), trailing: {
+						_appStoreLink()
+					}) {
+						EmptyView()
+					}
 				}
-                
+
 				NBSection(.localized("Information")) {
-					VStack(spacing: 12) {
-						if let sourceName = source.name {
-							_infoRow(title: .localized("Source"), value: sourceName)
-						}
-                        
-						if let developer = app.developer {
-							_infoRow(title: .localized("Developer"), value: developer)
-						}
-						
-						if let size = app.size {
-							_infoRow(title: .localized("Size"), value: size.formattedByteCount)
-						}
-						
-						if let category = app.category {
-							_infoRow(title: .localized("Category"), value: category.capitalized)
-						}
-						
-						if let version = app.currentVersion {
-							_infoRow(title: .localized("Version"), value: version)
-						}
-						
-						if let date = app.currentDate?.date {
-							_infoRow(title: .localized("Updated"), value: DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .none))
-						}
-						
-						if let bundleId = app.id {
-							_infoRow(title: .localized("Identifier"), value: bundleId)
-						}
-					}
+					_informationRows()
 				}
-				
+
 				if let appPermissions = app.appPermissions {
 					NBSection(.localized("Permissions")) {
 						Group {
@@ -182,29 +152,21 @@ struct SourceAppsDetailView: View {
 					}
 				}
 			}
-			.padding([.horizontal, .bottom])
-			.padding(.top, {
-				if #available(iOS 18, *) {
-					8
-				} else {
-					0
-				}
-			}())
+			.padding(.horizontal, 16)
+			.padding(.top, 8)
+			.padding(.bottom, 36)
 		}
-		.flexibleHeaderScrollView()
-		.shouldSetInset()
+		.background(Color(uiColor: .systemBackground).ignoresSafeArea())
+		.navigationTitle(app.currentName)
+		.navigationBarTitleDisplayMode(.inline)
 		.toolbar {
-			NBToolbarButton(
-				systemImage: "square.and.arrow.up",
-				placement: .topBarTrailing
-			) {
-				let sharedString = """
-				\(app.currentName) - \(app.currentVersion ?? "0")
-				\(app.currentDescription ?? .localized("An awesome application"))
-				---
-				\(source.website?.absoluteString ?? source.name ?? "")
-				"""
-				UIActivityViewController.show(activityItems: [sharedString])
+			ToolbarItem(placement: .topBarTrailing) {
+				DownloadButtonView(
+					sourceURL: sourceURL,
+					source: source,
+					app: app,
+					style: .navigation
+				)
 			}
 		}
 		.fullScreenCover(isPresented: $_isScreenshotPreviewPresented) {
@@ -215,92 +177,187 @@ struct SourceAppsDetailView: View {
 				)
 			}
 		}
+		.task(id: "\(app.id ?? "")|\(app.currentName)") {
+			_appStoreDestination = await AppStoreLookup.shared.destination(
+				bundleID: app.id,
+				appName: app.currentName
+			)
+		}
 	}
 	
 	var standardIcon: some View {
-		Image("App_Unknown").appIconStyle(size: 111, isCircle: false)
+		Image("App_Unknown").appIconStyle(size: 82, isCircle: false)
 	}
-	
-	var standardHeader: some View {
-		Image("App_Unknown")
-			.resizable()
-			.aspectRatio(contentMode: .fill)
-			.frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-			.clipped()
+
+	private var _headerSubtitle: String? {
+		if let developer = app.developer, !developer.isEmpty {
+			return developer
+		}
+		if let category = app.category, !category.isEmpty {
+			return category.capitalized
+		}
+		if let sourceName = source.name, !sourceName.isEmpty {
+			return sourceName
+		}
+		return nil
+	}
+
+	private func _shareApp() {
+		let sharedString = """
+		\(app.currentName) - \(app.currentVersion ?? "0")
+		\(app.currentDescription ?? .localized("An awesome application"))
+		---
+		\(source.website?.absoluteString ?? source.name ?? "")
+		"""
+		UIActivityViewController.show(activityItems: [sharedString])
+	}
+
+	private func _openAppStore(_ url: URL) {
+		#if targetEnvironment(simulator)
+		UIApplication.shared.open(url, options: [:], completionHandler: nil)
+		#else
+		let appStoreURL: URL
+		if var components = URLComponents(url: url, resolvingAgainstBaseURL: false), components.host == "apps.apple.com" {
+			components.scheme = "itms-apps"
+			appStoreURL = components.url ?? url
+		} else {
+			appStoreURL = url
+		}
+
+		UIApplication.shared.open(appStoreURL, options: [:]) { didOpen in
+			if !didOpen, appStoreURL != url {
+				UIApplication.shared.open(url, options: [:], completionHandler: nil)
+			}
+		}
+		#endif
 	}
 }
 
 // MARK: - SourceAppsDetailView (Extension): Builders
 extension SourceAppsDetailView {
-	@available(iOS 18.0, *)
 	@ViewBuilder
-	private func _header() -> some View {
-		ZStack {
-			if let iconURL = source.currentIconURL {
-				LazyImage(url: iconURL) { state in
-					if let image = state.image {
-						image.resizable()
-							.aspectRatio(contentMode: .fill)
-							.frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-							.clipped()
-					} else {
-						standardHeader
+	private func _headerSpecs() -> some View {
+		let hasVersion = app.currentVersion != nil && !(app.currentVersion?.isEmpty ?? true)
+		let hasSize = app.size != nil
+
+		if hasVersion || hasSize {
+			HStack(spacing: 6) {
+				if let version = app.currentVersion, !version.isEmpty {
+					HStack(spacing: 3) {
+						Image(systemName: "tag")
+							.font(.caption2.weight(.medium))
+							.foregroundStyle(Color.blue)
+						Text(version)
+							.font(.subheadline)
 					}
 				}
-			} else {
-				standardHeader
+
+				if hasVersion && hasSize {
+					Text("•")
+						.font(.caption2)
+						.foregroundStyle(Color.secondary.opacity(0.5))
+				}
+
+				if let size = app.size {
+					HStack(spacing: 3) {
+						Image(systemName: "internaldrive")
+							.font(.caption2.weight(.medium))
+							.foregroundStyle(Color.purple)
+						Text(size.formattedByteCount)
+							.font(.subheadline)
+					}
+				}
 			}
-			
-			NBVariableBlurView()
-				.rotationEffect(.degrees(-180))
-				.overlay(
-					LinearGradient(
-						gradient: Gradient(colors: [
-							Color.black.opacity(0.8),
-							Color.black.opacity(0)
-						]),
-						startPoint: .top,
-						endPoint: .bottom
-					)
-				)
+			.foregroundStyle(.secondary)
+			.lineLimit(1)
+		}
+	}
+
+	@ViewBuilder
+	private func _headerDeveloper() -> some View {
+		if let developer = _headerSubtitle, !developer.isEmpty {
+			HStack(spacing: 2) {
+				Text("@")
+					.font(.subheadline.weight(.medium))
+					.foregroundStyle(Color.orange)
+				Text(developer)
+					.foregroundStyle(.secondary)
+			}
+			.font(.subheadline)
+			.lineLimit(1)
+		}
+	}
+
+	@ViewBuilder
+	private func _appStoreLink() -> some View {
+		if let destination = _appStoreDestination {
+			Button {
+				_openAppStore(destination.url)
+			} label: {
+				HStack(spacing: 4) {
+					Image("AppStore")
+						.renderingMode(.template)
+						.resizable()
+						.scaledToFit()
+						.frame(width: 12, height: 12)
+						.foregroundStyle(.secondary)
+
+					Text("App Store")
+						.underline()
+						.foregroundStyle(.secondary)
+
+					Image(systemName: "arrow.up.right")
+						.font(.caption2.weight(.semibold))
+						.foregroundStyle(Color.accentColor)
+				}
+				.font(.subheadline)
+			}
+			.buttonStyle(.plain)
+		}
+	}
+
+	@ViewBuilder
+	private func _informationRows() -> some View {
+		let rows: [(title: String, value: String)] = [
+			source.name.flatMap { (title: .localized("Source"), value: $0) },
+			app.developer.flatMap { (title: .localized("Developer"), value: $0) },
+			app.size.flatMap { (title: .localized("Size"), value: $0.formattedByteCount) },
+			app.category.flatMap { (title: .localized("Category"), value: $0.capitalized) },
+			app.currentVersion.flatMap { (title: .localized("Version"), value: $0) },
+			(app.currentDate?.date).flatMap { (title: .localized("Updated"), value: DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .none)) },
+			app.id.flatMap { (title: .localized("Identifier"), value: $0) }
+		].compactMap { $0 }
+
+		VStack(spacing: 8) {
+			ForEach(rows.indices, id: \.self) { index in
+				let row = rows[index]
+				_infoRow(title: row.title, value: row.value, isLast: index == rows.count - 1)
+			}
 		}
 	}
 	
 	@ViewBuilder
-	private func _infoPills(app: ASRepository.App) -> some View {
-		let pillItems = _buildPills(from: app)
-		HStack(spacing: 6) {
-			ForEach(pillItems.indices, id: \.hashValue) { index in
-				let pill = pillItems[index]
-				NBPillView(
-					title: pill.title,
-					icon: pill.icon,
-					color: pill.color,
-					index: index,
-					count: pillItems.count
-				)
-			}
+	private func _infoRow(title: String, value: String, isLast: Bool) -> some View {
+		HStack(alignment: .firstTextBaseline) {
+			Text(title)
+				.font(.subheadline)
+				.foregroundStyle(.secondary)
+
+			Spacer(minLength: 16)
+
+			Text(value)
+				.font(.subheadline)
+				.foregroundStyle(.primary)
+				.multilineTextAlignment(.trailing)
+				.lineLimit(2)
 		}
-	}
-	
-	private func _buildPills(from app: ASRepository.App) -> [NBPillItem] {
-		var pills: [NBPillItem] = []
-		
-		if let version = app.currentVersion {
-			pills.append(NBPillItem(title: version, icon: "tag", color: Color.accentColor))
+		.padding(.vertical, 3)
+
+		if !isLast {
+			Rectangle()
+				.fill(Color.primary.opacity(0.06))
+				.frame(height: 0.5)
 		}
-		
-		if let size = app.size {
-			pills.append(NBPillItem(title: size.formattedByteCount, icon: "archivebox", color: .secondary))
-		}
-		
-		return pills
-	}
-	
-	@ViewBuilder
-	private func _infoRow(title: String, value: String) -> some View {
-		LabeledContent(title, value: value)
-		Divider()
 	}
 	
 	@ViewBuilder
@@ -316,12 +373,12 @@ extension SourceAppsDetailView {
 								.aspectRatio(contentMode: .fit)
 								.frame(
 									maxWidth: UIScreen.main.bounds.width - 32,
-									maxHeight: 400
+									maxHeight: 350
 								)
-								.clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+								.clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 								.overlay {
-									RoundedRectangle(cornerRadius: 16, style: .continuous)
-										.strokeBorder(.gray.opacity(0.3), lineWidth: 1)
+									RoundedRectangle(cornerRadius: 18, style: .continuous)
+										.strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
 								}
 								.onTapGesture {
 									_selectedScreenshotIndex = index

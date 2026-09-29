@@ -1,9 +1,9 @@
 import SwiftUI
 
 enum LocusTheme {
-    static let accent = Color(red: 0.35, green: 0.78, blue: 0.72)
-    static let accentSecondary = Color(red: 0.95, green: 0.55, blue: 0.28)
-    static let danger = Color(red: 0.92, green: 0.32, blue: 0.36)
+    static let accent = Color.accentColor
+    static let accentSecondary = Color.accentColor
+    static let danger = Color(uiColor: .systemRed)
     static let panelStroke = Color.white.opacity(0.12)
     static let statusGood = Color(red: 0.30, green: 0.86, blue: 0.55)
     static let statusWarn = Color(red: 0.98, green: 0.78, blue: 0.28)

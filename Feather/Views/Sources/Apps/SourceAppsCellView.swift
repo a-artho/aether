@@ -18,22 +18,24 @@ struct SourceAppsCellView: View {
 	let sourceURL: URL?
 	let source: ASRepository
 	let app: ASRepository.App
+	var showSourceBadge: Bool = false
 	
 	var body: some View {
 		VStack {
-			HStack(spacing: 2) {
+			HStack(spacing: 12) {
 				FRIconCellView(
 					title: app.currentName,
-					subtitle: Self.appDescription(app: app),
 					iconUrl: app.iconURL
-				)
+				) {
+					_subtitleView()
+				}
 				.overlay(alignment: .bottomLeading) {
-					if let iconURL = source.currentIconURL {
+					if showSourceBadge, let iconURL = source.currentIconURL {
 						LazyImage(url: iconURL) { state in
 							if let image = state.image {
 								image
-									.appIconStyle(size: 20, isCircle: true, background: Color(uiColor: .secondarySystemBackground))
-									.offset(x: 41, y: 4)
+									.appIconStyle(size: 18, isCircle: true, background: Color(uiColor: .secondarySystemBackground))
+									.offset(x: 36, y: 4)
 							}
 						}
 					}
@@ -53,24 +55,48 @@ struct SourceAppsCellView: View {
 			}
 		}
 	}
-	
-	static func appDescription(app: ASRepository.App) -> String {
-		let optionalComponents: [String?] = [
-			app.currentVersion,
-			app.currentDescription ?? .localized("An awesome application")
-		]
-		
-		let components: [String] = optionalComponents.compactMap { value in
-			guard
-				let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-				!trimmed.isEmpty
-			else {
-				return nil
+
+	@ViewBuilder
+	private func _subtitleView() -> some View {
+		let hasVersion = app.currentVersion != nil && !(app.currentVersion?.isEmpty ?? true)
+
+		if _storeCellAppearance != 0 {
+			if let version = app.currentVersion, !version.isEmpty {
+				HStack(spacing: 3) {
+					Image(systemName: "tag")
+						.font(.caption2.weight(.medium))
+						.foregroundStyle(Color.blue)
+					Text(version)
+						.foregroundStyle(.secondary)
+				}
 			}
-			
-			return trimmed
+		} else {
+			HStack(spacing: 4) {
+				if let version = app.currentVersion, !version.isEmpty {
+					HStack(spacing: 3) {
+						Image(systemName: "tag")
+							.font(.caption2.weight(.medium))
+							.foregroundStyle(Color.blue)
+						Text(version)
+					}
+					.layoutPriority(1)
+				}
+
+				let rawSubtitle = app.currentDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
+				if let rawSubtitle, !rawSubtitle.isEmpty {
+					let cleanSubtitle = rawSubtitle.replacingOccurrences(of: "\n", with: " ")
+					if hasVersion {
+						Text("•")
+							.font(.caption2)
+							.foregroundStyle(Color.secondary.opacity(0.5))
+					}
+					Text(cleanSubtitle)
+						.foregroundStyle(.secondary)
+				} else if !hasVersion {
+					Text(.localized("An awesome application"))
+						.foregroundStyle(.secondary)
+				}
+			}
 		}
-		
-		return components.joined(separator: " • ")
 	}
 }

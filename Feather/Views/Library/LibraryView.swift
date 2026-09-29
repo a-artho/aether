@@ -17,8 +17,7 @@ struct LibraryView: View {
 	@State private var _selectedInfoAppPresenting: AnyApp?
 	@State private var _selectedSigningAppPresenting: AnyApp?
 	@State private var _isImportingPresenting = false
-	@State private var _isDownloadingPresenting = false
-	@State private var _alertDownloadString: String = "" // for _isDownloadingPresenting
+	@State private var _isDeleteAllAlertPresented = false
 
 	// MARK: Selection State
 	@State private var _selectedAppUUIDs: Set<String> = []
@@ -120,8 +119,8 @@ struct LibraryView: View {
 						description: .localized("Get started by importing your first IPA file."),
 						systemImage: "questionmark.app.fill"
 					) {
-						Menu {
-							_importActions()
+						Button {
+							_isImportingPresenting = true
 						} label: {
 							NBButton(.localized("Import"), style: .text)
 						}
@@ -181,7 +180,14 @@ struct LibraryView: View {
 						}
 						.frame(height: 36)
 						.frame(width: min(500, UIScreen.main.bounds.width - 74))
-						.background(Color(UIColor.secondarySystemFill), in: Capsule())
+						.background {
+							if #available(iOS 26.0, *) {
+								Color.clear
+									.glassEffect(.regular, in: .capsule)
+							} else {
+								Color(UIColor.secondarySystemFill)
+							}
+						}
 					}
 
 					ToolbarItem(placement: .topBarTrailing) {
@@ -209,12 +215,39 @@ struct LibraryView: View {
 					}
 
 					ToolbarItem(placement: .topBarTrailing) {
-						Menu {
-							_importActions()
+						Button {
+							_isImportingPresenting = true
 						} label: {
 							Image(systemName: "plus")
 						}
 						.accessibilityLabel(.localized("Add"))
+					}
+
+					ToolbarTitleMenu {
+						Button {
+							withAnimation {
+								_editMode = .active
+							}
+						} label: {
+							Label {
+								Text(.localized("Select"))
+							} icon: {
+								Image(systemName: "checkmark.circle")
+							}
+						}
+
+						Divider()
+
+						Button(role: .destructive) {
+							_isDeleteAllAlertPresented = true
+						} label: {
+							Label {
+								Text(.localized("Delete All"))
+							} icon: {
+								Image(systemName: "trash")
+							}
+						}
+						.disabled(_signedApps.isEmpty && _importedApps.isEmpty)
 					}
 				}
 			}
@@ -229,10 +262,7 @@ struct LibraryView: View {
 					.compatNavigationTransition(id: app.base.uuid ?? "", ns: _namespace)
 			}
 			.sheet(isPresented: $_isImportingPresenting) {
-				FileImporterRepresentableView(
-					allowedContentTypes:  [.ipa, .tipa],
-					allowsMultipleSelection: true,
-					initialDirectory: URL.downloadsDirectory,
+				LibraryImportPickerView(
 					onDocumentsPicked: { urls in
 						guard !urls.isEmpty else { return }
 
@@ -245,19 +275,13 @@ struct LibraryView: View {
 				)
 				.ignoresSafeArea()
 			}
-			.alert(.localized("Import from URL"), isPresented: $_isDownloadingPresenting) {
-				TextField(.localized("URL"), text: $_alertDownloadString)
-					.textInputAutocapitalization(.never)
-				Button(.localized("Cancel"), role: .cancel) {
-					_alertDownloadString = ""
+			.alert(.localized("Delete All Apps?"), isPresented: $_isDeleteAllAlertPresented) {
+				Button(.localized("Cancel"), role: .cancel) {}
+				Button(.localized("Delete All"), role: .destructive) {
+					_deleteAllApps()
 				}
-				Button(.localized("OK")) {
-					let trimmed = _alertDownloadString.trimmingCharacters(in: .whitespacesAndNewlines)
-					if let url = URL(string: trimmed) {
-						_ = downloadManager.startDownload(from: url, id: "FeatherManualDownload_\(UUID().uuidString)")
-					}
-					_alertDownloadString = ""
-				}
+			} message: {
+				Text(.localized("This permanently removes all signed and imported apps from your library."))
 			}
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openSearch"))) { _ in
 				withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
@@ -280,25 +304,6 @@ struct LibraryView: View {
 	}
 }
 
-// MARK: - Extension: View
-extension LibraryView {
-	@ViewBuilder
-	private func _importActions() -> some View {
-		Button(.localized("Import from Files"), systemImage: "folder") {
-			_isImportingPresenting = true
-		}
-		Button(.localized("Import from URL"), systemImage: "globe") {
-			_isDownloadingPresenting = true
-		}
-		Divider()
-		Button(.localized("Edit Library"), systemImage: "pencil") {
-			withAnimation {
-				_editMode = .active
-			}
-		}
-	}
-}
-
 // MARK: - Extension: Bulk Delete
 extension LibraryView {
 	private func _bulkDeleteSelectedApps() {
@@ -314,6 +319,18 @@ extension LibraryView {
 		_selectedAppUUIDs.removeAll()
 
 		// _editMode = .inactive
+	}
+
+	private func _deleteAllApps() {
+		var apps: [AppInfoPresentable] = Array(_signedApps)
+		apps.append(contentsOf: Array(_importedApps))
+
+		for app in apps {
+			Storage.shared.deleteApp(for: app)
+		}
+
+		_selectedAppUUIDs.removeAll()
+		_editMode = .inactive
 	}
 
 	private func _getAllApps() -> [AppInfoPresentable] {

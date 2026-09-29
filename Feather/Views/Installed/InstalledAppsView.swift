@@ -19,6 +19,7 @@ struct InstalledAppsView: View {
 	@ObservedObject private var tabManager = AppTabManager.shared
 	@State private var topCardMaxY: CGFloat = 160
 	@State private var modeSelectionFeedback = UISelectionFeedbackGenerator()
+	@State private var deviceControlFeedback = UIImpactFeedbackGenerator(style: .light)
 	@State private var isSpoofingPresented = false
 	@State private var isModeSwitchBlocked = false
 	private let loadsApps: Bool
@@ -214,7 +215,6 @@ struct InstalledAppsView: View {
 				systemImage: "network",
 				isActive: connection.isConnected,
 				activeColor: .green,
-				statusColor: _tunnelStatus.color,
 				action: {
 					if !connection.hasPairingFile {
 						tabManager.openSettings(page: .pairingFile)
@@ -233,8 +233,7 @@ struct InstalledAppsView: View {
 				subtitle: _spoofingStatus.text,
 				systemImage: "location.fill",
 				isActive: isSpoofingActive,
-				activeColor: Color(red: 0.35, green: 0.78, blue: 0.72),
-				statusColor: _spoofingStatus.color,
+				activeColor: .green,
 				isDisabled: !_canOpenSpoofing,
 				action: {
 					isSpoofingPresented = true
@@ -244,6 +243,9 @@ struct InstalledAppsView: View {
 			.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select iDevice mode and connect the tunnel to open spoofing controls.")
 		}
 		.opacity(installationMethod == 1 ? 1 : 0.45)
+		.onAppear {
+			deviceControlFeedback.prepare()
+		}
 	}
 
 	@ViewBuilder
@@ -253,7 +255,6 @@ struct InstalledAppsView: View {
 		systemImage: String,
 		isActive: Bool,
 		activeColor: Color,
-		statusColor: Color,
 		isDisabled: Bool = false,
 		action: @escaping () -> Void
 	) -> some View {
@@ -263,10 +264,6 @@ struct InstalledAppsView: View {
 					.font(.system(size: 17, weight: .semibold))
 					.foregroundStyle(isActive ? activeColor : Color.secondary.opacity(isDisabled ? 0.55 : 1))
 					.frame(width: 24, height: 24)
-
-				Circle()
-					.fill(statusColor)
-					.frame(width: 6, height: 6)
 
 				VStack(alignment: .leading, spacing: 2) {
 					Text(title)
@@ -291,7 +288,10 @@ struct InstalledAppsView: View {
 					.fill(Color(uiColor: .secondarySystemGroupedBackground))
 			}
 		}
-		.buttonStyle(_HomeCardButtonStyle())
+		.buttonStyle(_HomeCardButtonStyle {
+			deviceControlFeedback.impactOccurred()
+			deviceControlFeedback.prepare()
+		})
 		.disabled(isDisabled)
 		.opacity(isDisabled ? 0.6 : 1.0)
 	}
@@ -507,9 +507,9 @@ private struct InstalledAppIconView: View {
 	var body: some View {
 		Group {
 			if let image {
-				Image(uiImage: image).appIconStyle(size: 57)
+				Image(uiImage: image).appIconStyle(size: 50)
 			} else {
-				Image("App_Unknown").appIconStyle(size: 57)
+				Image("App_Unknown").appIconStyle(size: 50)
 			}
 		}
 		.animation(.easeIn(duration: 0.15), value: image != nil)
@@ -527,11 +527,49 @@ private struct InstalledAppIconView: View {
 }
 
 private struct _HomeCardButtonStyle: ButtonStyle {
+	let onPress: () -> Void
+
 	func makeBody(configuration: Configuration) -> some View {
+		_HomeCardButtonStyleBody(configuration: configuration, onPress: onPress)
+	}
+}
+
+private struct _HomeCardButtonStyleBody: View {
+	let configuration: _HomeCardButtonStyle.Configuration
+	let onPress: () -> Void
+	@State private var keepsPressedAppearance = false
+	@State private var releaseTask: Task<Void, Never>?
+
+	private var isPressed: Bool {
+		configuration.isPressed || keepsPressedAppearance
+	}
+
+	var body: some View {
 		configuration.label
-			.scaleEffect(configuration.isPressed ? 0.96 : 1.0)
-			.opacity(configuration.isPressed ? 0.85 : 1.0)
-			.animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+			.scaleEffect(isPressed ? 0.965 : 1.0)
+			.opacity(isPressed ? 0.84 : 1.0)
+			.overlay {
+				RoundedRectangle(cornerRadius: 15, style: .continuous)
+					.fill(.black.opacity(isPressed ? 0.08 : 0))
+			}
+			.animation(.spring(response: 0.2, dampingFraction: 0.82), value: isPressed)
+			.onChange(of: configuration.isPressed) { pressed in
+				if pressed {
+					releaseTask?.cancel()
+					keepsPressedAppearance = true
+					onPress()
+				} else {
+					releaseTask?.cancel()
+					releaseTask = Task { @MainActor in
+						try? await Task.sleep(for: .milliseconds(110))
+						guard !Task.isCancelled else { return }
+						keepsPressedAppearance = false
+					}
+				}
+			}
+			.onDisappear {
+				releaseTask?.cancel()
+			}
 	}
 }
 

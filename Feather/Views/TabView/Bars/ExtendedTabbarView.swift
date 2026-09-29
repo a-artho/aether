@@ -57,14 +57,14 @@ struct ExtendedTabbarView: View {
 			TabSection("Sources") {
 				Tab(.localized("All Repos"), systemImage: "globe.desk", value: "all_repositories") {
 					NavigationStack {
-						SourceAppsView(object: Array(_sources), viewModel: viewModel)
+						SourceAppsView(object: Array(_sources), viewModel: viewModel, isAllRepos: true)
 					}
 				}
 				
 				ForEach(_sources, id: \.identifier) { source in
 					Tab(value: "source.\(source.identifier ?? UUID().uuidString)") {
 						NavigationStack {
-							SourceAppsView(object: [source], viewModel: viewModel)
+							SourceAppsView(object: [source], viewModel: viewModel, isAllRepos: false)
 						}
 					} label: {
 						_icon(source.name ?? .localized("Unknown"), iconUrl: source.iconURL)
