@@ -172,6 +172,22 @@ struct FeatherApp: App {
 				AppTabManager.shared.switchTo(.installed)
 				return
 			}
+			if url.host == "open-app-detail" {
+				AppTabManager.shared.switchTo(.installed)
+				let bundleId = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+					NotificationCenter.default.post(name: Notification.Name("Feather.openAppDetail"), object: bundleId)
+				}
+				return
+			}
+			if url.host == "scroll-detail-bottom" {
+				NotificationCenter.default.post(name: Notification.Name("Feather.scrollDetailToBottom"), object: nil)
+				return
+			}
+			if url.host == "open-app-sandbox" {
+				NotificationCenter.default.post(name: Notification.Name("Feather.openAppSandbox"), object: nil)
+				return
+			}
 			if url.host == "mock-install" {
 				AppInstallationManager.shared.startMockInstall(progress: 0.62, status: .installing)
 				AppTabManager.shared.switchTo(.installed)

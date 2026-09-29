@@ -50,6 +50,8 @@ enum IDeviceConnectionError: LocalizedError {
 	case installationProxyConnectionFailed(String)
 	case springboardServicesConnectionFailed(String)
 	case misagentConnectionFailed(String)
+	case houseArrestConnectionFailed(String)
+	case appServiceConnectionFailed(String)
 
 	var errorDescription: String? {
 		switch self {
@@ -75,6 +77,10 @@ enum IDeviceConnectionError: LocalizedError {
 			return "Could not connect to SpringBoard Services: \(reason)"
 		case .misagentConnectionFailed(let reason):
 			return "Could not connect to the provisioning-profile service: \(reason)"
+		case .houseArrestConnectionFailed(let reason):
+			return "Could not connect to House Arrest: \(reason)"
+		case .appServiceConnectionFailed(let reason):
+			return "Could not connect to App Service: \(reason)"
 		}
 	}
 }

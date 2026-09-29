@@ -22,6 +22,7 @@ struct InstalledAppsView: View {
 	@State private var deviceControlFeedback = UIImpactFeedbackGenerator(style: .light)
 	@State private var isSpoofingPresented = false
 	@State private var isModeSwitchBlocked = false
+	@State private var selectedAppBundleId: String?
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
 
@@ -88,8 +89,21 @@ struct InstalledAppsView: View {
 								secondary: store.apps.count.description
 							) {
 								ForEach(store.apps) { app in
-									InstalledAppCellView(app: app, loadsIcon: loadsIcons)
-										.id(app.id)
+									NavigationLink(
+										destination: InstalledAppDetailView(app: app, store: store),
+										isActive: Binding(
+											get: { selectedAppBundleId == app.bundleIdentifier },
+											set: { isActive in
+												if !isActive && selectedAppBundleId == app.bundleIdentifier {
+													selectedAppBundleId = nil
+												}
+											}
+										)
+									) {
+										InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+									}
+									.buttonStyle(.plain)
+									.id(app.id)
 								}
 							}
 						}
@@ -100,6 +114,13 @@ struct InstalledAppsView: View {
 						await store.refresh()
 					}
 					#if DEBUG
+					.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openAppDetail"))) { notif in
+						if let id = notif.object as? String {
+							selectedAppBundleId = id
+						} else {
+							selectedAppBundleId = store.apps.first?.bundleIdentifier
+						}
+					}
 					.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.testScrollDevice"))) { _ in
 						withAnimation {
 							scrollProxy.scrollTo("com.example.app15", anchor: .top)
@@ -465,7 +486,7 @@ private struct InstalledAppCellView: View {
 	let loadsIcon: Bool
 
 	var body: some View {
-		HStack(spacing: 18) {
+		HStack(spacing: 14) {
 			InstalledAppIconView(
 				bundleIdentifier: app.bundleIdentifier,
 				cacheVersion: app.iconCacheVersion,
@@ -487,6 +508,21 @@ private struct InstalledAppCellView: View {
 					.lineLimit(1)
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
+
+			HStack(spacing: 8) {
+				if let profile = app.profileInfo {
+					Text(profile.timeRemainingFormatted)
+						.font(.caption2.weight(.semibold))
+						.foregroundStyle(_expirationColor(for: profile))
+						.padding(.horizontal, 7)
+						.padding(.vertical, 3)
+						.background(_expirationColor(for: profile).opacity(0.12), in: Capsule())
+				}
+
+				Image(systemName: "chevron.right")
+					.font(.system(size: 13, weight: .semibold))
+					.foregroundStyle(Color(uiColor: .tertiaryLabel))
+			}
 		}
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
@@ -495,21 +531,33 @@ private struct InstalledAppCellView: View {
 					.fill(Color(.quaternarySystemFill))
 			}
 		}
+		.contentShape(Rectangle())
+	}
+
+	private func _expirationColor(for profile: ProvisioningProfileInfo) -> Color {
+		if profile.isExpired {
+			return .red
+		} else if profile.daysRemaining <= 2 {
+			return .orange
+		} else {
+			return .green
+		}
 	}
 }
 
-private struct InstalledAppIconView: View {
+struct InstalledAppIconView: View {
 	let bundleIdentifier: String
 	let cacheVersion: String
 	let loadsIcon: Bool
+	var size: CGFloat = 50
 	@State private var image: UIImage?
 
 	var body: some View {
 		Group {
 			if let image {
-				Image(uiImage: image).appIconStyle(size: 50)
+				Image(uiImage: image).appIconStyle(size: size)
 			} else {
-				Image("App_Unknown").appIconStyle(size: 50)
+				Image("App_Unknown").appIconStyle(size: size)
 			}
 		}
 		.animation(.easeIn(duration: 0.15), value: image != nil)
