@@ -164,12 +164,35 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 						creationDate: expDate.addingTimeInterval(-86400 * 7),
 						uuid: UUID().uuidString
 					)
+					let mockAppInfo = AppInfo(
+						CFBundleName: item.name,
+						DTXcodeBuild: "15C500b",
+						Entitlements: [
+							"application-identifier": IDeviceSwift.AnyCodable("TEAMID.\(item.id)"),
+							"com.apple.developer.team-identifier": IDeviceSwift.AnyCodable("TEAMID"),
+							"get-task-allow": IDeviceSwift.AnyCodable(false),
+							"keychain-access-groups": IDeviceSwift.AnyCodable(["TEAMID.\(item.id)"])
+						],
+						CFBundleURLTypes: [
+							["CFBundleURLSchemes": IDeviceSwift.AnyCodable([item.name.lowercased()])]
+						],
+						CFBundleDisplayName: item.name,
+						CFBundleExecutable: item.name,
+						DTSDKName: "iphoneos17.2",
+						Container: "/private/var/mobile/Containers/Data/Application/\(UUID().uuidString)",
+						MinimumOSVersion: "15.0",
+						CFBundleIdentifier: item.id,
+						Path: "/private/var/containers/Bundle/Application/\(UUID().uuidString)/\(item.name).app",
+						CFBundleVersion: item.build,
+						CFBundleShortVersionString: item.ver,
+						UIDeviceFamily: [1, 2]
+					)
 					return InstalledApp(
 						bundleIdentifier: item.id,
 						name: item.name,
 						version: item.ver,
 						build: item.build,
-						appInfo: nil,
+						appInfo: mockAppInfo,
 						profileInfo: profile
 					)
 				}

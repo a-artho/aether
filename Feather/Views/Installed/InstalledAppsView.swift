@@ -509,19 +509,13 @@ private struct InstalledAppCellView: View {
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 
-			HStack(spacing: 8) {
-				if let profile = app.profileInfo {
-					Text(profile.timeRemainingFormatted)
-						.font(.caption2.weight(.semibold))
-						.foregroundStyle(_expirationColor(for: profile))
-						.padding(.horizontal, 7)
-						.padding(.vertical, 3)
-						.background(_expirationColor(for: profile).opacity(0.12), in: Capsule())
-				}
-
-				Image(systemName: "chevron.right")
-					.font(.system(size: 13, weight: .semibold))
-					.foregroundStyle(Color(uiColor: .tertiaryLabel))
+			if let profile = app.profileInfo {
+				Text(profile.timeRemainingFormatted)
+					.font(.caption2.weight(.semibold))
+					.foregroundStyle(_expirationColor(for: profile))
+					.padding(.horizontal, 7)
+					.padding(.vertical, 3)
+					.background(_expirationColor(for: profile).opacity(0.12), in: Capsule())
 			}
 		}
 		.padding(horizontalSizeClass == .compact ? 0 : 12)

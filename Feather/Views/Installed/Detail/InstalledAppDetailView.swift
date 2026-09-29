@@ -63,20 +63,6 @@ struct InstalledAppDetailView: View {
 				Label(.localized("Certificate & Signing"), systemImage: "signature")
 			}
 
-			// Invisible navigation trigger for Files widget
-			ZStack {
-				NavigationLink(
-					destination: SandboxBrowserView(app: app),
-					isActive: $isFilesPresented
-				) {
-					EmptyView()
-				}
-				.hidden()
-			}
-			.listRowInsets(EdgeInsets())
-			.listRowBackground(Color.clear)
-			.listRowSeparator(.hidden)
-
 			// MARK: - Feature 5: App Specifications
 			Section {
 				_detailRow(label: .localized("Bundle Identifier"), value: app.bundleIdentifier, isCopyable: true)
@@ -141,6 +127,7 @@ struct InstalledAppDetailView: View {
 			} header: {
 				Label(.localized("Specifications"), systemImage: "info.circle")
 			}
+			.id("specificationsSection")
 
 			// MARK: - Feature 5: Entitlements Inspector
 			if !app.entitlementsList.isEmpty {
@@ -180,16 +167,17 @@ struct InstalledAppDetailView: View {
 					}
 				}
 			}
-
-			Section {
-				Color.clear
-					.frame(height: 70)
-					.listRowBackground(Color.clear)
-					.listRowSeparator(.hidden)
-			}
-			.id("bottomSpacer")
 		}
 		.listStyle(.insetGrouped)
+		.background(
+			NavigationLink(
+				destination: SandboxBrowserView(app: app),
+				isActive: $isFilesPresented
+			) {
+				EmptyView()
+			}
+			.hidden()
+		)
 		.navigationTitle(app.displayName)
 		.navigationBarTitleDisplayMode(.inline)
 		.toolbar {
@@ -253,7 +241,7 @@ struct InstalledAppDetailView: View {
 		#if DEBUG
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.scrollDetailToBottom"))) { _ in
 			withAnimation {
-				scrollProxy.scrollTo("bottomSpacer", anchor: .bottom)
+				scrollProxy.scrollTo("specificationsSection", anchor: .top)
 			}
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openAppSandbox"))) { _ in
