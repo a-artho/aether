@@ -370,45 +370,26 @@ struct InstalledAppDetailView: View {
 	}
 
 	private var _signingStatusCard: some View {
-		VStack(alignment: .leading, spacing: 10) {
-			HStack(alignment: .center) {
-				VStack(alignment: .leading, spacing: 2) {
-					Text(app.profileInfo?.profileType ?? .localized("Sideloaded Certificate"))
-						.font(.subheadline.weight(.semibold))
-						.foregroundStyle(.primary)
+		HStack(alignment: .center) {
+			VStack(alignment: .leading, spacing: 2) {
+				Text(app.profileInfo?.profileType ?? .localized("Sideloaded Certificate"))
+					.font(.subheadline.weight(.semibold))
+					.foregroundStyle(.primary)
 
-					Text(app.profileInfo?.timeRemainingFormatted ?? .localized("Expiration tracked via pairing"))
-						.font(.caption)
-						.foregroundStyle(app.profileInfo.map { _expirationColor(for: $0) } ?? .secondary)
-				}
-
-				Spacer(minLength: 8)
-
-				Button {
-					_triggerResign()
-				} label: {
-					HStack(spacing: 5) {
-						Image(systemName: "signature")
-							.font(.system(size: 13, weight: .semibold))
-						Text(.localized("Resign"))
-							.font(.subheadline.weight(.semibold))
-					}
-					.foregroundStyle(.white)
-					.padding(.horizontal, 14)
-					.padding(.vertical, 7)
-					.background(Color.accentColor, in: Capsule())
-				}
-				.buttonStyle(.plain)
+				Text(app.profileInfo?.timeRemainingFormatted ?? .localized("Expiration tracked via pairing"))
+					.font(.caption)
+					.foregroundStyle(app.profileInfo.map { _expirationColor(for: $0) } ?? .secondary)
 			}
 
-			if let profile = app.profileInfo {
-				let totalDays: Double = profile.profileType.contains("7 Days") ? 7.0 : 365.0
-				let progress = min(1.0, max(0.0, Double(profile.daysRemaining) / totalDays))
-				ProgressView(value: progress)
-					.tint(_expirationColor(for: profile))
+			Spacer(minLength: 8)
+
+			Button {
+				_triggerResign()
+			} label: {
+				NBButton(.localized("Resign"), style: .text)
 			}
+			.buttonStyle(.borderless)
 		}
-		.padding(.vertical, 4)
 	}
 
 	@ViewBuilder
