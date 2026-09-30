@@ -1,6 +1,6 @@
 //
 //  ConduitInstaller.swift
-//  Feather
+//  Aether
 //
 //  Created by samara on 23.04.2025.
 //

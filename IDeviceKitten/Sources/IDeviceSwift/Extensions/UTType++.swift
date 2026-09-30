@@ -1,6 +1,6 @@
 //
 //  UTType+plist.swift
-//  Feather
+//  Aether
 //
 //  Created by samara on 20.04.2025.
 //

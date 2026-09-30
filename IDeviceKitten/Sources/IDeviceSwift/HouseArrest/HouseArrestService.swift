@@ -132,80 +132,19 @@ public enum HouseArrestService {
 		path: String
 	) async throws -> [SandboxItem] {
 		try await _withSession(bundleIdentifier: bundleIdentifier) { afc in
-			let normalizedPath = path.isEmpty || !path.hasPrefix("/") ? "/" + path : path
-			var entriesPtr: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
-			var count: Int = 0
+			try _contentsOfDirectory(afc, path: path)
+		}
+	}
 
-			let listErr = normalizedPath.withCString { cPath in
-				afc_list_directory(afc, cPath, &entriesPtr, &count)
-			}
-			if let listErr {
-				throw IDeviceSwiftError(listErr)
-			}
-
-			guard let entriesPtr, count > 0 else { return [] }
-			defer {
-				for i in 0..<count {
-					if let entry = entriesPtr[i] {
-						idevice_string_free(entry)
-					}
-				}
-				free(entriesPtr)
-			}
-
-			var items: [SandboxItem] = []
-			for i in 0..<count {
-				guard let cName = entriesPtr[i] else { continue }
-				let name = String(cString: cName)
-				if name == "." || name == ".." { continue }
-
-				let itemPath = normalizedPath.hasSuffix("/")
-					? normalizedPath + name
-					: normalizedPath + "/" + name
-
-				var isDir = false
-				var size: Int64 = 0
-				var modDate: Date?
-
-				var info = AfcFileInfo()
-				let infoErr = itemPath.withCString { cItemPath in
-					afc_get_file_info(afc, cItemPath, &info)
-				}
-				if infoErr == nil {
-					if let st_ifmt = info.st_ifmt {
-						isDir = String(cString: st_ifmt) == "S_IFDIR"
-					}
-					size = Int64(info.size)
-					if info.modified > 0 {
-						let ts = Double(info.modified)
-						if ts > 1_000_000_000_000_000 {
-							modDate = Date(timeIntervalSince1970: ts / 1_000_000_000)
-						} else if ts > 1_000_000_000 {
-							modDate = Date(timeIntervalSince1970: ts)
-						}
-					}
-					afc_file_info_free(&info)
-				} else {
-					idevice_error_free(infoErr)
-				}
-
-				items.append(
-					SandboxItem(
-						name: name,
-						path: itemPath,
-						isDirectory: isDir,
-						size: size,
-						modifiedDate: modDate
-					)
-				)
-			}
-
-			return items.sorted { lhs, rhs in
-				if lhs.isDirectory != rhs.isDirectory {
-					return lhs.isDirectory && !rhs.isDirectory
-				}
-				return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
-			}
+	/// Streams an app-container directory to disk. The result keeps the directory
+	/// structure intact and never holds file contents in memory.
+	public static func copyDirectoryFromDevice(
+		bundleIdentifier: String,
+		path remotePath: String,
+		to localURL: URL
+	) async throws {
+		try await _withSession(bundleIdentifier: bundleIdentifier) { afc in
+			try _copyDirectory(afc, remotePath: remotePath, localURL: localURL)
 		}
 	}
 
@@ -332,49 +271,156 @@ public enum HouseArrestService {
 		to localURL: URL
 	) async throws {
 		try await _withSession(bundleIdentifier: bundleIdentifier) { afc in
-			var fileHandle: OpaquePointer?
-			let openErr = remotePath.withCString { cPath in
-				afc_file_open(afc, cPath, AfcRdOnly, &fileHandle)
-			}
-			if let openErr {
-				throw IDeviceSwiftError(openErr)
-			}
-			guard let fileHandle else {
-				throw IDeviceSwiftError(message: "Failed to open file at \(remotePath)")
-			}
-			defer { _ = afc_file_close(fileHandle) }
+			try _copyFile(afc, remotePath: remotePath, localURL: localURL)
+		}
+	}
 
-			let fileManager = FileManager.default
-			try fileManager.createDirectory(
-				at: localURL.deletingLastPathComponent(),
-				withIntermediateDirectories: true
+	private static func _contentsOfDirectory(
+		_ afc: AfcHandle,
+		path: String
+	) throws -> [SandboxItem] {
+		let normalizedPath = path.isEmpty || !path.hasPrefix("/") ? "/" + path : path
+		var entriesPtr: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+		var count: Int = 0
+
+		let listErr = normalizedPath.withCString { cPath in
+			afc_list_directory(afc, cPath, &entriesPtr, &count)
+		}
+		if let listErr {
+			throw IDeviceSwiftError(listErr)
+		}
+
+		guard let entriesPtr, count > 0 else { return [] }
+		defer {
+			for i in 0..<count {
+				if let entry = entriesPtr[i] {
+					idevice_string_free(entry)
+				}
+			}
+			free(entriesPtr)
+		}
+
+		var items: [SandboxItem] = []
+		for i in 0..<count {
+			guard let cName = entriesPtr[i] else { continue }
+			let name = String(cString: cName)
+			if name == "." || name == ".." { continue }
+
+			let itemPath = normalizedPath.hasSuffix("/")
+				? normalizedPath + name
+				: normalizedPath + "/" + name
+
+			var isDir = false
+			var size: Int64 = 0
+			var modDate: Date?
+
+			var info = AfcFileInfo()
+			let infoErr = itemPath.withCString { cItemPath in
+				afc_get_file_info(afc, cItemPath, &info)
+			}
+			if infoErr == nil {
+				if let st_ifmt = info.st_ifmt {
+					isDir = String(cString: st_ifmt) == "S_IFDIR"
+				}
+				size = Int64(info.size)
+				if info.modified > 0 {
+					let ts = Double(info.modified)
+					if ts > 1_000_000_000_000_000 {
+						modDate = Date(timeIntervalSince1970: ts / 1_000_000_000)
+					} else if ts > 1_000_000_000 {
+						modDate = Date(timeIntervalSince1970: ts)
+					}
+				}
+				afc_file_info_free(&info)
+			} else {
+				idevice_error_free(infoErr)
+			}
+
+			items.append(
+				SandboxItem(
+					name: name,
+					path: itemPath,
+					isDirectory: isDir,
+					size: size,
+					modifiedDate: modDate
+				)
 			)
-			if fileManager.fileExists(atPath: localURL.path) {
-				try fileManager.removeItem(at: localURL)
-			}
-			guard fileManager.createFile(atPath: localURL.path, contents: nil) else {
-				throw IDeviceSwiftError(message: "Failed to create local file at \(localURL.path)")
-			}
-			let localFile = try FileHandle(forWritingTo: localURL)
-			defer { try? localFile.close() }
+		}
 
-			while true {
-				try Task.checkCancellation()
-
-				var dataPtr: UnsafeMutablePointer<UInt8>?
-				var bytesRead = 0
-				let readErr = afc_file_read(fileHandle, &dataPtr, UInt(_transferChunkSize), &bytesRead)
-				if let readErr {
-					throw IDeviceSwiftError(readErr)
-				}
-				guard bytesRead > 0 else { break }
-				guard let dataPtr else {
-					throw IDeviceSwiftError(message: "AFC returned an empty buffer while reading \(remotePath)")
-				}
-				defer { afc_file_read_data_free(dataPtr, bytesRead) }
-
-				try localFile.write(contentsOf: Data(bytes: dataPtr, count: bytesRead))
+		return items.sorted { lhs, rhs in
+			if lhs.isDirectory != rhs.isDirectory {
+				return lhs.isDirectory && !rhs.isDirectory
 			}
+			return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+		}
+	}
+
+	private static func _copyDirectory(
+		_ afc: AfcHandle,
+		remotePath: String,
+		localURL: URL
+	) throws {
+		try Task.checkCancellation()
+		let fileManager = FileManager.default
+		try fileManager.createDirectory(at: localURL, withIntermediateDirectories: true)
+
+		for item in try _contentsOfDirectory(afc, path: remotePath) {
+			let destination = localURL.appendingPathComponent(item.name, isDirectory: item.isDirectory)
+			if item.isDirectory {
+				try _copyDirectory(afc, remotePath: item.path, localURL: destination)
+			} else {
+				try _copyFile(afc, remotePath: item.path, localURL: destination)
+			}
+		}
+	}
+
+	private static func _copyFile(
+		_ afc: AfcHandle,
+		remotePath: String,
+		localURL: URL
+	) throws {
+		var fileHandle: OpaquePointer?
+		let openErr = remotePath.withCString { cPath in
+			afc_file_open(afc, cPath, AfcRdOnly, &fileHandle)
+		}
+		if let openErr {
+			throw IDeviceSwiftError(openErr)
+		}
+		guard let fileHandle else {
+			throw IDeviceSwiftError(message: "Failed to open file at \(remotePath)")
+		}
+		defer { _ = afc_file_close(fileHandle) }
+
+		let fileManager = FileManager.default
+		try fileManager.createDirectory(
+			at: localURL.deletingLastPathComponent(),
+			withIntermediateDirectories: true
+		)
+		if fileManager.fileExists(atPath: localURL.path) {
+			try fileManager.removeItem(at: localURL)
+		}
+		guard fileManager.createFile(atPath: localURL.path, contents: nil) else {
+			throw IDeviceSwiftError(message: "Failed to create local file at \(localURL.path)")
+		}
+		let localFile = try FileHandle(forWritingTo: localURL)
+		defer { try? localFile.close() }
+
+		while true {
+			try Task.checkCancellation()
+
+			var dataPtr: UnsafeMutablePointer<UInt8>?
+			var bytesRead = 0
+			let readErr = afc_file_read(fileHandle, &dataPtr, UInt(_transferChunkSize), &bytesRead)
+			if let readErr {
+				throw IDeviceSwiftError(readErr)
+			}
+			guard bytesRead > 0 else { break }
+			guard let dataPtr else {
+				throw IDeviceSwiftError(message: "AFC returned an empty buffer while reading \(remotePath)")
+			}
+			defer { afc_file_read_data_free(dataPtr, bytesRead) }
+
+			try localFile.write(contentsOf: Data(bytes: dataPtr, count: bytesRead))
 		}
 	}
 

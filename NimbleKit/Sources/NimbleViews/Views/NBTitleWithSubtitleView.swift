@@ -1,6 +1,6 @@
 //
 //  FRTitleWithSubtitleView.swift
-//  Feather
+//  Aether
 //
 //  Created by samara on 3.05.2025.
 //

@@ -1,6 +1,6 @@
 //
 //  Repository.swift
-//  Feather
+//  Aether
 //
 //  Created by Lakhan Lothiyi on 19/04/2025.
 //
@@ -85,7 +85,7 @@ public struct ASRepository: Sendable, Decodable, Hashable, Identifiable {
 			!apps.isEmpty
 		else {
 			throw NSError(
-				domain: "FeatherSources",
+				domain: "AetherSources",
 				code: 44521,
 				userInfo: [
 					NSLocalizedDescriptionKey: "This source does not contain any apps."
@@ -298,7 +298,7 @@ extension ASRepository {
 				!marketplaceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 			{
 				throw NSError(
-					domain: "FeatherSources",
+					domain: "AetherSources",
 					code: 112789, userInfo: [NSLocalizedDescriptionKey: "AltStore PAL repositories aren't supported: \(id ?? "")"]
 				)
 			}

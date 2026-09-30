@@ -1,6 +1,6 @@
 //
 //  URL+scheme.swift
-//  Feather
+//  Aether
 //
 //  Created by samara on 8.05.2025.
 //

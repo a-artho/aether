@@ -1,0 +1,440 @@
+//
+//  AetherApp.swift
+//  Aether
+//
+//  Created by samara on 10.04.2025.
+//
+
+import SwiftUI
+import Nuke
+import IDeviceSwift
+import NimbleExtensions
+import OSLog
+
+@main
+struct AetherApp: App {
+	@UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
+	let heartbeat = HeartbeatManager.shared
+
+	let storage = Storage.shared
+
+	var body: some Scene {
+		WindowGroup {
+			VariedTabbarView()
+				.environment(\.managedObjectContext, storage.context)
+				.onOpenURL(perform: _handleURL)
+			.onReceive(NotificationCenter.default.publisher(for: .heartbeatInvalidHost)) { _ in
+				DispatchQueue.main.async {
+					UIAlertController.showAlertWithOk(
+						title: "InvalidHostID",
+						message: .localized("Your pairing file is invalid and is incompatible with your device, please import a valid pairing file.")
+					)
+				}
+			}
+			// dear god help me
+			.onAppear {
+				if let style = UIUserInterfaceStyle(rawValue: UserDefaults.standard.integer(forKey: "Aether.userInterfaceStyle")) {
+					UIApplication.topViewController()?.view.window?.overrideUserInterfaceStyle = style
+				}
+
+				UIApplication.topViewController()?.view.window?.tintColor = UIColor(Color(hex: UserDefaults.standard.string(forKey: "Aether.userTintColor") ?? "#848ef9"))
+			}
+		}
+	}
+
+	private func _handleURL(_ url: URL) {
+		if url.scheme == "aether" {
+			if url.host == "tab" {
+				guard
+					let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+					let queryItems = components.queryItems,
+					let tabName = queryItems.first(where: { $0.name == "name" })?.value,
+					let tab = TabEnum(rawValue: tabName)
+				else {
+					return
+				}
+				AppTabManager.shared.switchTo(tab)
+				return
+			}
+			if url.host == "open-settings" {
+				var requestedPage: AppTabManager.SettingsPage? = nil
+				if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+				   let pageParam = components.queryItems?.first(where: { $0.name == "page" })?.value {
+					requestedPage = AppTabManager.SettingsPage(rawValue: pageParam)
+				}
+				AppTabManager.shared.openSettings(page: requestedPage)
+				return
+			}
+			if url.host == "open-installation-settings" {
+				AppTabManager.shared.openInstallationSettings()
+				return
+			}
+			if url.host == "open-on-device-pairing" {
+				if OnDevicePairingManager.isSupported {
+					OnDevicePairingManager.shared.begin()
+				}
+				AppTabManager.shared.openSettings(page: .pairingFile)
+				return
+			}
+			if url.host == "open-search" {
+				NotificationCenter.default.post(name: Notification.Name("Aether.openSearch"), object: nil)
+				return
+			}
+			if url.host == "close-search" {
+				NotificationCenter.default.post(name: Notification.Name("Aether.closeSearch"), object: nil)
+				return
+			}
+			if url.host == "open-all-repos" {
+				AppTabManager.shared.switchTo(.sources)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					NotificationCenter.default.post(name: Notification.Name("Aether.openAllRepos"), object: nil)
+				}
+				return
+			}
+			if url.host == "open-first-source" {
+				AppTabManager.shared.switchTo(.sources)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					NotificationCenter.default.post(name: Notification.Name("Aether.openFirstSource"), object: nil)
+				}
+				return
+			}
+			if url.host == "open-source" {
+				AppTabManager.shared.switchTo(.sources)
+				let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+				let name = components?.queryItems?.first(where: { $0.name == "name" })?.value
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					var userInfo: [String: Any]? = nil
+					if let name {
+						userInfo = ["name": name]
+					}
+					NotificationCenter.default.post(
+						name: Notification.Name("Aether.openSource"),
+						object: nil,
+						userInfo: userInfo
+					)
+				}
+				return
+			}
+			if url.host == "open-app" {
+				AppTabManager.shared.switchTo(.sources)
+				let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+				let appName = components?.queryItems?.first(where: { $0.name == "name" })?.value
+				let sourceName = components?.queryItems?.first(where: { $0.name == "source" })?.value
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					if let sourceName {
+						NotificationCenter.default.post(name: Notification.Name("Aether.openSource"), object: nil, userInfo: ["name": sourceName])
+					} else {
+						NotificationCenter.default.post(name: Notification.Name("Aether.openFirstSource"), object: nil)
+					}
+					DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+						var userInfo: [String: Any]? = nil
+						if let appName {
+							userInfo = ["name": appName]
+						}
+						NotificationCenter.default.post(name: Notification.Name("Aether.openApp"), object: nil, userInfo: userInfo)
+					}
+				}
+				return
+			}
+			if url.host == "open-add-source" {
+				AppTabManager.shared.switchTo(.sources)
+				let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+				let prepopulateURL = components?.queryItems?.first(where: { $0.name == "url" })?.value ?? ""
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					NotificationCenter.default.post(
+						name: Notification.Name("Aether.openAddSource"),
+						object: nil,
+						userInfo: prepopulateURL.isEmpty ? nil : ["url": prepopulateURL]
+					)
+				}
+				return
+			}
+			if url.host == "trigger-save-source" {
+				NotificationCenter.default.post(name: Notification.Name("Aether.triggerSaveSource"), object: nil)
+				return
+			}
+			if url.host == "test-scroll" {
+				AppTabManager.shared.switchTo(.installed)
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+					NotificationCenter.default.post(name: Notification.Name("Aether.testScrollDevice"), object: nil)
+				}
+				return
+			}
+			#if DEBUG
+			if url.host == "mock-apps" {
+				NotificationCenter.default.post(name: Notification.Name("Aether.mockApps"), object: nil)
+				AppTabManager.shared.switchTo(.installed)
+				return
+			}
+			if url.host == "clear-apps" {
+				NotificationCenter.default.post(name: Notification.Name("Aether.clearApps"), object: nil)
+				AppTabManager.shared.switchTo(.installed)
+				return
+			}
+			if url.host == "open-app-detail" {
+				AppTabManager.shared.switchTo(.installed)
+				let bundleId = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value
+				DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+					NotificationCenter.default.post(name: Notification.Name("Aether.openAppDetail"), object: bundleId)
+				}
+				return
+			}
+			if url.host == "scroll-detail-bottom" {
+				NotificationCenter.default.post(name: Notification.Name("Aether.scrollDetailToBottom"), object: nil)
+				return
+			}
+			if url.host == "open-app-sandbox" {
+				NotificationCenter.default.post(name: Notification.Name("Aether.openAppSandbox"), object: nil)
+				return
+			}
+			if url.host == "mock-install" {
+				AppInstallationManager.shared.startMockInstall(progress: 0.62, status: .installing)
+				AppTabManager.shared.switchTo(.installed)
+				return
+			}
+			if url.host == "mock-install-done" {
+				AppInstallationManager.shared.startMockInstall(progress: 1.0, status: .completed(.success(())))
+				AppTabManager.shared.switchTo(.installed)
+				return
+			}
+			#endif
+			/// aether://import-certificate?p12=<base64>&mobileprovision=<base64>&password=<base64>
+			if url.host == "import-certificate" {
+				guard
+					let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+					let queryItems = components.queryItems
+				else {
+					return
+				}
+
+				func queryValue(_ name: String) -> String? {
+					queryItems.first(where: { $0.name == name })?.value?.removingPercentEncoding
+				}
+
+				guard
+					let p12Base64 = queryValue("p12"),
+					let provisionBase64 = queryValue("mobileprovision"),
+					let passwordBase64 = queryValue("password"),
+					let passwordData = Data(base64Encoded: passwordBase64),
+					let password = String(data: passwordData, encoding: .utf8)
+				else {
+					return
+				}
+
+				let generator = UINotificationFeedbackGenerator()
+				generator.prepare()
+
+				guard
+					let p12URL = FileManager.default.decodeAndWrite(base64: p12Base64, pathComponent: ".p12"),
+					let provisionURL = FileManager.default.decodeAndWrite(base64: provisionBase64, pathComponent: ".mobileprovision"),
+					FR.checkPasswordForCertificate(for: p12URL, with: password, using: provisionURL)
+				else {
+					generator.notificationOccurred(.error)
+					return
+				}
+
+				FR.handleCertificateFiles(
+					p12URL: p12URL,
+					provisionURL: provisionURL,
+					p12Password: password
+				) { error in
+					if let error = error {
+						UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
+					} else {
+						generator.notificationOccurred(.success)
+					}
+				}
+
+				return
+			}
+			/// aether://export-certificate?callback_template=<template>
+			/// ?callback_template=: This is how we callback to the application requesting the certificate, this will be a url scheme
+			/// 	example: livecontainer%3A%2F%2Fcertificate%3Fcert%3D%24%28BASE64_CERT%29%26password%3D%24%28PASSWORD%29
+			/// 	decoded: livecontainer://certificate?cert=$(BASE64_CERT)&password=$(PASSWORD)
+			/// $(BASE64_CERT) and $(PASSWORD) must be presenting in the callback template so we can replace them with the proper content
+			if url.host == "export-certificate" {
+				guard
+					let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+				else {
+					return
+				}
+
+				let queryItems = components.queryItems?.reduce(into: [String: String]()) { $0[$1.name.lowercased()] = $1.value } ?? [:]
+				guard let callbackTemplate = queryItems["callback_template"]?.removingPercentEncoding else { return }
+
+				FR.exportCertificateAndOpenUrl(using: callbackTemplate)
+			}
+			/// aether://source/<url>
+			if let fullPath = url.validatedScheme(after: "/source/") {
+				FR.handleSource(fullPath)
+			}
+			/// aether://install/<url.ipa>
+			if
+				let fullPath = url.validatedScheme(after: "/install/"),
+				let downloadURL = URL(string: fullPath)
+			{
+				UIAlertController.showAlertWithCancel(
+					title: .localized("Install"),
+					message: .localized("Do you want to download and install this file?") + "\n\n\(downloadURL)",
+					actions: [
+						UIAlertAction(title: .localized("Install"), style: .default) { _ in
+							_ = DownloadManager.shared.startDownload(from: downloadURL)
+						}
+					]
+				)
+			}
+		} else {
+			let pathExtension = url.pathExtension.lowercased()
+			if pathExtension == "ipa" || pathExtension == "tipa" {
+				_importExternalPackage(from: url)
+				return
+			}
+		}
+	}
+
+	private func _importExternalPackage(from externalURL: URL) {
+		Task.detached(priority: .utility) {
+			do {
+				let materializedFile = try FileManager.default.materializePackageForImport(
+					at: externalURL
+				)
+				await MainActor.run {
+					_ = FR.handlePackageFile(materializedFile.fileURL, copySource: false) { error in
+						materializedFile.cleanup()
+						if let error {
+							UIAlertController.showAlertWithOk(
+								title: .localized("Import Failed"),
+								message: error.localizedDescription
+							)
+						}
+					}
+				}
+			} catch {
+				await MainActor.run {
+					UIAlertController.showAlertWithOk(
+						title: .localized("Import Failed"),
+						message: error.localizedDescription
+					)
+				}
+			}
+		}
+	}
+}
+
+class AppDelegate: NSObject, UIApplicationDelegate {
+	func application(
+		_ application: UIApplication,
+		didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+	) -> Bool {
+		_createPipeline()
+		_createDocumentsDirectories()
+		ResetView.clearWorkCache()
+		DownloadManager.shared.prepareForBackgroundEvents()
+		_addDefaultCertificates()
+		return true
+	}
+
+	func application(
+		_ application: UIApplication,
+		handleEventsForBackgroundURLSession identifier: String,
+		completionHandler: @escaping () -> Void
+	) {
+		guard identifier == DownloadManager.backgroundSessionIdentifier else {
+			completionHandler()
+			return
+		}
+
+		DownloadManager.shared.setBackgroundEventsCompletionHandler(completionHandler)
+	}
+
+	private func _createPipeline() {
+		DataLoader.sharedUrlCache.diskCapacity = 0
+
+		let pipeline = ImagePipeline {
+			let dataLoader: DataLoader = {
+				let config = URLSessionConfiguration.default
+				config.urlCache = nil
+				return DataLoader(configuration: config)
+			}()
+			let dataCache = try? DataCache(name: "thewonderofyou.Aether.datacache") // disk cache
+			let imageCache = Nuke.ImageCache() // memory cache
+			dataCache?.sizeLimit = 500 * 1024 * 1024
+			imageCache.costLimit = 48 * 1024 * 1024
+			$0.dataCache = dataCache
+			$0.imageCache = imageCache
+			$0.dataLoader = dataLoader
+			$0.dataCachePolicy = .automatic
+			$0.isStoringPreviewsInMemoryCache = false
+		}
+
+		ImagePipeline.shared = pipeline
+	}
+
+	private func _createDocumentsDirectories() {
+		let fileManager = FileManager.default
+
+		let directories: [URL] = [
+			fileManager.archives,
+			fileManager.certificates,
+			fileManager.signed,
+			fileManager.unsigned
+		]
+
+		for url in directories {
+			try? fileManager.createDirectoryIfNeeded(at: url)
+		}
+	}
+
+	private func _addDefaultCertificates() {
+		guard
+			UserDefaults.standard.bool(forKey: "aether.didImportDefaultCertificates") == false,
+			let signingAssetsURL = Bundle.main.url(forResource: "signing-assets", withExtension: nil)
+		else {
+			return
+		}
+
+		do {
+			let folderContents = try FileManager.default.contentsOfDirectory(
+				at: signingAssetsURL,
+				includingPropertiesForKeys: nil,
+				options: .skipsHiddenFiles
+			)
+
+			for folderURL in folderContents {
+				guard folderURL.hasDirectoryPath else { continue }
+
+				let certName = folderURL.lastPathComponent
+
+				let p12Url = folderURL.appendingPathComponent("cert.p12")
+				let provisionUrl = folderURL.appendingPathComponent("cert.mobileprovision")
+				let passwordUrl = folderURL.appendingPathComponent("cert.txt")
+
+				guard
+					FileManager.default.fileExists(atPath: p12Url.path),
+					FileManager.default.fileExists(atPath: provisionUrl.path),
+					FileManager.default.fileExists(atPath: passwordUrl.path)
+				else {
+					Logger.misc.warning("Skipping \(certName): missing required files")
+					continue
+				}
+
+				let password = try String(contentsOf: passwordUrl, encoding: .utf8)
+
+				FR.handleCertificateFiles(
+					p12URL: p12Url,
+					provisionURL: provisionUrl,
+					p12Password: password,
+					certificateName: certName,
+					isDefault: true
+				) { _ in
+
+				}
+			}
+			UserDefaults.standard.set(true, forKey: "aether.didImportDefaultCertificates")
+		} catch {
+			Logger.misc.error("Failed to list signing-assets: \(error)")
+		}
+	}
+
+}

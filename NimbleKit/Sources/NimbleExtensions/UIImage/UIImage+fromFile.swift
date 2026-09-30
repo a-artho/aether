@@ -1,6 +1,6 @@
 //
 //  UIImage+url.swift
-//  Feather
+//  Aether
 //
 //  Created by samara on 18.04.2025.
 //

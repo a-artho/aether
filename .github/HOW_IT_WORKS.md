@@ -1,6 +1,6 @@
 ## How does it work?
 
-How Feather works is a bit complicated, with having multiple ways to install, app management, tweaks, etc. However, I'll point out how the important features work here.
+How Aether works is a bit complicated, with having multiple ways to install, app management, tweaks, etc. However, I'll point out how the important features work here.
 
 To start off, we need a validly signed IPA. We can achieve this with Zsign, using a provided IPA using a `.p12` and `.mobileprovision` pair.
 
@@ -21,11 +21,11 @@ Since itms-services initiates the install automatically, we don't need to do any
 
 #### Install (Pairing)
 - Establish a heartbeat with a TCP provider (the app will need this for later).
-  - For it to be successful, we need a pairing file from [PlumeImpactor](https://github.com/khcrysalis/Impactor?tab=readme-ov-file#pairing-file) and a [VPN](https://apps.apple.com/us/app/localdevvpn/id6755608044).
+  - For it to be successful, Aether needs an imported or on-device-created pairing file and an active tunnel.
 - Once we have these and the connection was successfully established, we can move on to the installation part.
   - Before installing, we need to check for the connection to the socket that has been created, routed to `10.7.0.1`, if this succeeds we're ready.
 - When preparing for installation, we need to establish another connection but for `AFC` using the TCP provider.
 - Once the connection was established we need to created a staging directory to `/PublicStaging/` and upload our IPA there.
 - Then, using our connection to `AFC` we can command it to install that IPA directly. Similar to `ideviceinstaller`, but fully on your phone.
 
-Due to how it works right now we need both a VPN and a lockdownd pairing file, this means you will need a computer for its initial setup. Though, if you don't want to do these you can just use the server way of installing instead (but at a cost of less reliability). 
+Pairing mode needs both an active tunnel and a lockdownd pairing file. Aether can create a pairing file on supported iOS versions, or you can import one. If pairing mode is unavailable, Server mode remains an alternative installation method.

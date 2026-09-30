@@ -1,6 +1,6 @@
 //
 //  FileManager+bundle.swift
-//  Feather
+//  Aether
 //
 //  Created by samara on 16.04.2025.
 //
@@ -25,7 +25,7 @@ public enum ExternalFileMaterializationError: LocalizedError {
 		case .unsupportedFileType:
 			return "The selected file is not an IPA or TIPA archive."
 		case .copyFailed(let error):
-			return "The selected file could not be copied into Feather: \(error.localizedDescription)"
+			return "The selected file could not be copied into Aether: \(error.localizedDescription)"
 		}
 	}
 }
@@ -60,7 +60,7 @@ extension FileManager {
 		}
 
 		let directoryURL = temporaryDirectory.appendingPathComponent(
-			"FeatherImport_\(UUID().uuidString)",
+			"AetherImport_\(UUID().uuidString)",
 			isDirectory: true
 		)
 		let fileName = sourceURL.lastPathComponent.isEmpty
@@ -137,7 +137,7 @@ extension FileManager {
 		return dir
 	}
 	
-	// FeatherTweak
+	// AetherTweak
 	public func moveAndStore(_ url: URL, with prepend: String, completion: @escaping (URL) -> Void) {
 		let destination = _getDestination(url, with: prepend)
 		
@@ -152,7 +152,7 @@ extension FileManager {
 		completion(url)
 	}
 	
-	// FeatherTweak
+	// AetherTweak
 	private func _getDestination(_ url: URL, with prepend: String) -> (temp: URL, dest: URL) {
 		let tempDir = self.temporaryDirectory.appendingPathComponent("\(prepend)_\(UUID().uuidString)", isDirectory: true)
 		let destinationUrl = tempDir.appendingPathComponent(url.lastPathComponent)

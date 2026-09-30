@@ -1,0 +1,15 @@
+//
+//  default.xcconfig
+//  Ventrica
+//
+//  Created by samsam on 2/5/26.
+//
+
+AETHER_PROJECT_VERSION=1.0.0
+AETHER_PRODUCT_BUNDLE_IDENTIFIER=thewonderofyou.Aether
+AETHER_DISAMBIGUATOR=${DEVELOPMENT_TEAM}
+
+AD_HOC_CODE_SIGNING_ALLOWED = YES
+
+DEPLOYMENT_LOCATION = YES
+DSTROOT = $(SRCROOT)/_build/

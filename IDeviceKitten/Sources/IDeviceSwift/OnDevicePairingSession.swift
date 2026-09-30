@@ -2,7 +2,7 @@
 //  OnDevicePairingSession.swift
 //  IDeviceKit
 //
-//  Created by Feather.
+//  Created by Aether.
 //
 
 import Darwin
@@ -283,7 +283,7 @@ private final class OnDevicePairingSocketServer: @unchecked Sendable {
 	private let lock = NSLock()
 	private let serviceIdentifier: String
 	private let txtRecord: [String: Data]
-	private let networkQueue = DispatchQueue(label: "feather.pairable-host.relay")
+	private let networkQueue = DispatchQueue(label: "aether.pairable-host.relay")
 	private var listener = Int32(-1)
 	private var connection = Int32(-1)
 	private var relayListener: NWListener?
@@ -464,7 +464,7 @@ private final class OnDevicePairingSocketServer: @unchecked Sendable {
 			lock.unlock()
 			return
 		}
-		publicationError = "Could not advertise Feather for pairing (\(error.localizedDescription))."
+		publicationError = "Could not advertise Aether for pairing (\(error.localizedDescription))."
 		let listener = self.listener
 		self.listener = -1
 		self.relayListener = nil

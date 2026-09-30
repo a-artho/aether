@@ -1,6 +1,6 @@
 //
 //  CertificatesPillView.swift
-//  Feather
+//  Aether
 //
 //  Created by samara on 16.04.2025.
 //

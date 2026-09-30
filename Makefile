@@ -1,5 +1,5 @@
-NAME := Feather
-SCHEME := Feather
+NAME := Aether
+SCHEME := Aether
 PLATFORMS := iphoneos maccatalyst
 
 export DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
@@ -35,7 +35,7 @@ $(PLATFORMS): deps
 	rm -rf $(TMP)/$@/dst; \
 	mkdir -p $(TMP)/$@/dst; \
 	xcodebuild \
-		-project Feather.xcodeproj \
+		-project Aether.xcodeproj \
 		-scheme $(SCHEME) \
 		-configuration Release \
 		-destination "$$DEST" \
@@ -47,23 +47,23 @@ $(PLATFORMS): deps
 
 	rm -rf $(TMP)/$@/Payload
 	mkdir -p $(TMP)/$@/Payload
-	cp -R $(TMP)/$@/dst/Applications/*.app $(TMP)/$@/Payload/Feather.app
-	chmod -R 0755 $(TMP)/$@/Payload/Feather.app
+	cp -R $(TMP)/$@/dst/Applications/*.app $(TMP)/$@/Payload/Aether.app
+	chmod -R 0755 $(TMP)/$@/Payload/Aether.app
 	@if [ "$@" = "iphoneos" ]; then \
-		TUNNEL="$(TMP)/$@/Payload/Feather.app/PlugIns/FeatherTunnel.appex"; \
+		TUNNEL="$(TMP)/$@/Payload/Aether.app/PlugIns/AetherTunnel.appex"; \
 		if [ ! -d "$$TUNNEL" ]; then \
-			echo "Missing embedded FeatherTunnel.appex" >&2; \
+			echo "Missing embedded AetherTunnel.appex" >&2; \
 			exit 1; \
 		fi; \
-		codesign --force --sign - --timestamp=none --entitlements FeatherTunnel/FeatherTunnel.entitlements "$$TUNNEL"; \
+		codesign --force --sign - --timestamp=none --entitlements AetherTunnel/AetherTunnel.entitlements "$$TUNNEL"; \
 	fi
-	codesign --force --sign - --timestamp=none $(TMP)/$@/Payload/Feather.app
-	cp deps/* $(TMP)/$@/Payload/Feather.app/ || true
+	codesign --force --sign - --timestamp=none $(TMP)/$@/Payload/Aether.app
+	cp deps/* $(TMP)/$@/Payload/Aether.app/ || true
 
 	mkdir -p packages
 
 	@if [ "$@" = "iphoneos" ]; then \
-		ditto -c -k --sequesterRsrc --keepParent $(TMP)/$@/Payload "packages/Feather.ipa"; \
+		ditto -c -k --sequesterRsrc --keepParent $(TMP)/$@/Payload "packages/Aether.ipa"; \
 	else \
-		ditto -c -k --sequesterRsrc --keepParent $(TMP)/$@/Payload/Feather.app "packages/Feather_Catalyst.zip"; \
+		ditto -c -k --sequesterRsrc --keepParent $(TMP)/$@/Payload/Aether.app "packages/Aether_Catalyst.zip"; \
 	fi

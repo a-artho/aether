@@ -1,6 +1,6 @@
 //
 //  Notification+custom.swift
-//  Feather
+//  Aether
 //
 //  Created by samara on 29.04.2025.
 //

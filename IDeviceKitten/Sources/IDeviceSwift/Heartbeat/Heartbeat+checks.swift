@@ -1,6 +1,6 @@
 //
 //  Heartbeat+checks.swift
-//  Feather
+//  Aether
 //
 //  Created by samara on 29.04.2025.
 //
@@ -10,7 +10,7 @@ import IDevice
 
 // MARK: - Class extension: socket
 extension HeartbeatManager {
-	/// Verifies that Feather can reach the paired device's Installation Proxy service.
+	/// Verifies that Aether can reach the paired device's Installation Proxy service.
 	/// Unlike a raw TCP probe, this validates the active transport and pairing flow.
 	public func checkDeviceConnection(
 		timeoutInSeconds: Double = 2.0,

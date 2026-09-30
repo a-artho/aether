@@ -30,10 +30,10 @@ final class AppInstallationProvenanceTests: XCTestCase {
 
 	func testMissingSignerWithMatchingValidProfileIsSideloaded() throws {
 		let app = try appInfo(
-			bundleIdentifier: "com.example.feather",
+			bundleIdentifier: "com.example.aether",
 			entitlements: [
 				"com.apple.developer.team-identifier": "TEAM123456",
-				"application-identifier": "TEAM123456.com.example.feather"
+				"application-identifier": "TEAM123456.com.example.aether"
 			]
 		)
 		let profile = try XCTUnwrap(profileInfo(applicationIdentifier: "TEAM123456.com.example.*"))
@@ -57,7 +57,7 @@ final class AppInstallationProvenanceTests: XCTestCase {
 		let app = try appInfo(
 			entitlements: [
 				"com.apple.developer.team-identifier": "OTHERTEAM1",
-				"application-identifier": "OTHERTEAM1.com.example.feather"
+				"application-identifier": "OTHERTEAM1.com.example.aether"
 			]
 		)
 		let profile = try XCTUnwrap(profileInfo(applicationIdentifier: "TEAM123456.com.example.*"))
@@ -79,7 +79,7 @@ final class AppInstallationProvenanceTests: XCTestCase {
 		let app = try appInfo(
 			entitlements: [
 				"com.apple.developer.team-identifier": "TEAM123456",
-				"application-identifier": "TEAM123456.com.example.feather"
+				"application-identifier": "TEAM123456.com.example.aether"
 			]
 		)
 		let profile = try XCTUnwrap(profileInfo(
@@ -108,7 +108,7 @@ final class AppInstallationProvenanceTests: XCTestCase {
 	}
 
 	private func appInfo(
-		bundleIdentifier: String = "com.example.feather",
+		bundleIdentifier: String = "com.example.aether",
 		signer: String? = nil,
 		hasSINF: Bool = false,
 		entitlements: [String: String]? = nil

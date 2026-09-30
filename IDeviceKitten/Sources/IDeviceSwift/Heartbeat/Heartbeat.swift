@@ -1,6 +1,6 @@
 //
 //  Heartbeat.swift
-//  Feather
+//  Aether
 //
 //  Created by samara on 23.04.2025.
 //
@@ -19,7 +19,7 @@ public class HeartbeatManager {
 	}
 
 	static public let shared = HeartbeatManager()
-	private static let pairingRecordSourceKey = "feather.activePairingRecordSource"
+	private static let pairingRecordSourceKey = "aether.activePairingRecordSource"
 	private static let pairingMigrationLock = NSLock()
 	private static var hasCompletedPairingMigration = false
 
@@ -82,7 +82,7 @@ public class HeartbeatManager {
 		}
 	}
 
-	/// Feather's visible Documents root, shared by both pairing record types.
+	/// Aether's visible Documents root, shared by both pairing record types.
 	static public func pairingDirectoryURL() -> URL {
 		migratePairingRecordsToDocumentsIfNeeded()
 		return pairingDirectory()
@@ -189,11 +189,11 @@ public class HeartbeatManager {
 			in: .userDomainMask
 		).first!
 		return applicationSupport
-			.appendingPathComponent(Bundle.main.bundleIdentifier ?? "Feather", isDirectory: true)
+			.appendingPathComponent(Bundle.main.bundleIdentifier ?? "Aether", isDirectory: true)
 			.appendingPathComponent("onDeviceRPPairing.plist")
 	}
 
-	/// Moves records written by earlier Feather builds into Documents.
+	/// Moves records written by earlier Aether builds into Documents.
 	/// This is safe to run repeatedly and never replaces a current record.
 	private static func migratePairingRecordsToDocumentsIfNeeded() {
 		pairingMigrationLock.lock()
