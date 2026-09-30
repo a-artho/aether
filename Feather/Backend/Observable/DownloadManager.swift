@@ -107,6 +107,7 @@ class DownloadManager: NSObject, ObservableObject {
 	private var _processingBackgroundTasks: [String: UIBackgroundTaskIdentifier] = [:]
 	private var _processingTasks: [String: Task<Void, Never>] = [:]
 	private let _persistenceWriter = DownloadPersistenceWriter()
+	private var _persistenceRevision: UInt64 = 0
 
 	override init() {
 		super.init()
@@ -665,14 +666,16 @@ class DownloadManager: NSObject, ObservableObject {
 	}
 
 	private func _persistDownloads(immediately: Bool = true) {
+		_persistenceRevision &+= 1
+		let revision = _persistenceRevision
 		let records = downloads
 			.filter { !$0.onlyArchiving }
 			.map(StoredDownload.init)
 		let writer = _persistenceWriter
 		Task {
-			await writer.schedule(records: records, immediately: immediately)
+			await writer.schedule(records: records, immediately: immediately, revision: revision)
 		}
-		}
+	}
 
 	private func _isCurrent(_ download: Download) -> Bool {
 		downloads.contains(where: { $0 === download })

@@ -4,9 +4,7 @@
 //
 
 import SwiftUI
-import CoreData
 import IDeviceSwift
-import NimbleViews
 
 struct InstalledAppDetailView: View {
 	@Environment(\.dismiss) private var dismiss
@@ -20,11 +18,7 @@ struct InstalledAppDetailView: View {
 	@State private var isUninstallPresented = false
 	@State private var isUninstalling = false
 	@State private var uninstallErrorMessage: String?
-	@State private var hasCopiedBundleId = false
-	@State private var copiedItemText: String?
-	@State private var entitlementsSearchText = ""
 	@State private var isFilesPresented = false
-	@State private var signingApp: AnyApp?
 	@State private var feedbackGenerator = UIImpactFeedbackGenerator(style: .light)
 
 	var body: some View {
@@ -38,135 +32,48 @@ struct InstalledAppDetailView: View {
 			}
 			.listSectionSeparator(.hidden)
 
-			// MARK: - Feature 2: Signing & Certificate
 			Section {
-				_signingStatusCard
-				if let profile = app.profileInfo {
-					_detailRow(label: .localized("Profile"), value: profile.name ?? profile.profileType)
-					if let team = profile.teamName {
-						_detailRow(label: .localized("Team Name"), value: team)
-					}
-					if let teamId = profile.entitlementTeamIdentifier ?? profile.teamIdentifiers.first {
-						_detailRow(label: .localized("Team ID"), value: teamId, isCopyable: true)
-					}
-					_detailRow(label: .localized("Expires"), value: profile.expirationDate.formatted(date: .abbreviated, time: .shortened))
-					if let creation = profile.creationDate {
-						_detailRow(label: .localized("Created"), value: creation.formatted(date: .abbreviated, time: .shortened))
-					}
-					if let uuid = profile.uuid {
-						_detailRow(label: .localized("Profile UUID"), value: uuid, isCopyable: true)
-					}
-				} else if let signer = app.signerIdentity {
-					_detailRow(label: .localized("Signer"), value: signer)
+				NavigationLink {
+					InstalledAppSpecificationsView(app: app)
+				} label: {
+					SettingsRowLabel(
+						.localized("Specifications"),
+						systemImage: "info.circle.fill",
+						backgroundColor: .blue
+					)
 				}
-			} header: {
-				Label(.localized("Certificate & Signing"), systemImage: "signature")
-			}
 
-			// MARK: - Feature 5: App Specifications
-			Section {
-				_detailRow(label: .localized("Bundle Identifier"), value: app.bundleIdentifier, isCopyable: true)
-				if let version = app.version {
-					let versionString = app.build.map { "\(version) (\($0))" } ?? version
-					_detailRow(label: .localized("Version"), value: versionString)
-				}
-				if let container = app.containerPath {
-					_detailRow(label: .localized("Data Container"), value: container, isCopyable: true)
-				}
-				if let bundle = app.bundlePath {
-					_detailRow(label: .localized("Bundle Path"), value: bundle, isCopyable: true)
-				}
-				if let exe = app.executableName {
-					_detailRow(label: .localized("Executable"), value: exe)
-				}
-				if let minOS = app.minimumOSVersion {
-					_detailRow(label: .localized("Minimum iOS"), value: "iOS \(minOS)+")
-				}
-				_detailRow(label: .localized("Target Devices"), value: app.deviceFamilies.joined(separator: ", "))
-				if let sdk = app.sdkName {
-					_detailRow(label: .localized("SDK"), value: sdk)
-				}
-				if let xcode = app.xcodeBuild {
-					_detailRow(label: .localized("Xcode Build"), value: xcode)
-				}
-				if !app.registeredUrlSchemes.isEmpty {
-					VStack(alignment: .leading, spacing: 6) {
-						Text(.localized("URL Schemes"))
-							.font(.caption)
-							.foregroundStyle(.secondary)
-
-						ForEach(app.registeredUrlSchemes, id: \.self) { scheme in
-							HStack {
-								Text("\(scheme)://")
-									.font(.subheadline.monospaced())
-									.foregroundStyle(.primary)
-
-								Spacer()
-
-								Button {
-									if let url = URL(string: "\(scheme)://") {
-										UIApplication.shared.open(url)
-									}
-								} label: {
-									HStack(spacing: 4) {
-										Image(systemName: "arrow.up.right")
-										Text(.localized("Open"))
-									}
-									.font(.caption2.weight(.semibold))
-									.foregroundStyle(.blue)
-									.padding(.horizontal, 8)
-									.padding(.vertical, 4)
-									.background(Color.blue.opacity(0.12), in: Capsule())
-								}
-								.buttonStyle(.plain)
-							}
-						}
-					}
-					.padding(.vertical, 4)
-				}
-			} header: {
-				Label(.localized("Specifications"), systemImage: "info.circle")
-			}
-			.id("specificationsSection")
-
-			// MARK: - Feature 5: Entitlements Inspector
-			if !app.entitlementsList.isEmpty {
-				Section {
-					ForEach(_filteredEntitlements, id: \.key) { item in
-						VStack(alignment: .leading, spacing: 4) {
-							HStack {
-								Text(item.key)
-									.font(.caption.weight(.semibold))
-									.foregroundStyle(.primary)
-								Spacer()
-								Button {
-									UIPasteboard.general.string = "\(item.key): \(item.value)"
-									_triggerCopyFeedback(label: item.key)
-								} label: {
-									Image(systemName: "doc.on.doc")
-										.font(.caption2)
-										.foregroundStyle(.secondary)
-								}
-								.buttonStyle(.plain)
-							}
-
-							Text(item.value)
-								.font(.caption2.monospaced())
-								.foregroundStyle(.secondary)
-								.textSelection(.enabled)
-						}
-						.padding(.vertical, 2)
-					}
-				} header: {
+				NavigationLink {
+					InstalledAppEntitlementsView(app: app)
+				} label: {
 					HStack {
-						Label(.localized("Entitlements"), systemImage: "lock.shield")
+						SettingsRowLabel(
+							.localized("Entitlements"),
+							systemImage: "lock.shield.fill",
+							backgroundColor: .purple
+						)
 						Spacer()
 						Text("\(app.entitlementsList.count)")
-							.font(.caption2.weight(.semibold))
 							.foregroundStyle(.secondary)
 					}
 				}
+
+				HStack {
+					SettingsRowLabel(
+						.localized("Signer"),
+						systemImage: "signature",
+						backgroundColor: .orange
+					)
+					Spacer(minLength: 8)
+					Text(app.signerIdentity ?? .localized("Unavailable"))
+						.font(.subheadline)
+						.foregroundStyle(.secondary)
+						.lineLimit(1)
+						.truncationMode(.middle)
+						.multilineTextAlignment(.trailing)
+				}
 			}
+			.id("informationSection")
 		}
 		.listStyle(.insetGrouped)
 		.background(
@@ -223,25 +130,10 @@ struct InstalledAppDetailView: View {
 		} message: {
 			Text(.localized("This will remove '\(app.name)' and all its stored data from your device."))
 		}
-		.overlay(alignment: .bottom) {
-			if let copiedText = copiedItemText {
-				Text(.localized("Copied \(copiedText)"))
-					.font(.caption.weight(.semibold))
-					.foregroundStyle(.white)
-					.padding(.horizontal, 14)
-					.padding(.vertical, 8)
-					.background(.black.opacity(0.8), in: Capsule())
-					.padding(.bottom, 24)
-					.transition(.opacity.combined(with: .move(edge: .bottom)))
-			}
-		}
-		.fullScreenCover(item: $signingApp) { app in
-			SigningView(app: app.base)
-		}
 		#if DEBUG
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.scrollDetailToBottom"))) { _ in
 			withAnimation {
-				scrollProxy.scrollTo("specificationsSection", anchor: .top)
+				scrollProxy.scrollTo("informationSection", anchor: .top)
 			}
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Feather.openAppSandbox"))) { _ in
@@ -369,94 +261,6 @@ struct InstalledAppDetailView: View {
 		.opacity(isDisabled ? 0.6 : 1.0)
 	}
 
-	private var _signingStatusCard: some View {
-		HStack(alignment: .center) {
-			VStack(alignment: .leading, spacing: 2) {
-				Text(app.profileInfo?.profileType ?? .localized("Sideloaded Certificate"))
-					.font(.subheadline.weight(.semibold))
-					.foregroundStyle(.primary)
-
-				Text(app.profileInfo?.timeRemainingFormatted ?? .localized("Expiration tracked via pairing"))
-					.font(.caption)
-					.foregroundStyle(app.profileInfo.map { _expirationColor(for: $0) } ?? .secondary)
-			}
-
-			Spacer(minLength: 8)
-
-			Button {
-				_triggerResign()
-			} label: {
-				NBButton(.localized("Resign"), style: .text)
-			}
-			.buttonStyle(.borderless)
-		}
-	}
-
-	@ViewBuilder
-	private func _detailRow(label: String, value: String, isCopyable: Bool = false) -> some View {
-		HStack(alignment: .top) {
-			Text(label)
-				.font(.subheadline)
-				.foregroundStyle(.secondary)
-				.frame(width: 110, alignment: .leading)
-
-			Spacer(minLength: 8)
-
-			Text(value)
-				.font(.subheadline)
-				.foregroundStyle(.primary)
-				.multilineTextAlignment(.trailing)
-				.textSelection(.enabled)
-
-			if isCopyable {
-				Button {
-					UIPasteboard.general.string = value
-					_triggerCopyFeedback(label: label)
-				} label: {
-					Image(systemName: "doc.on.doc")
-						.font(.caption2)
-						.foregroundStyle(.secondary)
-				}
-				.buttonStyle(.plain)
-			}
-		}
-		.padding(.vertical, 2)
-	}
-
-	private var _filteredEntitlements: [(key: String, value: String)] {
-		if entitlementsSearchText.isEmpty {
-			return app.entitlementsList
-		}
-		return app.entitlementsList.filter {
-			$0.key.localizedCaseInsensitiveContains(entitlementsSearchText)
-				|| $0.value.localizedCaseInsensitiveContains(entitlementsSearchText)
-		}
-	}
-
-	private func _expirationColor(for profile: ProvisioningProfileInfo) -> Color {
-		if profile.isExpired {
-			return .red
-		} else if profile.daysRemaining <= 2 {
-			return .orange
-		} else {
-			return .green
-		}
-	}
-
-	private func _triggerCopyFeedback(label: String) {
-		UIImpactFeedbackGenerator(style: .light).impactOccurred()
-		withAnimation(.easeInOut(duration: 0.2)) {
-			copiedItemText = label
-		}
-		DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-			withAnimation(.easeInOut(duration: 0.2)) {
-				if copiedItemText == label {
-					copiedItemText = nil
-				}
-			}
-		}
-	}
-
 	// MARK: - Actions
 
 	private func _launchApp() async {
@@ -492,42 +296,6 @@ struct InstalledAppDetailView: View {
 		}
 	}
 
-	private func _triggerResign() {
-		feedbackGenerator.impactOccurred()
-		feedbackGenerator.prepare()
-
-		let context = Storage.shared.context
-		let signedRequest: NSFetchRequest<Signed> = Signed.fetchRequest()
-		signedRequest.predicate = NSPredicate(format: "identifier == %@", app.bundleIdentifier)
-		signedRequest.fetchLimit = 1
-
-		if let matchingSigned = try? context.fetch(signedRequest).first {
-			signingApp = AnyApp(base: matchingSigned)
-			return
-		}
-
-		let importedRequest: NSFetchRequest<Imported> = Imported.fetchRequest()
-		importedRequest.predicate = NSPredicate(format: "identifier == %@", app.bundleIdentifier)
-		importedRequest.fetchLimit = 1
-
-		if let matchingImported = try? context.fetch(importedRequest).first {
-			signingApp = AnyApp(base: matchingImported)
-			return
-		}
-
-		let sideloaded = SideloadedAppPresentable(
-			name: app.name,
-			version: app.version,
-			identifier: app.bundleIdentifier,
-			date: app.profileInfo?.creationDate ?? Date(),
-			icon: nil,
-			uuid: app.profileInfo?.uuid ?? app.bundleIdentifier,
-			source: app.bundlePath.flatMap { URL(fileURLWithPath: $0) },
-			isSigned: true
-		)
-		signingApp = AnyApp(base: sideloaded)
-	}
-
 	private func _uninstallApp() async {
 		isUninstalling = true
 		defer { isUninstalling = false }
@@ -541,15 +309,216 @@ struct InstalledAppDetailView: View {
 	}
 }
 
-private struct SideloadedAppPresentable: AppInfoPresentable {
-	let name: String?
-	let version: String?
-	let identifier: String?
-	let date: Date?
-	let icon: String?
-	let uuid: String?
-	let source: URL?
-	let isSigned: Bool
+private struct InstalledAppSpecificationsView: View {
+	let app: InstalledApp
+	@State private var copiedItemText: String?
+
+	var body: some View {
+		List {
+			Section {
+				_detailRow(label: .localized("Bundle Identifier"), value: app.bundleIdentifier, isCopyable: true)
+				if let version = app.version {
+					let versionString = app.build.map { "\(version) (\($0))" } ?? version
+					_detailRow(label: .localized("Version"), value: versionString)
+				}
+				if let container = app.containerPath {
+					_detailRow(label: .localized("Data Container"), value: container, isCopyable: true)
+				}
+				if let bundle = app.bundlePath {
+					_detailRow(label: .localized("Bundle Path"), value: bundle, isCopyable: true)
+				}
+				if let executable = app.executableName {
+					_detailRow(label: .localized("Executable"), value: executable)
+				}
+				if let minimumOSVersion = app.minimumOSVersion {
+					_detailRow(label: .localized("Minimum iOS"), value: "iOS \(minimumOSVersion)+")
+				}
+				_detailRow(label: .localized("Target Devices"), value: app.deviceFamilies.joined(separator: ", "))
+				if let sdkName = app.sdkName {
+					_detailRow(label: .localized("SDK"), value: sdkName)
+				}
+				if let xcodeBuild = app.xcodeBuild {
+					_detailRow(label: .localized("Xcode Build"), value: xcodeBuild)
+				}
+				if !app.registeredUrlSchemes.isEmpty {
+					VStack(alignment: .leading, spacing: 6) {
+						Text(.localized("URL Schemes"))
+							.font(.caption)
+							.foregroundStyle(.secondary)
+
+						ForEach(app.registeredUrlSchemes, id: \.self) { scheme in
+							HStack {
+								Text("\(scheme)://")
+									.font(.subheadline.monospaced())
+									.foregroundStyle(.primary)
+
+								Spacer()
+
+								Button {
+									if let url = URL(string: "\(scheme)://") {
+										UIApplication.shared.open(url)
+									}
+								} label: {
+									Label(.localized("Open"), systemImage: "arrow.up.right")
+										.font(.caption2.weight(.semibold))
+										.foregroundStyle(.blue)
+										.padding(.horizontal, 8)
+										.padding(.vertical, 4)
+										.background(Color.blue.opacity(0.12), in: Capsule())
+								}
+								.buttonStyle(.plain)
+							}
+						}
+					}
+					.padding(.vertical, 4)
+				}
+			}
+		}
+		.listStyle(.insetGrouped)
+		.navigationTitle(.localized("Specifications"))
+		.navigationBarTitleDisplayMode(.inline)
+		.overlay(alignment: .bottom) {
+			if let copiedItemText {
+				Text(.localized("Copied \(copiedItemText)"))
+					.font(.caption.weight(.semibold))
+					.foregroundStyle(.white)
+					.padding(.horizontal, 14)
+					.padding(.vertical, 8)
+					.background(.black.opacity(0.8), in: Capsule())
+					.padding(.bottom, 24)
+					.transition(.opacity.combined(with: .move(edge: .bottom)))
+			}
+		}
+	}
+
+	@ViewBuilder
+	private func _detailRow(label: String, value: String, isCopyable: Bool = false) -> some View {
+		HStack(alignment: .top) {
+			Text(label)
+				.font(.subheadline)
+				.foregroundStyle(.secondary)
+				.frame(width: 110, alignment: .leading)
+
+			Spacer(minLength: 8)
+
+			Text(value)
+				.font(.subheadline)
+				.foregroundStyle(.primary)
+				.multilineTextAlignment(.trailing)
+				.textSelection(.enabled)
+
+			if isCopyable {
+				Button {
+					UIPasteboard.general.string = value
+					_triggerCopyFeedback(label: label)
+				} label: {
+					Image(systemName: "doc.on.doc")
+						.font(.caption2)
+						.foregroundStyle(.secondary)
+				}
+				.buttonStyle(.plain)
+			}
+		}
+		.padding(.vertical, 2)
+	}
+
+	private func _triggerCopyFeedback(label: String) {
+		UIImpactFeedbackGenerator(style: .light).impactOccurred()
+		withAnimation(.easeInOut(duration: 0.2)) {
+			copiedItemText = label
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+			withAnimation(.easeInOut(duration: 0.2)) {
+				if copiedItemText == label {
+					copiedItemText = nil
+				}
+			}
+		}
+	}
+}
+
+private struct InstalledAppEntitlementsView: View {
+	let app: InstalledApp
+	@State private var searchText = ""
+	@State private var copiedItemText: String?
+
+	private var filteredEntitlements: [(key: String, value: String)] {
+		guard !searchText.isEmpty else { return app.entitlementsList }
+		return app.entitlementsList.filter {
+			$0.key.localizedCaseInsensitiveContains(searchText)
+				|| $0.value.localizedCaseInsensitiveContains(searchText)
+		}
+	}
+
+	var body: some View {
+		Group {
+			if app.entitlementsList.isEmpty {
+				TabPlaceholderView(
+					title: .localized("No Entitlements"),
+					description: "",
+					systemImage: "lock.slash"
+				)
+			} else {
+				List {
+					ForEach(filteredEntitlements, id: \.key) { item in
+						VStack(alignment: .leading, spacing: 4) {
+							HStack {
+								Text(item.key)
+									.font(.caption.weight(.semibold))
+									.foregroundStyle(.primary)
+								Spacer()
+								Button {
+									UIPasteboard.general.string = "\(item.key): \(item.value)"
+									_triggerCopyFeedback(label: item.key)
+								} label: {
+									Image(systemName: "doc.on.doc")
+										.font(.caption2)
+										.foregroundStyle(.secondary)
+								}
+								.buttonStyle(.plain)
+							}
+
+							Text(item.value)
+								.font(.caption2.monospaced())
+								.foregroundStyle(.secondary)
+								.textSelection(.enabled)
+						}
+						.padding(.vertical, 2)
+					}
+				}
+			}
+		}
+		.listStyle(.insetGrouped)
+		.navigationTitle(.localized("Entitlements"))
+		.navigationBarTitleDisplayMode(.inline)
+		.searchable(text: $searchText, prompt: .localized("Search Entitlements"))
+		.overlay(alignment: .bottom) {
+			if let copiedItemText {
+				Text(.localized("Copied \(copiedItemText)"))
+					.font(.caption.weight(.semibold))
+					.foregroundStyle(.white)
+					.padding(.horizontal, 14)
+					.padding(.vertical, 8)
+					.background(.black.opacity(0.8), in: Capsule())
+					.padding(.bottom, 24)
+					.transition(.opacity.combined(with: .move(edge: .bottom)))
+			}
+		}
+	}
+
+	private func _triggerCopyFeedback(label: String) {
+		UIImpactFeedbackGenerator(style: .light).impactOccurred()
+		withAnimation(.easeInOut(duration: 0.2)) {
+			copiedItemText = label
+		}
+		DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+			withAnimation(.easeInOut(duration: 0.2)) {
+				if copiedItemText == label {
+					copiedItemText = nil
+				}
+			}
+		}
+	}
 }
 
 private struct _TileButtonStyle: ButtonStyle {

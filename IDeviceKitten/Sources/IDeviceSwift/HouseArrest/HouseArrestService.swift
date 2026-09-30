@@ -33,6 +33,12 @@ public struct SandboxItem: Identifiable, Hashable, Sendable {
 public enum HouseArrestService {
 	typealias HouseArrestHandle = OpaquePointer
 	typealias AfcHandle = OpaquePointer
+	private static let _transferChunkSize = 4 * 1024 * 1024
+
+	private enum _VendTarget {
+		case container
+		case documents
+	}
 
 	private static func _requirePairingFile() throws {
 		guard HeartbeatManager.hasPairingFile() else {
@@ -40,54 +46,80 @@ public enum HouseArrestService {
 		}
 	}
 
+	private static func _connectHouseArrest() throws -> HouseArrestHandle {
+		try _requirePairingFile()
+		let heartbeat = HeartbeatManager.shared
+		var houseArrest: HouseArrestHandle?
+
+		if heartbeat.isRsd {
+			do {
+				try heartbeat.withRSDServiceConnection { adapter, handshake in
+					house_arrest_client_connect_rsd(adapter, handshake, &houseArrest)
+				}
+			} catch {
+				throw IDeviceConnectionError.houseArrestConnectionFailed(error.localizedDescription)
+			}
+		} else {
+			guard let provider = heartbeat.provider else {
+				throw IDeviceConnectionError.tcpProviderUnavailable
+			}
+			if let error = house_arrest_client_connect(provider, &houseArrest) {
+				let reason = IDeviceSwiftError(error).localizedDescription
+				throw IDeviceConnectionError.houseArrestConnectionFailed(reason)
+			}
+		}
+
+		guard let houseArrest else {
+			throw IDeviceSwiftError(message: "Failed to establish House Arrest connection.")
+		}
+		return houseArrest
+	}
+
+	private static func _vend(
+		bundleIdentifier: String,
+		target: _VendTarget
+	) throws -> AfcHandle {
+		let houseArrest = try _connectHouseArrest()
+		var wasConsumed = false
+		defer {
+			if !wasConsumed {
+				house_arrest_client_free(houseArrest)
+			}
+		}
+
+		var afc: AfcHandle?
+		// Both vend APIs consume the House Arrest client, including when vending fails.
+		wasConsumed = true
+		let vendError = bundleIdentifier.withCString { cBundleId in
+			switch target {
+			case .container:
+				return house_arrest_vend_container(houseArrest, cBundleId, &afc)
+			case .documents:
+				return house_arrest_vend_documents(houseArrest, cBundleId, &afc)
+			}
+		}
+
+		if let vendError {
+			throw IDeviceSwiftError(vendError)
+		}
+		guard let afc else {
+			throw IDeviceSwiftError(message: "Failed to acquire AFC client for \(bundleIdentifier)")
+		}
+		return afc
+	}
+
 	private static func _withSession<T: Sendable>(
 		bundleIdentifier: String,
 		_ block: @escaping @Sendable (AfcHandle) throws -> T
 	) async throws -> T {
 		try await Task.detached(priority: .userInitiated) {
-			try _requirePairingFile()
-			let heartbeat = HeartbeatManager.shared
-
-			var houseArrest: HouseArrestHandle?
-			if heartbeat.isRsd {
-				do {
-					try heartbeat.withRSDServiceConnection { adapter, handshake in
-						house_arrest_client_connect_rsd(adapter, handshake, &houseArrest)
-					}
-				} catch {
-					throw IDeviceConnectionError.houseArrestConnectionFailed(error.localizedDescription)
-				}
-			} else {
-				guard let provider = heartbeat.provider else {
-					throw IDeviceConnectionError.tcpProviderUnavailable
-				}
-				if let error = house_arrest_client_connect(provider, &houseArrest) {
-					let reason = IDeviceSwiftError(error).localizedDescription
-					throw IDeviceConnectionError.houseArrestConnectionFailed(reason)
-				}
-			}
-			guard let houseArrest else {
-				throw IDeviceSwiftError(message: "Failed to establish House Arrest connection.")
-			}
-			defer { house_arrest_client_free(houseArrest) }
-
-			var afc: AfcHandle?
-			// Attempt to vend full container first; if not allowed, fallback to Documents
-			var vendError = bundleIdentifier.withCString { cBundleId in
-				house_arrest_vend_container(houseArrest, cBundleId, &afc)
-			}
-			if vendError != nil {
-				idevice_error_free(vendError)
-				vendError = bundleIdentifier.withCString { cBundleId in
-					house_arrest_vend_documents(houseArrest, cBundleId, &afc)
-				}
-			}
-
-			if let vendError {
-				throw IDeviceSwiftError(vendError)
-			}
-			guard let afc else {
-				throw IDeviceSwiftError(message: "Failed to acquire AFC client for \(bundleIdentifier)")
+			let afc: AfcHandle
+			do {
+				afc = try _vend(bundleIdentifier: bundleIdentifier, target: .container)
+			} catch {
+				// A failed vend consumes its House Arrest client too, so Documents needs a
+				// fresh connection rather than reusing the old handle.
+				afc = try _vend(bundleIdentifier: bundleIdentifier, target: .documents)
 			}
 			defer { afc_client_free(afc) }
 
@@ -179,9 +211,13 @@ public enum HouseArrestService {
 
 	public static func readFile(
 		bundleIdentifier: String,
-		path: String
+		path: String,
+		maximumSize: Int
 	) async throws -> Data {
 		try await _withSession(bundleIdentifier: bundleIdentifier) { afc in
+			guard maximumSize >= 0 else {
+				throw IDeviceSwiftError(message: "The maximum file size must not be negative.")
+			}
 			var fileHandle: OpaquePointer?
 			let openErr = path.withCString { cPath in
 				afc_file_open(afc, cPath, AfcRdOnly, &fileHandle)
@@ -194,20 +230,31 @@ public enum HouseArrestService {
 			}
 			defer { _ = afc_file_close(fileHandle) }
 
-			var dataPtr: UnsafeMutablePointer<UInt8>?
-			var dataLen: Int = 0
-			let readErr = afc_file_read_entire(fileHandle, &dataPtr, &dataLen)
-			if let readErr {
-				throw IDeviceSwiftError(readErr)
-			}
-			defer {
-				if let dataPtr {
-					afc_file_read_data_free(dataPtr, dataLen)
+			var data = Data()
+			while true {
+				let requestSize = min(_transferChunkSize, maximumSize - data.count + 1)
+				guard requestSize > 0 else {
+					throw IDeviceSwiftError(message: "The file at \(path) exceeds the allowed preview size.")
+				}
+
+				var dataPtr: UnsafeMutablePointer<UInt8>?
+				var bytesRead = 0
+				let readErr = afc_file_read(fileHandle, &dataPtr, UInt(requestSize), &bytesRead)
+				if let readErr {
+					throw IDeviceSwiftError(readErr)
+				}
+				guard bytesRead > 0 else { break }
+				guard let dataPtr else {
+					throw IDeviceSwiftError(message: "AFC returned an empty buffer while reading \(path)")
+				}
+				defer { afc_file_read_data_free(dataPtr, bytesRead) }
+
+				data.append(contentsOf: UnsafeBufferPointer(start: dataPtr, count: bytesRead))
+				if data.count > maximumSize {
+					throw IDeviceSwiftError(message: "The file at \(path) exceeds the allowed preview size.")
 				}
 			}
-
-			guard let dataPtr, dataLen > 0 else { return Data() }
-			return Data(bytes: dataPtr, count: dataLen)
+			return data
 		}
 	}
 
@@ -235,6 +282,98 @@ public enum HouseArrestService {
 			}
 			if let writeErr {
 				throw IDeviceSwiftError(writeErr)
+			}
+		}
+	}
+
+	/// Streams a local file into an app container without loading its full contents into memory.
+	public static func copyFileToDevice(
+		bundleIdentifier: String,
+		from localURL: URL,
+		to remotePath: String
+	) async throws {
+		try await _withSession(bundleIdentifier: bundleIdentifier) { afc in
+			var fileHandle: OpaquePointer?
+			let openErr = remotePath.withCString { cPath in
+				afc_file_open(afc, cPath, AfcWrOnly, &fileHandle)
+			}
+			if let openErr {
+				throw IDeviceSwiftError(openErr)
+			}
+			guard let fileHandle else {
+				throw IDeviceSwiftError(message: "Failed to create file at \(remotePath)")
+			}
+			defer { _ = afc_file_close(fileHandle) }
+
+			let localFile = try FileHandle(forReadingFrom: localURL)
+			defer { try? localFile.close() }
+
+			while let chunk = try localFile.read(upToCount: _transferChunkSize), !chunk.isEmpty {
+				try Task.checkCancellation()
+				let writeErr = chunk.withUnsafeBytes { buffer -> UnsafeMutablePointer<IdeviceFfiError>? in
+					guard let baseAddress = buffer.baseAddress else { return nil }
+					return afc_file_write(
+						fileHandle,
+						baseAddress.assumingMemoryBound(to: UInt8.self),
+						chunk.count
+					)
+				}
+				if let writeErr {
+					throw IDeviceSwiftError(writeErr)
+				}
+			}
+		}
+	}
+
+	/// Streams a file from an app container to disk without allocating the entire remote file.
+	public static func copyFileFromDevice(
+		bundleIdentifier: String,
+		path remotePath: String,
+		to localURL: URL
+	) async throws {
+		try await _withSession(bundleIdentifier: bundleIdentifier) { afc in
+			var fileHandle: OpaquePointer?
+			let openErr = remotePath.withCString { cPath in
+				afc_file_open(afc, cPath, AfcRdOnly, &fileHandle)
+			}
+			if let openErr {
+				throw IDeviceSwiftError(openErr)
+			}
+			guard let fileHandle else {
+				throw IDeviceSwiftError(message: "Failed to open file at \(remotePath)")
+			}
+			defer { _ = afc_file_close(fileHandle) }
+
+			let fileManager = FileManager.default
+			try fileManager.createDirectory(
+				at: localURL.deletingLastPathComponent(),
+				withIntermediateDirectories: true
+			)
+			if fileManager.fileExists(atPath: localURL.path) {
+				try fileManager.removeItem(at: localURL)
+			}
+			guard fileManager.createFile(atPath: localURL.path, contents: nil) else {
+				throw IDeviceSwiftError(message: "Failed to create local file at \(localURL.path)")
+			}
+			let localFile = try FileHandle(forWritingTo: localURL)
+			defer { try? localFile.close() }
+
+			while true {
+				try Task.checkCancellation()
+
+				var dataPtr: UnsafeMutablePointer<UInt8>?
+				var bytesRead = 0
+				let readErr = afc_file_read(fileHandle, &dataPtr, UInt(_transferChunkSize), &bytesRead)
+				if let readErr {
+					throw IDeviceSwiftError(readErr)
+				}
+				guard bytesRead > 0 else { break }
+				guard let dataPtr else {
+					throw IDeviceSwiftError(message: "AFC returned an empty buffer while reading \(remotePath)")
+				}
+				defer { afc_file_read_data_free(dataPtr, bytesRead) }
+
+				try localFile.write(contentsOf: Data(bytes: dataPtr, count: bytesRead))
 			}
 		}
 	}

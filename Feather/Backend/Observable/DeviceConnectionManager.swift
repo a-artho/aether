@@ -194,6 +194,15 @@ public final class DeviceConnectionManager: ObservableObject {
 	/// developer tunnel to remain available.
 	@discardableResult
 	public func setInstallationMode(_ method: Int) -> Bool {
+		guard !AppInstallationManager.shared.isInstalling else {
+			_log(
+				"Ignored installation mode change while an install is active.",
+				category: "Install",
+				level: .warning
+			)
+			return false
+		}
+
 		let normalizedMethod = method == 1 ? 1 : 0
 		if normalizedMethod == 0,
 		   UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey) {

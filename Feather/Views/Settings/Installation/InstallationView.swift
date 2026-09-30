@@ -13,6 +13,7 @@ struct InstallationView: View {
 	@AppStorage("Feather.installationMethod") private var _installationMethod: Int = 0
 	@AppStorage("Feather.spoofing.simulationMayBeActive") private var _isSpoofingActive = false
 	@ObservedObject private var _connection = DeviceConnectionManager.shared
+	@ObservedObject private var _installationManager = AppInstallationManager.shared
 	@State private var _showMethodChangedAlert = false
 	@State private var _showStopSpoofingAlert = false
 
@@ -40,8 +41,11 @@ struct InstallationView: View {
 						iconSize: _installationMethod == 1 ? 16 : 14
 					)
 				}
+				.disabled(_installationManager.isInstalling)
 			} footer: {
-				Text(.localized("Server (Recommended):\nUses a locally hosted server and itms-services:// to install applications.\n\nIDevice (advanced):\nUses a VPN and a pairing file. Writes to AFC and manually calls installd, while monitoring install progress by using a callback\nAdvantage: It is very reliable, does not need SSL certificates or a externally hosted server. Rather, works similarly to a computer."))
+				Text(_installationManager.isInstalling
+					? .localized("Installation type cannot change while an install is in progress.")
+					: .localized("Server (Recommended):\nUses a locally hosted server and itms-services:// to install applications.\n\nIDevice (advanced):\nUses a VPN and a pairing file. Writes to AFC and manually calls installd, while monitoring install progress by using a callback\nAdvantage: It is very reliable, does not need SSL certificates or a externally hosted server. Rather, works similarly to a computer."))
 			}
 			
 			if _installationMethod == 0 {

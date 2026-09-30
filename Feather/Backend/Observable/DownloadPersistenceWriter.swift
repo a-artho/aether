@@ -10,12 +10,15 @@ import Foundation
 /// the delay while still preserving write order.
 actor DownloadPersistenceWriter {
 	private let store = DownloadStore()
-	private var pendingRecords: [StoredDownload]?
+	private var pendingSnapshot: (revision: UInt64, records: [StoredDownload])?
+	private var latestAcceptedRevision: UInt64 = 0
 	private var scheduledFlush: Task<Void, Never>?
 	private var scheduledFlushID: UUID?
 
-	func schedule(records: [StoredDownload], immediately: Bool) {
-		pendingRecords = records
+	func schedule(records: [StoredDownload], immediately: Bool, revision: UInt64) {
+		guard revision >= latestAcceptedRevision else { return }
+		latestAcceptedRevision = revision
+		pendingSnapshot = (revision, records)
 		if immediately {
 			scheduledFlush?.cancel()
 			scheduledFlush = nil
@@ -45,10 +48,11 @@ actor DownloadPersistenceWriter {
 	}
 
 	private func flushPendingRecords() {
-		guard let records = pendingRecords else { return }
-		pendingRecords = nil
+		guard let snapshot = pendingSnapshot else { return }
+		pendingSnapshot = nil
+		guard snapshot.revision == latestAcceptedRevision else { return }
 		do {
-			try store.save(records: records)
+			try store.save(records: snapshot.records)
 		} catch {
 			print("Failed to persist downloads: \(error.localizedDescription)")
 		}

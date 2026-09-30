@@ -150,7 +150,7 @@ extension HeartbeatManager {
 		rsdConnectionLock.lock()
 		defer { rsdConnectionLock.unlock() }
 
-		for attempt in 0..<2 {
+		for attempt in 0..<3 {
 			try _ensureRSDTunnelLocked()
 			guard let adapter = rsdAdapter, let handshake = rsdHandshake else {
 				throw IDeviceConnectionError.rsdTunnelUnavailable("The adapter or handshake is missing.")
@@ -159,7 +159,12 @@ extension HeartbeatManager {
 			if let errorPointer = connect(adapter, handshake) {
 				let error = IDeviceSwiftError(errorPointer)
 				_invalidateRSDTunnelLocked()
-				if attempt == 0 {
+				if attempt < 2 {
+					// The tunnel can be reachable before every CoreDevice service has
+					// appeared in its RSD handshake. Give that registry a moment before
+					// rebuilding the connection instead of surfacing a transient
+					// ServiceNotFound error to the user.
+					Thread.sleep(forTimeInterval: attempt == 0 ? 0.2 : 0.4)
 					continue
 				}
 				throw error

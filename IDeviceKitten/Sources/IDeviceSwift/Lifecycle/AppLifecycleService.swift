@@ -15,12 +15,8 @@ public enum AppLifecycleService {
 		bundleIdentifier: String,
 		urlSchemes: [String] = []
 	) async throws -> Bool {
-		// 1. Try private LSApplicationWorkspace first
-		if _openViaWorkspace(bundleIdentifier: bundleIdentifier) {
-			return true
-		}
-
-		// 2. Try via RSD AppService
+		// Prefer the typed RSD AppService transport. It has a defined response
+		// contract, unlike the private Objective-C workspace selector.
 		let heartbeat = HeartbeatManager.shared
 		if heartbeat.isRsd && HeartbeatManager.hasPairingFile() {
 			let launched = try await Task.detached(priority: .userInitiated) { () -> Bool in
@@ -50,7 +46,7 @@ public enum AppLifecycleService {
 			}
 		}
 
-		// 3. Try registered URL Schemes
+		// Fall back to registered URL schemes when the device service is unavailable.
 		for scheme in urlSchemes {
 			let clean = scheme.trimmingCharacters(in: .whitespacesAndNewlines)
 			guard !clean.isEmpty, let url = URL(string: "\(clean)://") else { continue }
@@ -136,18 +132,4 @@ public enum AppLifecycleService {
 		try await InstallationAppProxy.deleteApp(for: bundleIdentifier)
 	}
 
-	private static func _openViaWorkspace(bundleIdentifier: String) -> Bool {
-		guard let workspaceClass = NSClassFromString("LSApplicationWorkspace") as? NSObject.Type else {
-			return false
-		}
-		let defaultSelector = NSSelectorFromString("defaultWorkspace")
-		guard workspaceClass.responds(to: defaultSelector) else { return false }
-		guard let workspace = workspaceClass.perform(defaultSelector)?.takeUnretainedValue() as? NSObject else {
-			return false
-		}
-		let openSelector = NSSelectorFromString("openApplicationWithBundleID:")
-		guard workspace.responds(to: openSelector) else { return false }
-		let result = workspace.perform(openSelector, with: bundleIdentifier)
-		return result != nil
-	}
 }

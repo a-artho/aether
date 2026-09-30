@@ -13,22 +13,19 @@ struct InstalledApp: Identifiable, Equatable, Hashable {
 	let version: String?
 	let build: String?
 	let appInfo: AppInfo?
-	let profileInfo: ProvisioningProfileInfo?
 
 	init(
 		bundleIdentifier: String,
 		name: String,
 		version: String? = nil,
 		build: String? = nil,
-		appInfo: AppInfo? = nil,
-		profileInfo: ProvisioningProfileInfo? = nil
+		appInfo: AppInfo? = nil
 	) {
 		self.bundleIdentifier = bundleIdentifier
 		self.name = name
 		self.version = version
 		self.build = build
 		self.appInfo = appInfo
-		self.profileInfo = profileInfo
 	}
 
 	var id: String { bundleIdentifier }
@@ -38,7 +35,6 @@ struct InstalledApp: Identifiable, Equatable, Hashable {
 		lhs.bundleIdentifier == rhs.bundleIdentifier
 			&& lhs.version == rhs.version
 			&& lhs.build == rhs.build
-			&& lhs.profileInfo == rhs.profileInfo
 	}
 
 	func hash(into hasher: inout Hasher) {
@@ -143,27 +139,14 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		NotificationCenter.default.addObserver(forName: Notification.Name("Feather.mockApps"), object: nil, queue: .main) { [weak self] _ in
 			Task { @MainActor [weak self] in
 				guard let self else { return }
-				let sampleApps: [(name: String, id: String, ver: String, build: String, days: Int, type: String)] = [
-					("Delta", "com.rileytestut.Delta", "1.6.2", "240", 5, "Free Apple ID (7 Days)"),
-					("Apollo", "com.christianselig.apollo", "1.15.11", "189", 180, "Apple Developer (1 Year)"),
-					("RetroArch", "org.libretro.RetroArch", "1.19.1", "1", 340, "Enterprise / In-House"),
-					("Enmity", "com.discord.enmity", "214.0", "452", 0, "Free Apple ID (7 Days)"),
-					("TrollStore", "com.opa334.TrollStore", "2.0.15", "1", 28, "Apple Developer (1 Year)")
+				let sampleApps: [(name: String, id: String, ver: String, build: String)] = [
+					("Delta", "com.rileytestut.Delta", "1.6.2", "240"),
+					("Apollo", "com.christianselig.apollo", "1.15.11", "189"),
+					("RetroArch", "org.libretro.RetroArch", "1.19.1", "1"),
+					("Enmity", "com.discord.enmity", "214.0", "452"),
+					("TrollStore", "com.opa334.TrollStore", "2.0.15", "1")
 				]
 				self.apps = sampleApps.map { item in
-					let expDate = Date().addingTimeInterval(Double(item.days * 86400) + 3600 * 14)
-					let profile = ProvisioningProfileInfo(
-						applicationIdentifier: "TEAMID.\(item.id)",
-						expirationDate: expDate,
-						teamIdentifiers: ["TEAMID"],
-						entitlementTeamIdentifier: "TEAMID",
-						provisionedDevices: ["00008101-0000000000000000"],
-						provisionsAllDevices: item.type.contains("Enterprise"),
-						name: "iOS Team Provisioning Profile: \(item.id)",
-						teamName: "\(item.name) Developer Team",
-						creationDate: expDate.addingTimeInterval(-86400 * 7),
-						uuid: UUID().uuidString
-					)
 					let mockAppInfo = AppInfo(
 						CFBundleName: item.name,
 						DTXcodeBuild: "15C500b",
@@ -192,8 +175,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 						name: item.name,
 						version: item.ver,
 						build: item.build,
-						appInfo: mockAppInfo,
-						profileInfo: profile
+						appInfo: mockAppInfo
 					)
 				}
 				self.errorMessage = nil
@@ -245,7 +227,21 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 
 		do {
 			let installedApps = try await proxy.fetchApps(applicationType: "User")
-			let profiles = (try? await proxy.provisioningProfiles()) ?? []
+			let profiles: [ProvisioningProfileInfo]
+			do {
+				profiles = try await proxy.provisioningProfiles()
+				DebugLogManager.shared.log(
+					"Loaded \(profiles.count) provisioning profile\(profiles.count == 1 ? "" : "s") from the device.",
+					category: "Device"
+				)
+			} catch {
+				profiles = []
+				DebugLogManager.shared.log(
+					"Could not load provisioning profiles: \(error.localizedDescription)",
+					category: "Device",
+					level: .error
+				)
+			}
 			updateApplications(with: installedApps, profiles: profiles)
 			DebugLogManager.shared.log(
 				"Loaded \(apps.count) sideloaded app\(apps.count == 1 ? "" : "s") from the device.",
@@ -290,21 +286,12 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 				guard let bundleIdentifier = app.CFBundleIdentifier else { return nil }
 				let name = app.CFBundleDisplayName ?? app.CFBundleName ?? bundleIdentifier
 
-				let matchedProfile = profiles.first { profile in
-					profile.matches(
-						bundleIdentifier: bundleIdentifier,
-						appTeamIdentifier: app.Entitlements?["com.apple.developer.team-identifier"]?.value as? String,
-						appApplicationIdentifier: app.Entitlements?["application-identifier"]?.value as? String
-					)
-				}
-
 				return InstalledApp(
 					bundleIdentifier: bundleIdentifier,
 					name: name,
 					version: app.CFBundleShortVersionString,
 					build: app.CFBundleVersion,
-					appInfo: app,
-					profileInfo: matchedProfile
+					appInfo: app
 				)
 			}
 			.sorted {

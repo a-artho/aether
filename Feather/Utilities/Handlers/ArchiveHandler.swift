@@ -25,6 +25,10 @@ final class ArchiveHandler: NSObject {
 	private let _app: AppSnapshot
 	private let _purpose: Purpose
 	private let _uniqueWorkDir: URL
+	private let _operationLock = NSLock()
+	private var _activeWorkOperations = 0
+	private var _cleanupRequested = false
+	private var _hasCleaned = false
 	
 	init(app: AppSnapshot, viewModel: InstallerStatusViewModel, purpose: Purpose) {
 		self.viewModel = viewModel
@@ -37,6 +41,9 @@ final class ArchiveHandler: NSObject {
 	}
 	
 	func move() async throws {
+		try _beginWorkOperation()
+		defer { _finishWorkOperation() }
+
 		let app = _app
 		let workDirectory = _uniqueWorkDir
 		let payloadURL = try await Task.detached(priority: .utility) { [fileManager = _fileManager] in
@@ -62,6 +69,9 @@ final class ArchiveHandler: NSObject {
 	}
 	
 	func archive() async throws -> URL {
+		try _beginWorkOperation()
+		defer { _finishWorkOperation() }
+
 		return try await Task.detached(priority: .background) { [self] in
 			guard let payloadUrl = self._payloadUrl else {
 				throw SigningFileHandlerError.appNotFound
@@ -105,6 +115,9 @@ final class ArchiveHandler: NSObject {
 	}
 	
 	func moveToArchive(_ package: URL, shouldOpen: Bool = false) async throws -> URL? {
+		try _beginWorkOperation()
+		defer { _finishWorkOperation() }
+
 		let name = _safeFilenameComponent(_app.name ?? _app.identifier ?? "App")
 		let version = _safeFilenameComponent(_app.version ?? "Unknown")
 		let appendingString = "\(name)_\(version)_\(Int(Date().timeIntervalSince1970)).ipa"
@@ -127,6 +140,45 @@ final class ArchiveHandler: NSObject {
 	}
 
 	func clean() {
+		_operationLock.lock()
+		if _hasCleaned {
+			_operationLock.unlock()
+			return
+		}
+		if _activeWorkOperations > 0 {
+			_cleanupRequested = true
+			_operationLock.unlock()
+			return
+		}
+		_hasCleaned = true
+		_operationLock.unlock()
+		_removeWorkDirectory()
+	}
+
+	private func _beginWorkOperation() throws {
+		_operationLock.lock()
+		defer { _operationLock.unlock() }
+		guard !_hasCleaned else {
+			throw SigningFileHandlerError.appNotFound
+		}
+		_activeWorkOperations += 1
+	}
+
+	private func _finishWorkOperation() {
+		_operationLock.lock()
+		_activeWorkOperations -= 1
+		let shouldClean = _activeWorkOperations == 0 && _cleanupRequested && !_hasCleaned
+		if shouldClean {
+			_hasCleaned = true
+		}
+		_operationLock.unlock()
+
+		if shouldClean {
+			_removeWorkDirectory()
+		}
+	}
+
+	private func _removeWorkDirectory() {
 		try? _fileManager.removeItem(at: _uniqueWorkDir)
 	}
 

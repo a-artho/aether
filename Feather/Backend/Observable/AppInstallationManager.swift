@@ -12,6 +12,11 @@ import IDeviceSwift
 
 @MainActor
 final class AppInstallationManager: ObservableObject {
+	private struct InstallationContext: Sendable {
+		let method: Int
+		let serverMethod: Int
+	}
+
 	static let shared = AppInstallationManager()
 	
 	@Published var activeApp: AppInfoPresentable?
@@ -27,14 +32,6 @@ final class AppInstallationManager: ObservableObject {
 	private var installGeneration = UUID()
 	private var cancellables = Set<AnyCancellable>()
 	private var _hasLaunchedSemiLocalInstall = false
-	
-	private var _installationMethod: Int {
-		UserDefaults.standard.integer(forKey: "Feather.installationMethod")
-	}
-	
-	private var _serverMethod: Int {
-		UserDefaults.standard.object(forKey: "Feather.serverMethod") as? Int ?? 1
-	}
 	
 	private init() {}
 	
@@ -55,10 +52,14 @@ final class AppInstallationManager: ObservableObject {
 	
 	func startInstall(app: AppInfoPresentable) {
 		cancel()
+		let context = InstallationContext(
+			method: UserDefaults.standard.integer(forKey: "Feather.installationMethod"),
+			serverMethod: UserDefaults.standard.object(forKey: "Feather.serverMethod") as? Int ?? 1
+		)
 		let appName = app.name ?? app.identifier ?? .localized("app")
 		_log("Install requested for \(appName).", category: "Install", level: .notice)
 		
-		guard app.identifier != Bundle.main.bundleIdentifier || _installationMethod == 1 else {
+		guard app.identifier != Bundle.main.bundleIdentifier || context.method == 1 else {
 			UIAlertController.showAlertWithOk(
 				title: .localized("Install"),
 				message: .localized("You cannot update ‘%@‘ with itself, please use an alternative tool to update it.", arguments: Bundle.main.name)
@@ -66,8 +67,8 @@ final class AppInstallationManager: ObservableObject {
 			return
 		}
 
-		guard _installationMethod == 1 else {
-			_beginInstall(app)
+		guard context.method == 1 else {
+			_beginInstall(app, context: context)
 			return
 		}
 
@@ -87,11 +88,11 @@ final class AppInstallationManager: ObservableObject {
 
 			guard !Task.isCancelled, let self else { return }
 			self.iDevicePreflightTask = nil
-			self._beginInstall(app)
+			self._beginInstall(app, context: context)
 		}
 	}
 
-	private func _beginInstall(_ app: AppInfoPresentable) {
+	private func _beginInstall(_ app: AppInfoPresentable, context: InstallationContext) {
 		let appSnapshot = AppSnapshot(app)
 		let generation = UUID()
 		installGeneration = generation
@@ -101,22 +102,22 @@ final class AppInstallationManager: ObservableObject {
 		self.lastErrorMessage = nil
 		self._hasLaunchedSemiLocalInstall = false
 		_log(
-			"Preparing \(_installationMethod == 1 ? "device" : "server") install for \(app.name ?? app.identifier ?? .localized("app")).",
+			"Preparing \(context.method == 1 ? "device" : "server") install for \(app.name ?? app.identifier ?? .localized("app")).",
 			category: "Install"
 		)
 		
-		let statusVM = InstallerStatusViewModel(isIdevice: _installationMethod == 1)
+		let statusVM = InstallerStatusViewModel(isIdevice: context.method == 1)
 		self.viewModel = statusVM
 		
 		statusVM.$status
 			.receive(on: DispatchQueue.main)
 			.sink { [weak self] newStatus in
-				self?._handleStatusChange(newStatus)
+				self?._handleStatusChange(newStatus, context: context)
 			}
 			.store(in: &cancellables)
 		
 		#if !targetEnvironment(macCatalyst)
-		if _installationMethod == 0 {
+		if context.method == 0 {
 			BackgroundAudioManager.shared.start("installation")
 		}
 		#endif
@@ -142,8 +143,7 @@ final class AppInstallationManager: ObservableObject {
 				let packageUrl = try await handler.archive()
 				try Task.checkCancellation()
 				
-				let method = await MainActor.run { self?._installationMethod ?? 0 }
-				if method == 0 {
+				if context.method == 0 {
 					let serverInstaller = try await MainActor.run {
 						try ServerInstaller(app: appSnapshot, viewModel: statusVM)
 					}
@@ -158,7 +158,7 @@ final class AppInstallationManager: ObservableObject {
 						serverInstaller.packageUrl = packageUrl
 						statusVM.status = .ready
 					}
-				} else if method == 1 {
+				} else {
 					defer { handler.clean() }
 					let proxy = await InstallationProxy(viewModel: statusVM)
 					await MainActor.run {
@@ -196,16 +196,19 @@ final class AppInstallationManager: ObservableObject {
 		UIAlertController.showAlertWithOk(title: title, message: message)
 	}
 	
-	private func _handleStatusChange(_ newStatus: InstallerStatusViewModel.InstallerStatus) {
+	private func _handleStatusChange(
+		_ newStatus: InstallerStatusViewModel.InstallerStatus,
+		context: InstallationContext
+	) {
 		guard let app = activeApp, let statusVM = viewModel else { return }
 		
-		if _installationMethod == 0 {
+		if context.method == 0 {
 			if case .ready = newStatus, let installer = self.installer {
-				if _serverMethod == 0 {
+				if context.serverMethod == 0 {
 					if let installURL = URL(string: installer.iTunesLink) {
 						UIApplication.shared.open(installURL)
 					}
-			} else if _serverMethod == 1, !_hasLaunchedSemiLocalInstall {
+			} else if context.serverMethod == 1, !_hasLaunchedSemiLocalInstall {
 				_hasLaunchedSemiLocalInstall = true
 				let installerID = installer.id
 				installer.launchSemiLocalInstall { [weak self] in
@@ -215,7 +218,7 @@ final class AppInstallationManager: ObservableObject {
 				}
 			}
 			
-			if case .sendingPayload = newStatus, _serverMethod == 1 {
+			if case .sendingPayload = newStatus, context.serverMethod == 1 {
 				self.isWebviewPresenting = false
 			}
 			

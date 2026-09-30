@@ -9,6 +9,20 @@ import NimbleViews
 import UniformTypeIdentifiers
 
 struct SandboxBrowserView: View {
+	private enum SandboxAccessError: LocalizedError {
+		case pairingFileMissing
+		case deviceDisconnected
+
+		var errorDescription: String? {
+			switch self {
+			case .pairingFileMissing:
+				return .localized("A pairing file is required to access app files.")
+			case .deviceDisconnected:
+				return .localized("Connect the device tunnel to access app files.")
+			}
+		}
+	}
+
 	let app: InstalledApp
 	let initialPath: String
 	@State private var currentPath: String
@@ -24,6 +38,7 @@ struct SandboxBrowserView: View {
 	@State private var shareURL: URL?
 	@State private var isSharePresented = false
 	@State private var searchText = ""
+	private static let _directPreviewLimit: Int64 = 25 * 1024 * 1024
 
 	init(app: InstalledApp, path: String = "/") {
 		self.app = app
@@ -107,6 +122,7 @@ struct SandboxBrowserView: View {
 					Image(systemName: "folder.badge.plus")
 				}
 				.accessibilityLabel(.localized("New Folder"))
+				.disabled(!_canAccessSandbox)
 
 				Button {
 					isDocumentPickerPresented = true
@@ -114,6 +130,7 @@ struct SandboxBrowserView: View {
 					Image(systemName: "plus")
 				}
 				.accessibilityLabel(.localized("Import File"))
+				.disabled(!_canAccessSandbox)
 			}
 		}
 		.refreshable {
@@ -186,6 +203,27 @@ struct SandboxBrowserView: View {
 			return items
 		}
 		return items.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+	}
+
+	private var _hasDeviceSandboxAccess: Bool {
+		DeviceConnectionManager.shared.isConnected && HeartbeatManager.hasPairingFile()
+	}
+
+	private var _canAccessSandbox: Bool {
+		#if DEBUG
+		true
+		#else
+		_hasDeviceSandboxAccess
+		#endif
+	}
+
+	private func _requireDeviceSandboxAccess() throws {
+		guard HeartbeatManager.hasPairingFile() else {
+			throw SandboxAccessError.pairingFileMissing
+		}
+		guard DeviceConnectionManager.shared.isConnected else {
+			throw SandboxAccessError.deviceDisconnected
+		}
 	}
 
 	@ViewBuilder
@@ -340,15 +378,18 @@ struct SandboxBrowserView: View {
 		defer { isLoading = false }
 
 		do {
-			if DeviceConnectionManager.shared.isConnected && HeartbeatManager.hasPairingFile() {
+			if _hasDeviceSandboxAccess {
 				items = try await HouseArrestService.contentsOfDirectory(
 					bundleIdentifier: app.bundleIdentifier,
 					path: currentPath
 				)
 			} else {
-				// Mock / Simulator fallback for seamless UI testing & offline mode
+				#if DEBUG
 				try await Task.sleep(for: .milliseconds(120))
 				items = _mockItems(for: currentPath)
+				#else
+				try _requireDeviceSandboxAccess()
+				#endif
 			}
 		} catch {
 			errorMessage = error.localizedDescription
@@ -358,14 +399,18 @@ struct SandboxBrowserView: View {
 	private func _createDirectory(name: String) async {
 		let target = currentPath.hasSuffix("/") ? currentPath + name : currentPath + "/" + name
 		do {
-			if DeviceConnectionManager.shared.isConnected && HeartbeatManager.hasPairingFile() {
+			if _hasDeviceSandboxAccess {
 				try await HouseArrestService.createDirectory(
 					bundleIdentifier: app.bundleIdentifier,
 					path: target
 				)
 			} else {
+				#if DEBUG
 				items.append(SandboxItem(name: name, path: target, isDirectory: true, size: 0, modifiedDate: Date()))
 				items.sort { $0.isDirectory && !$1.isDirectory }
+				#else
+				try _requireDeviceSandboxAccess()
+				#endif
 			}
 			await _loadDirectory()
 		} catch {
@@ -375,14 +420,22 @@ struct SandboxBrowserView: View {
 
 	private func _deleteItem(_ item: SandboxItem) async {
 		do {
-			if DeviceConnectionManager.shared.isConnected && HeartbeatManager.hasPairingFile() {
+			if _hasDeviceSandboxAccess {
 				try await HouseArrestService.deleteItem(
 					bundleIdentifier: app.bundleIdentifier,
 					path: item.path
 				)
-			}
-			withAnimation {
-				items.removeAll { $0.path == item.path }
+				withAnimation {
+					items.removeAll { $0.path == item.path }
+				}
+			} else {
+				#if DEBUG
+				withAnimation {
+					items.removeAll { $0.path == item.path }
+				}
+				#else
+				try _requireDeviceSandboxAccess()
+				#endif
 			}
 		} catch {
 			errorMessage = error.localizedDescription
@@ -394,26 +447,30 @@ struct SandboxBrowserView: View {
 		defer { fileURL.stopAccessingSecurityScopedResource() }
 
 		do {
-			let data = try Data(contentsOf: fileURL)
 			let filename = fileURL.lastPathComponent
 			let target = currentPath.hasSuffix("/") ? currentPath + filename : currentPath + "/" + filename
 
-			if DeviceConnectionManager.shared.isConnected && HeartbeatManager.hasPairingFile() {
-				try await HouseArrestService.writeFile(
+			if _hasDeviceSandboxAccess {
+				try await HouseArrestService.copyFileToDevice(
 					bundleIdentifier: app.bundleIdentifier,
-					path: target,
-					data: data
+					from: fileURL,
+					to: target
 				)
 			} else {
+				#if DEBUG
+				let values = try fileURL.resourceValues(forKeys: [.fileSizeKey])
 				items.append(
 					SandboxItem(
 						name: filename,
 						path: target,
 						isDirectory: false,
-						size: Int64(data.count),
+						size: Int64(values.fileSize ?? 0),
 						modifiedDate: Date()
 					)
 				)
+				#else
+				try _requireDeviceSandboxAccess()
+				#endif
 			}
 			await _loadDirectory()
 		} catch {
@@ -424,13 +481,23 @@ struct SandboxBrowserView: View {
 	private func _openFile(_ item: SandboxItem) async {
 		do {
 			let data: Data
-			if DeviceConnectionManager.shared.isConnected && HeartbeatManager.hasPairingFile() {
+			if _hasDeviceSandboxAccess {
+				guard item.size <= Self._directPreviewLimit else {
+					errorMessage = .localized("Files larger than 25 MB can’t be previewed. Export and share the file instead.")
+					return
+				}
 				data = try await HouseArrestService.readFile(
 					bundleIdentifier: app.bundleIdentifier,
-					path: item.path
+					path: item.path,
+					maximumSize: Int(Self._directPreviewLimit)
 				)
 			} else {
+				#if DEBUG
 				data = "Sample file content for \(item.name)\nGenerated for preview.".data(using: .utf8) ?? Data()
+				#else
+				try _requireDeviceSandboxAccess()
+				return
+				#endif
 			}
 			previewItem = item
 			previewData = data
@@ -442,28 +509,49 @@ struct SandboxBrowserView: View {
 
 	private func _shareFile(_ item: SandboxItem) async {
 		do {
-			let data: Data
-			if DeviceConnectionManager.shared.isConnected && HeartbeatManager.hasPairingFile() {
-				data = try await HouseArrestService.readFile(
+			if _hasDeviceSandboxAccess {
+				let exportDirectory = FileManager.default.temporaryDirectory
+					.appendingPathComponent("FeatherSandboxExports", isDirectory: true)
+				let destination = exportDirectory
+					.appendingPathComponent("\(UUID().uuidString)-\(item.name)")
+				try await HouseArrestService.copyFileFromDevice(
 					bundleIdentifier: app.bundleIdentifier,
-					path: item.path
+					path: item.path,
+					to: destination
 				)
+				_exportFile(at: destination)
 			} else {
-				data = "Sample file content for \(item.name)".data(using: .utf8) ?? Data()
+				#if DEBUG
+				let data = "Sample file content for \(item.name)".data(using: .utf8) ?? Data()
+				_exportFile(item: item, data: data)
+				#else
+				try _requireDeviceSandboxAccess()
+				#endif
 			}
-			_exportFile(item: item, data: data)
 		} catch {
 			errorMessage = error.localizedDescription
 		}
 	}
 
 	private func _exportFile(item: SandboxItem, data: Data) {
-		let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(item.name)
-		try? data.write(to: tempURL)
-		shareURL = tempURL
+		let exportDirectory = FileManager.default.temporaryDirectory
+			.appendingPathComponent("FeatherSandboxExports", isDirectory: true)
+		let tempURL = exportDirectory.appendingPathComponent("\(UUID().uuidString)-\(item.name)")
+		do {
+			try FileManager.default.createDirectory(at: exportDirectory, withIntermediateDirectories: true)
+			try data.write(to: tempURL, options: .atomic)
+			_exportFile(at: tempURL)
+		} catch {
+			errorMessage = error.localizedDescription
+		}
+	}
+
+	private func _exportFile(at url: URL) {
+		shareURL = url
 		isSharePresented = true
 	}
 
+	#if DEBUG
 	private func _mockItems(for path: String) -> [SandboxItem] {
 		if path == "/" {
 			return [
@@ -486,6 +574,7 @@ struct SandboxBrowserView: View {
 			]
 		}
 	}
+	#endif
 }
 
 private struct _FilePreviewView: View {

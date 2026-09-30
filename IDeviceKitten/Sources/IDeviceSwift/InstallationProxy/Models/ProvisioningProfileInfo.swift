@@ -65,47 +65,6 @@ public struct ProvisioningProfileInfo: Equatable, Sendable {
 		self.uuid = plist["UUID"] as? String
 	}
 
-	public var isExpired: Bool {
-		expirationDate <= Date()
-	}
-
-	public var daysRemaining: Int {
-		max(0, Calendar.current.dateComponents([.day], from: Date(), to: expirationDate).day ?? 0)
-	}
-
-	public var timeRemainingFormatted: String {
-		if isExpired {
-			let daysAgo = abs(Calendar.current.dateComponents([.day], from: expirationDate, to: Date()).day ?? 0)
-			return daysAgo == 0 ? "Expired today" : "Expired \(daysAgo)d ago"
-		}
-		let components = Calendar.current.dateComponents([.day, .hour], from: Date(), to: expirationDate)
-		let days = components.day ?? 0
-		let hours = components.hour ?? 0
-		if days > 0 {
-			return "\(days) day\(days == 1 ? "" : "s") left"
-		} else {
-			return "\(max(1, hours)) hr\(hours == 1 ? "" : "s") left"
-		}
-	}
-
-	public var profileType: String {
-		if provisionsAllDevices {
-			return "Enterprise / In-House"
-		}
-		if let creation = creationDate {
-			let totalDays = Calendar.current.dateComponents([.day], from: creation, to: expirationDate).day ?? 0
-			if totalDays <= 8 {
-				return "Free Apple ID (7 Days)"
-			} else {
-				return "Apple Developer (1 Year)"
-			}
-		}
-		if daysRemaining <= 7 && provisionedDevices.count <= 3 {
-			return "Free Apple ID (7 Days)"
-		}
-		return "Apple Developer Program"
-	}
-
 	public func matches(
 		bundleIdentifier: String,
 		appTeamIdentifier: String? = nil,
@@ -128,6 +87,13 @@ public struct ProvisioningProfileInfo: Equatable, Sendable {
 			return false
 		}
 
+		return _matchesApplicationIdentifier(bundleIdentifier: bundleIdentifier, teamIdentifier: teamIdentifier)
+	}
+
+	private func _matchesApplicationIdentifier(
+		bundleIdentifier: String,
+		teamIdentifier: String
+	) -> Bool {
 		var pattern = applicationIdentifier
 		pattern.removeFirst(teamIdentifier.count + 1)
 

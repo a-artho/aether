@@ -32,27 +32,7 @@ struct SourceAppsDetailView: View {
 	var body: some View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: 24) {
-				HStack(alignment: .center, spacing: 14) {
-					if let iconURL = app.iconURL {
-						LazyImage(url: iconURL) { state in
-							if let image = state.image {
-								image.appIconStyle(size: 82, isCircle: false)
-							} else {
-								standardIcon
-							}
-						}
-					} else {
-						standardIcon
-					}
-
-					VStack(alignment: .leading, spacing: 6) {
-						_headerSpecs()
-
-						_headerDeveloper()
-					}
-					.frame(maxWidth: .infinity, alignment: .leading)
-				}
-				.padding(.top, 4)
+				_metadataTiles()
 
 				if let screenshotURLs = app.screenshotURLs, !screenshotURLs.isEmpty {
 					NBSection(.localized("Screenshots")) {
@@ -160,6 +140,14 @@ struct SourceAppsDetailView: View {
 		.navigationTitle(app.currentName)
 		.navigationBarTitleDisplayMode(.inline)
 		.toolbar {
+			ToolbarItem(placement: .principal) {
+				HStack(spacing: 8) {
+					_navigationIcon
+					Text(app.currentName)
+						.font(.headline)
+						.lineLimit(1)
+				}
+			}
 			ToolbarItem(placement: .topBarTrailing) {
 				DownloadButtonView(
 					sourceURL: sourceURL,
@@ -185,21 +173,19 @@ struct SourceAppsDetailView: View {
 		}
 	}
 	
-	var standardIcon: some View {
-		Image("App_Unknown").appIconStyle(size: 82, isCircle: false)
-	}
-
-	private var _headerSubtitle: String? {
-		if let developer = app.developer, !developer.isEmpty {
-			return developer
+	@ViewBuilder
+	private var _navigationIcon: some View {
+		if let iconURL = app.iconURL {
+			LazyImage(url: iconURL) { state in
+				if let image = state.image {
+					image.appIconStyle(size: 26, isCircle: false)
+				} else {
+					Image("App_Unknown").appIconStyle(size: 26, isCircle: false)
+				}
+			}
+		} else {
+			Image("App_Unknown").appIconStyle(size: 26, isCircle: false)
 		}
-		if let category = app.category, !category.isEmpty {
-			return category.capitalized
-		}
-		if let sourceName = source.name, !sourceName.isEmpty {
-			return sourceName
-		}
-		return nil
 	}
 
 	private func _shareApp() {
@@ -236,56 +222,42 @@ struct SourceAppsDetailView: View {
 // MARK: - SourceAppsDetailView (Extension): Builders
 extension SourceAppsDetailView {
 	@ViewBuilder
-	private func _headerSpecs() -> some View {
-		let hasVersion = app.currentVersion != nil && !(app.currentVersion?.isEmpty ?? true)
-		let hasSize = app.size != nil
+	private func _metadataTiles() -> some View {
+		let version = app.currentVersion.flatMap { $0.isEmpty ? nil : $0 } ?? "—"
+		let storage = app.size?.formattedByteCount ?? "—"
 
-		if hasVersion || hasSize {
-			HStack(spacing: 6) {
-				if let version = app.currentVersion, !version.isEmpty {
-					HStack(spacing: 3) {
-						Image(systemName: "tag")
-							.font(.caption2.weight(.medium))
-							.foregroundStyle(Color.blue)
-						Text(version)
-							.font(.subheadline)
-					}
-				}
+		HStack(spacing: 12) {
+			_metadataTile(
+				value: version,
+				systemImage: "tag",
+				color: .blue
+			)
 
-				if hasVersion && hasSize {
-					Text("•")
-						.font(.caption2)
-						.foregroundStyle(Color.secondary.opacity(0.5))
-				}
-
-				if let size = app.size {
-					HStack(spacing: 3) {
-						Image(systemName: "internaldrive")
-							.font(.caption2.weight(.medium))
-							.foregroundStyle(Color.purple)
-						Text(size.formattedByteCount)
-							.font(.subheadline)
-					}
-				}
-			}
-			.foregroundStyle(.secondary)
-			.lineLimit(1)
+			_metadataTile(
+				value: storage,
+				systemImage: "internaldrive",
+				color: .purple
+			)
 		}
 	}
 
-	@ViewBuilder
-	private func _headerDeveloper() -> some View {
-		if let developer = _headerSubtitle, !developer.isEmpty {
-			HStack(spacing: 2) {
-				Text("@")
-					.font(.subheadline.weight(.medium))
-					.foregroundStyle(Color.orange)
-				Text(developer)
-					.foregroundStyle(.secondary)
-			}
-			.font(.subheadline)
-			.lineLimit(1)
+	private func _metadataTile(value: String, systemImage: String, color: Color) -> some View {
+		HStack(spacing: 8) {
+			Image(systemName: systemImage)
+				.font(.subheadline.weight(.semibold))
+				.foregroundStyle(color)
+			Text(value)
+				.font(.headline)
+				.foregroundStyle(.primary)
+				.lineLimit(1)
+				.minimumScaleFactor(0.75)
 		}
+		.padding(.horizontal, 12)
+		.frame(maxWidth: .infinity, minHeight: 54)
+		.background(
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.fill(Color(uiColor: .secondarySystemGroupedBackground))
+		)
 	}
 
 	@ViewBuilder

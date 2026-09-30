@@ -94,9 +94,7 @@ struct InstalledAppsView: View {
 										isActive: Binding(
 											get: { selectedAppBundleId == app.bundleIdentifier },
 											set: { isActive in
-												if !isActive && selectedAppBundleId == app.bundleIdentifier {
-													selectedAppBundleId = nil
-												}
+												selectedAppBundleId = isActive ? app.bundleIdentifier : nil
 											}
 										)
 									) {
@@ -188,6 +186,7 @@ struct InstalledAppsView: View {
 						Image(systemName: "arrow.left.arrow.right")
 					}
 					.accessibilityLabel(.localized("Switch Installation Mode"))
+					.disabled(installationManager.isInstalling)
 				}
 
 				ToolbarItem(placement: .principal) {
@@ -509,14 +508,6 @@ private struct InstalledAppCellView: View {
 			}
 			.frame(maxWidth: .infinity, alignment: .leading)
 
-			if let profile = app.profileInfo {
-				Text(profile.timeRemainingFormatted)
-					.font(.caption2.weight(.semibold))
-					.foregroundStyle(_expirationColor(for: profile))
-					.padding(.horizontal, 7)
-					.padding(.vertical, 3)
-					.background(_expirationColor(for: profile).opacity(0.12), in: Capsule())
-			}
 		}
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
@@ -528,15 +519,6 @@ private struct InstalledAppCellView: View {
 		.contentShape(Rectangle())
 	}
 
-	private func _expirationColor(for profile: ProvisioningProfileInfo) -> Color {
-		if profile.isExpired {
-			return .red
-		} else if profile.daysRemaining <= 2 {
-			return .orange
-		} else {
-			return .green
-		}
-	}
 }
 
 struct InstalledAppIconView: View {
