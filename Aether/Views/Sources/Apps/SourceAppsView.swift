@@ -168,8 +168,10 @@ struct SourceAppsView: View {
 				ToolbarItem(placement: .topBarTrailing) {
 					Button {
 						_isSearchFocused = false
-						_isSearchPresented = false
-						_searchText = ""
+						withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+							_isSearchPresented = false
+							_searchText = ""
+						}
 					} label: {
 						Image(systemName: "xmark")
 					}
@@ -186,6 +188,7 @@ struct SourceAppsView: View {
 				}
 			}
 		}
+		.animation(.spring(response: 0.35, dampingFraction: 0.82), value: _isSearchPresented)
 		.onAppear {
 			if !hasLoadedOnce, viewModel.isFinished {
 				_load()
@@ -211,8 +214,10 @@ struct SourceAppsView: View {
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.closeSearch"))) { _ in
 			_isSearchFocused = false
-			_isSearchPresented = false
-			_searchText = ""
+			withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+				_isSearchPresented = false
+				_searchText = ""
+			}
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.openApp"))) { notif in
 			let targetName = notif.userInfo?["name"] as? String
@@ -244,7 +249,9 @@ struct SourceAppsView: View {
 
 	private func _presentSearch() {
 		guard !_isSearchPresented else { return }
-		_isSearchPresented = true
+		withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+			_isSearchPresented = true
+		}
 	}
 	
 	struct SourceRepositoryContext: Equatable {
