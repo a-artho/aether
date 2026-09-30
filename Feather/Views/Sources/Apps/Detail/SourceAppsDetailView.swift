@@ -224,40 +224,59 @@ extension SourceAppsDetailView {
 	@ViewBuilder
 	private func _metadataTiles() -> some View {
 		let version = app.currentVersion.flatMap { $0.isEmpty ? nil : $0 } ?? "—"
-		let storage = app.size?.formattedByteCount ?? "—"
+		let size = app.size?.formattedByteCount ?? "—"
 
 		HStack(spacing: 12) {
 			_metadataTile(
-				value: version,
+				title: .localized("Version"),
+				subtitle: version,
 				systemImage: "tag",
 				color: .blue
 			)
 
 			_metadataTile(
-				value: storage,
+				title: .localized("Size"),
+				subtitle: size,
 				systemImage: "internaldrive",
 				color: .purple
 			)
 		}
 	}
 
-	private func _metadataTile(value: String, systemImage: String, color: Color) -> some View {
+	private func _metadataTile(
+		title: String,
+		subtitle: String,
+		systemImage: String,
+		color: Color
+	) -> some View {
 		HStack(spacing: 8) {
 			Image(systemName: systemImage)
-				.font(.subheadline.weight(.semibold))
+				.font(.system(size: 17, weight: .semibold))
 				.foregroundStyle(color)
-			Text(value)
-				.font(.headline)
-				.foregroundStyle(.primary)
-				.lineLimit(1)
-				.minimumScaleFactor(0.75)
+				.frame(width: 24, height: 24)
+
+			VStack(alignment: .leading, spacing: 2) {
+				Text(title)
+					.font(.subheadline.weight(.semibold))
+					.foregroundStyle(.primary)
+					.lineLimit(1)
+
+				Text(subtitle)
+					.font(.caption2.weight(.medium))
+					.foregroundStyle(.secondary)
+					.lineLimit(1)
+					.minimumScaleFactor(0.8)
+			}
+
+			Spacer(minLength: 0)
 		}
-		.padding(.horizontal, 12)
-		.frame(maxWidth: .infinity, minHeight: 54)
-		.background(
-			RoundedRectangle(cornerRadius: 16, style: .continuous)
+		.padding(.horizontal, 10)
+		.padding(.vertical, 8)
+		.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+		.background {
+			RoundedRectangle(cornerRadius: 15, style: .continuous)
 				.fill(Color(uiColor: .secondarySystemGroupedBackground))
-		)
+		}
 	}
 
 	@ViewBuilder
