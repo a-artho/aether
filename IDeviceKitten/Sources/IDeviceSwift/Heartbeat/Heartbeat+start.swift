@@ -182,53 +182,61 @@ extension HeartbeatManager {
 		let pairingFile = try getPairingRsd()
 		defer { rp_pairing_file_free(pairingFile) }
 
-		var addr = sockaddr_in()
-		memset(&addr, 0, MemoryLayout.size(ofValue: addr))
-		addr.sin_family = sa_family_t(AF_INET)
-		addr.sin_port = CFSwapInt16HostToBig(port_rsd)
+		var address = sockaddr_in()
+		memset(&address, 0, MemoryLayout.size(ofValue: address))
+		address.sin_family = sa_family_t(AF_INET)
 
-		guard inet_pton(AF_INET, ipAddress, &addr.sin_addr) == 1 else {
+		guard inet_pton(AF_INET, ipAddress, &address.sin_addr) == 1 else {
 			throw IDeviceConnectionError.rsdEndpointInvalid
 		}
 
-		let probe = checkRSDEndpoint(timeoutInSeconds: 0.75)
-		guard probe.isConnected else {
-			throw IDeviceConnectionError.rsdTunnelUnavailable(probe.error ?? "RSD endpoint unreachable")
-		}
+		var ports = RSDPortDiscovery.resolvePorts()
+		if !ports.contains(port_rsd) { ports.append(port_rsd) }
+		var failures: [String] = []
 
-		var newAdapter: AdapterHandle?
-		var newHandshake: RsdHandshakeHandle?
-
-		let result = withUnsafePointer(to: &addr) {
-			$0.withMemoryRebound(to: idevice_sockaddr.self, capacity: 1) { ptr in
-				tunnel_create_rppairing(
-					ptr,
-					socklen_t(MemoryLayout<sockaddr_in>.size),
-					"IdeviceKit",
-					pairingFile,
-					nil,
-					nil,
-					&newAdapter,
-					&newHandshake
-				)
+		for port in ports {
+			address.sin_port = CFSwapInt16HostToBig(port)
+			var newAdapter: AdapterHandle?
+			var newHandshake: RsdHandshakeHandle?
+			let result = withUnsafePointer(to: &address) {
+				$0.withMemoryRebound(to: idevice_sockaddr.self, capacity: 1) { ptr in
+					tunnel_create_rppairing(
+						ptr,
+						socklen_t(MemoryLayout<sockaddr_in>.size),
+						"IdeviceKit",
+						pairingFile,
+						nil,
+						nil,
+						&newAdapter,
+						&newHandshake
+					)
+				}
 			}
+
+			if let result {
+				if let newHandshake { rsd_handshake_free(newHandshake) }
+				if let newAdapter { adapter_free(newAdapter) }
+				let error = IDeviceSwiftError(result)
+				failures.append("\(ipAddress):\(port) — \(error.localizedDescription)")
+				continue
+			}
+
+			guard let newAdapter, let newHandshake else {
+				if let newHandshake { rsd_handshake_free(newHandshake) }
+				if let newAdapter { adapter_free(newAdapter) }
+				failures.append("\(ipAddress):\(port) — The tunnel returned incomplete handles.")
+				continue
+			}
+
+			rsdAdapter = newAdapter
+			rsdHandshake = newHandshake
+			return
 		}
 
-		if let result {
-			if let newHandshake { rsd_handshake_free(newHandshake) }
-			if let newAdapter { adapter_free(newAdapter) }
-			let error = IDeviceSwiftError(result)
-			throw IDeviceConnectionError.rsdTunnelUnavailable(error.localizedDescription)
-		}
-
-		guard let newAdapter, let newHandshake else {
-			if let newHandshake { rsd_handshake_free(newHandshake) }
-			if let newAdapter { adapter_free(newAdapter) }
-			throw IDeviceConnectionError.rsdTunnelUnavailable("The tunnel returned incomplete handles.")
-		}
-
-		rsdAdapter = newAdapter
-		rsdHandshake = newHandshake
+		let detail = failures.last ?? "No tunnel handles were returned."
+		throw IDeviceConnectionError.rsdTunnelUnavailable(
+			"Tried ports \(ports.map(String.init).joined(separator: ", ")). Last error: \(detail)"
+		)
 	}
 
 	public func resetRSDTunnel() {

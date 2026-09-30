@@ -1,5 +1,6 @@
 import Foundation
 import IDevice
+import IDeviceSwift
 
 enum LocationEngineError: LocalizedError {
     case invalidIP
@@ -166,7 +167,7 @@ enum LocationEngine {
         defer { rp_pairing_file_free(pairingHandle) }
 
 		progress(.findingService)
-		var ports = RemotePairingDiscovery.resolvePorts()
+		var ports = RSDPortDiscovery.resolvePorts()
 		if !ports.contains(49152) { ports.append(49152) }
         var failures: [String] = []
         progress(.openingTunnel)

@@ -13,16 +13,13 @@ extension HeartbeatManager {
 	/// Verifies that Aether can reach the paired device's Installation Proxy service.
 	/// Unlike a raw TCP probe, this validates the active transport and pairing flow.
 	public func checkDeviceConnection(
-		timeoutInSeconds: Double = 2.0,
-		endpointAlreadyValidated: Bool = false
+		timeoutInSeconds: Double = 2.0
 	) -> (isConnected: Bool, error: String?, errorCode: Int32?) {
 		if isRsd {
-			if !endpointAlreadyValidated {
-				let probe = checkRSDEndpoint(timeoutInSeconds: min(timeoutInSeconds, 1.5))
-				guard probe.isConnected else {
-					return (false, probe.error, nil)
-				}
-			}
+			// The packet tunnel can be usable to the native Remote Pairing client
+			// before a generic POSIX TCP probe to its virtual address succeeds.
+			// Let the handshake below verify the real transport instead of rejecting
+			// it based on that duplicate preflight.
 			return _checkRSDDeviceConnection()
 		}
 

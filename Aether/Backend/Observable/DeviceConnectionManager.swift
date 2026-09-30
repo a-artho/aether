@@ -365,26 +365,20 @@ public final class DeviceConnectionManager: ObservableObject {
 		}
 
 		let isRsd = HeartbeatManager.shared.isRsd
-		let probe: (isConnected: Bool, error: String?) = await Task.detached(priority: .userInitiated) {
-			if isRsd {
-				return HeartbeatManager.shared.checkRSDEndpoint(timeoutInSeconds: 1.5)
-			} else {
-				return HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 1.5)
-			}
-		}.value
+		if !isRsd {
+			let probe = await Task.detached(priority: .userInitiated) {
+				HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 1.5)
+			}.value
 
-		guard probe.isConnected else {
-			await _resetRSDTunnel()
-			_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
-			_log("Device endpoint probe failed: \(probe.error ?? "port unreachable").", level: .warning)
-			throw DeviceConnectionError.tunnelUnavailable(probe.error ?? "Port unreachable")
+			guard probe.isConnected else {
+				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+				_log("Device endpoint probe failed: \(probe.error ?? "port unreachable").", level: .warning)
+				throw DeviceConnectionError.tunnelUnavailable(probe.error ?? "Port unreachable")
+			}
 		}
 
 		let checkResult = await Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(
-				timeoutInSeconds: 1.5,
-				endpointAlreadyValidated: isRsd
-			)
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
 		}.value
 
 		if checkResult.isConnected {
@@ -461,39 +455,36 @@ public final class DeviceConnectionManager: ObservableObject {
 			}
 		}
 
-		// Step 1: Fast non-blocking endpoint probe
+		// The legacy transport needs a socket preflight. RSD is verified by its
+		// native Remote Pairing handshake below; a raw probe can fail even when
+		// the packet tunnel is ready.
 		let isRsd = HeartbeatManager.shared.isRsd
-		let probe: (isConnected: Bool, error: String?) = await Task.detached(priority: .utility) {
-			if isRsd {
-				return HeartbeatManager.shared.checkRSDEndpoint(timeoutInSeconds: 1.5)
-			} else {
-				return HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 1.5)
-			}
-		}.value
+		if !isRsd {
+			let probe = await Task.detached(priority: .utility) {
+				HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 1.5)
+			}.value
 
-		guard
-			!Task.isCancelled,
-			reconciliationGeneration == transitionGeneration
-		else {
-			return
-		}
-
-		if !probe.isConnected {
-			if expectedState == true && !force && !isExpired {
-				// During active connection attempt that hasn't timed out, wait for retries
+			guard
+				!Task.isCancelled,
+				reconciliationGeneration == transitionGeneration
+			else {
 				return
 			}
-			await _resetRSDTunnel()
-			_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
-			return
+
+			if !probe.isConnected {
+				if expectedState == true && !force && !isExpired {
+					// During active connection attempt that hasn't timed out, wait for retries.
+					return
+				}
+				await _resetRSDTunnel()
+				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+				return
+			}
 		}
 
 		// Step 2: Full Installation Proxy check (validates pairing + transport)
 		let checkResult = await Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(
-				timeoutInSeconds: 1.5,
-				endpointAlreadyValidated: isRsd
-			)
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
 		}.value
 
 		guard

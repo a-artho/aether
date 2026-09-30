@@ -38,7 +38,7 @@ struct AppIconView: View {
 	// dont translate
 	var sections: [String: [AltIcon]] = [
 		"Main": [
-			AltIcon(displayName: "Aether", author: "Samara", key: nil),
+			AltIcon(displayName: "Aether", author: "Artho", key: nil),
 			AltIcon(displayName: "Feather (macOS)", author: "Samara", key: "V2Mac"),
 			AltIcon(displayName: "Feather v1", author: "Samara", key: "V1"),
 			AltIcon(displayName: "Feather v1 (macOS)", author: "Samara", key: "V1Mac"),
@@ -76,9 +76,12 @@ extension AppIconView {
 		icon: AppIconView.AltIcon
 	) -> some View {
 		Button {
-			UIApplication.shared.setAlternateIconName(icon.key) { _ in
+			let selectedIcon = icon.key
+			UIApplication.shared.setAlternateIconName(selectedIcon) { error in
 				DispatchQueue.main.async {
-					currentIcon = UIApplication.shared.alternateIconName
+					// UIKit may not have refreshed alternateIconName when its completion
+					// runs. The successfully requested key is the source of truth here.
+					currentIcon = error == nil ? selectedIcon : UIApplication.shared.alternateIconName
 				}
 			}
 		} label: {
