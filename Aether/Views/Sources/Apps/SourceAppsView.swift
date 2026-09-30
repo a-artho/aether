@@ -135,6 +135,15 @@ struct SourceAppsView: View {
 							.focused($_isSearchFocused)
 							.textInputAutocapitalization(.never)
 							.disableAutocorrection(true)
+							.onAppear {
+								// A toolbar principal item is created after the navigation
+								// bar's layout pass. Focus from the field itself instead of
+								// racing that layout with a fixed delay.
+								DispatchQueue.main.async {
+									guard _isSearchPresented else { return }
+									_isSearchFocused = true
+								}
+							}
 
 						if !_searchText.isEmpty {
 							Button {
@@ -159,10 +168,8 @@ struct SourceAppsView: View {
 				ToolbarItem(placement: .topBarTrailing) {
 					Button {
 						_isSearchFocused = false
-						withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-							_isSearchPresented = false
-							_searchText = ""
-						}
+						_isSearchPresented = false
+						_searchText = ""
 					} label: {
 						Image(systemName: "xmark")
 					}
@@ -204,10 +211,8 @@ struct SourceAppsView: View {
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.closeSearch"))) { _ in
 			_isSearchFocused = false
-			withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-				_isSearchPresented = false
-				_searchText = ""
-			}
+			_isSearchPresented = false
+			_searchText = ""
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.openApp"))) { notif in
 			let targetName = notif.userInfo?["name"] as? String
@@ -239,16 +244,7 @@ struct SourceAppsView: View {
 
 	private func _presentSearch() {
 		guard !_isSearchPresented else { return }
-
-		withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-			_isSearchPresented = true
-		}
-
-		Task { @MainActor in
-			try? await Task.sleep(nanoseconds: 250_000_000)
-			guard _isSearchPresented else { return }
-			_isSearchFocused = true
-		}
+		_isSearchPresented = true
 	}
 	
 	struct SourceRepositoryContext: Equatable {

@@ -45,6 +45,10 @@ struct AetherApp: App {
 
 	private func _handleURL(_ url: URL) {
 		if url.scheme == "aether" {
+			if url.host == "cellular-assist" {
+				CellularAssistManager.shared.handleCallback(url)
+				return
+			}
 			if url.host == "tab" {
 				guard
 					let components = URLComponents(url: url, resolvingAgainstBaseURL: false),

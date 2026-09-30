@@ -11,10 +11,6 @@ struct InstalledAppDetailView: View {
 	let app: InstalledApp
 	@ObservedObject var store: InstalledAppsStore
 
-	@State private var isLaunching = false
-	@State private var launchErrorMessage: String?
-	@State private var isTerminating = false
-	@State private var terminateResultMessage: String?
 	@State private var isUninstallPresented = false
 	@State private var isUninstalling = false
 	@State private var uninstallErrorMessage: String?
@@ -99,26 +95,6 @@ struct InstalledAppDetailView: View {
 				}
 			}
 		}
-		.alert(.localized("Launch Failed"), isPresented: Binding(
-			get: { launchErrorMessage != nil },
-			set: { if !$0 { launchErrorMessage = nil } }
-		)) {
-			Button(.localized("OK"), role: .cancel) {}
-		} message: {
-			if let msg = launchErrorMessage {
-				Text(msg)
-			}
-		}
-		.alert(.localized("Process Control"), isPresented: Binding(
-			get: { terminateResultMessage != nil },
-			set: { if !$0 { terminateResultMessage = nil } }
-		)) {
-			Button(.localized("OK"), role: .cancel) {}
-		} message: {
-			if let msg = terminateResultMessage {
-				Text(msg)
-			}
-		}
 		.alert(.localized("Uninstall \(app.name)?"), isPresented: $isUninstallPresented) {
 			Button(.localized("Uninstall"), role: .destructive) {
 				Task { await _uninstallApp() }
@@ -143,61 +119,32 @@ struct InstalledAppDetailView: View {
 	// MARK: - Views
 
 	private var _appControlsGrid: some View {
-		VStack(spacing: 10) {
-			HStack(spacing: 12) {
-				_appAccessoryTile(
-					title: .localized("Launch"),
-					subtitle: isLaunching ? .localized("Launching...") : .localized("Open App"),
-					systemImage: "play.fill",
-					isActive: true,
-					activeColor: .blue,
-					isDisabled: isLaunching,
-					isLoading: isLaunching,
-					action: {
-						Task { await _launchApp() }
-					}
-				)
+		HStack(spacing: 12) {
+			_appAccessoryTile(
+				title: .localized("Files"),
+				subtitle: .localized("App Sandbox"),
+				systemImage: "folder.fill",
+				isActive: true,
+				activeColor: .cyan,
+				action: {
+					isFilesPresented = true
+				}
+			)
 
-				_appAccessoryTile(
-					title: .localized("Files"),
-					subtitle: .localized("App Sandbox"),
-					systemImage: "folder.fill",
-					isActive: true,
-					activeColor: .cyan,
-					action: {
-						isFilesPresented = true
-					}
-				)
-			}
-
-			HStack(spacing: 12) {
-				_appAccessoryTile(
-					title: .localized("Kill"),
-					subtitle: isTerminating ? .localized("Stopping...") : .localized("Force Quit"),
-					systemImage: "xmark.octagon.fill",
-					isActive: true,
-					activeColor: .orange,
-					isDisabled: isTerminating,
-					isLoading: isTerminating,
-					action: {
-						Task { await _terminateApp() }
-					}
-				)
-
-				_appAccessoryTile(
-					title: .localized("Uninstall"),
-					subtitle: .localized("Remove App"),
-					systemImage: "trash.fill",
-					isActive: true,
-					activeColor: .red,
-					isDisabled: isUninstalling,
-					isLoading: isUninstalling,
-					action: {
-						isUninstallPresented = true
-					}
-				)
-			}
+			_appAccessoryTile(
+				title: .localized("Uninstall"),
+				subtitle: .localized("Remove App"),
+				systemImage: "trash.fill",
+				isActive: true,
+				activeColor: .red,
+				isDisabled: isUninstalling,
+				isLoading: isUninstalling,
+				action: {
+					isUninstallPresented = true
+				}
+			)
 		}
+		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
 	@ViewBuilder
@@ -255,39 +202,6 @@ struct InstalledAppDetailView: View {
 	}
 
 	// MARK: - Actions
-
-	private func _launchApp() async {
-		isLaunching = true
-		launchErrorMessage = nil
-		defer { isLaunching = false }
-
-		do {
-			try await AppLifecycleService.launchApp(
-				bundleIdentifier: app.bundleIdentifier,
-				urlSchemes: app.registeredUrlSchemes
-			)
-		} catch {
-			launchErrorMessage = error.localizedDescription
-		}
-	}
-
-	private func _terminateApp() async {
-		isTerminating = true
-		terminateResultMessage = nil
-		defer { isTerminating = false }
-
-		do {
-			let killed = try await AppLifecycleService.terminateApp(
-				bundleIdentifier: app.bundleIdentifier,
-				executableName: app.executableName
-			)
-			terminateResultMessage = killed
-				? .localized("Successfully terminated running process.")
-				: .localized("No running process was found for this app.")
-		} catch {
-			terminateResultMessage = error.localizedDescription
-		}
-	}
 
 	private func _uninstallApp() async {
 		isUninstalling = true

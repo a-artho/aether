@@ -10,6 +10,7 @@ import IDeviceSwift
 struct TunnelView: View {
 	@ObservedObject private var connection = DeviceConnectionManager.shared
 	@ObservedObject private var embeddedTunnel = EmbeddedTunnelManager.shared
+	@ObservedObject private var cellularAssist = CellularAssistManager.shared
 	@State private var isLocalDevVPNAvailable = false
 
 	@State private var draftInterfaceIP: String = ""
@@ -50,6 +51,8 @@ struct TunnelView: View {
 			case .localDevVPN:
 				_localDevVPNControls
 			}
+
+			_automationControls
 		}
 		.onAppear {
 			_refreshLocalDevVPNAvailability()
@@ -72,18 +75,6 @@ struct TunnelView: View {
 				}
 			}
 
-			Toggle(isOn: Binding(
-				get: { connection.isAutoTunnelLifecycleEnabled },
-				set: { connection.setAutoTunnelLifecycle($0) }
-			)) {
-				SettingsRowLabel(
-					.localized("Auto Start & Stop"),
-					systemImage: "bolt.badge.automatic",
-					backgroundColor: .blue
-				)
-			}
-		} footer: {
-			Text(.localized("Automatically starts tunneling when Aether opens, and stops it when backgrounded if location spoofing is off and no apps are installing."))
 		}
 
 		Section {
@@ -182,19 +173,32 @@ struct TunnelView: View {
 				}
 			}
 
+		}
+	}
+
+	@ViewBuilder
+	private var _automationControls: some View {
+		Section {
 			Toggle(isOn: Binding(
 				get: { connection.isAutoTunnelLifecycleEnabled },
 				set: { connection.setAutoTunnelLifecycle($0) }
 			)) {
-				SettingsRowLabel(
-					.localized("Auto Start & Stop"),
-					systemImage: "bolt.badge.automatic",
-					backgroundColor: .blue
-				)
+				SettingsRowLabel(.localized("Tunnel Lifecycle"), systemImage: "bolt.badge.automatic", backgroundColor: .blue)
 			}
+
+			Toggle(isOn: Binding(
+				get: { cellularAssist.isEnabled },
+				set: { cellularAssist.requestEnabled($0) }
+			)) {
+				SettingsRowLabel(.localized("Cellular Assist"), systemImage: "antenna.radiowaves.left.and.right", backgroundColor: .orange)
+			}
+			.disabled(cellularAssist.isBusy || connection.tunnelMethod != .inApp)
+		} header: {
+			Text(.localized("Automation"))
 		} footer: {
-			Text(.localized("Automatically starts tunneling when Aether opens, and stops it when backgrounded if location spoofing is off and no apps are installing."))
+			Text(.localized("Tunnel Lifecycle starts the device tunnel when Aether opens and stops it in the background when no device task is active. Cellular Assist briefly changes Mobile Data when a cellular tunnel needs help connecting."))
 		}
+		.disabled(connection.tunnelMethod != .inApp)
 	}
 
 	private var _automaticConnectionStatus: String {

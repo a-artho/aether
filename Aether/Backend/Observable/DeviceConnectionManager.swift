@@ -19,6 +19,13 @@ public enum DeviceConnectionState: Equatable {
 	case disconnecting
 }
 
+public enum PhysicalNetworkState: Equatable {
+	case unknown
+	case wifiOrWired
+	case cellularOnly
+	case offline
+}
+
 public enum DeviceDiagnosticStatus: Equatable {
 	case ready
 	case tunnelUnavailable
@@ -77,6 +84,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	@Published public private(set) var hasPairingFile: Bool = false
 	@Published public private(set) var tunnelMethod: DeviceTunnelMethod
 	@Published public private(set) var isAutoTunnelLifecycleEnabled: Bool
+	@Published public private(set) var physicalNetworkState: PhysicalNetworkState = .unknown
 
 	public var isConnected: Bool {
 		state == .connected
@@ -110,9 +118,9 @@ public final class DeviceConnectionManager: ObservableObject {
 		)
 
 		// 1. Monitor network changes (NWPathMonitor is an event trigger, not source of truth)
-		pathMonitor.pathUpdateHandler = { [weak self] _ in
+		pathMonitor.pathUpdateHandler = { [weak self] path in
 			Task { @MainActor [weak self] in
-				self?.networkPathChanged()
+				self?.networkPathChanged(path)
 			}
 		}
 		pathMonitor.start(queue: monitorQueue)
@@ -161,7 +169,14 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	// MARK: - Event Triggers
 
-	public func networkPathChanged() {
+	public func networkPathChanged(_ path: NWPath? = nil) {
+		if let path {
+			physicalNetworkState = Self.classify(path)
+			_log("Physical network is now \(String(describing: physicalNetworkState)).", category: "Cellular Assist")
+			if physicalNetworkState != .cellularOnly {
+				CellularAssistManager.shared.networkNoLongerNeedsManualRecovery()
+			}
+		}
 		Task { @MainActor [weak self] in
 			await self?.reconcile()
 		}
@@ -228,6 +243,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			_connectForIDeviceMode()
 		} else {
 			_log("Server mode selected; disconnecting the device tunnel.", category: "Tunnel", level: .notice)
+			CellularAssistManager.shared.cancelAndRestoreIfNeeded()
 			setConnection(enabled: false, force: true)
 		}
 		return true
@@ -254,6 +270,9 @@ public final class DeviceConnectionManager: ObservableObject {
 		if OnDevicePairingManager.shared.isActive {
 			return true
 		}
+		if CellularAssistManager.shared.isBusy {
+			return true
+		}
 		return false
 	}
 
@@ -268,6 +287,8 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	public func handleAppForeground() {
+		CellularAssistManager.shared.handleApplicationDidBecomeActive()
+		guard !CellularAssistManager.shared.isBusy else { return }
 		guard isAutoTunnelLifecycleEnabled, isIDeviceInstallationMode else { return }
 		guard !isConnected, !isUpdating else { return }
 		_log("App foregrounded; automatically starting device tunnel.", category: "Tunnel", level: .notice)
@@ -278,7 +299,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		guard isAutoTunnelLifecycleEnabled, isIDeviceInstallationMode else { return }
 		if hasActiveTunnelDependencies {
 			_log(
-				"App backgrounded; keeping device tunnel active because operations are in progress (spoofing: \(UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey)), installing: \(AppInstallationManager.shared.isInstalling), pairing: \(OnDevicePairingManager.shared.isActive)).",
+				"App backgrounded; keeping device tunnel active because an operation is in progress (spoofing: \(UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey)), installing: \(AppInstallationManager.shared.isInstalling), pairing: \(OnDevicePairingManager.shared.isActive), cellular assist: \(CellularAssistManager.shared.isBusy)).",
 				category: "Tunnel",
 				level: .notice
 			)
@@ -383,6 +404,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 		if checkResult.isConnected {
 			_finishTransition(to: .connected, diagnostic: .ready)
+			CellularAssistManager.shared.connectionDidSucceed()
 			_log("Device transport and pairing were verified.", level: .notice)
 			return true
 		} else {
@@ -476,6 +498,7 @@ public final class DeviceConnectionManager: ObservableObject {
 					// During active connection attempt that hasn't timed out, wait for retries.
 					return
 				}
+				if _beginCellularAssistIfEligible() { return }
 				await _resetRSDTunnel()
 				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 				return
@@ -501,10 +524,12 @@ public final class DeviceConnectionManager: ObservableObject {
 				return
 			}
 			_finishTransition(to: .connected, diagnostic: .ready)
+			CellularAssistManager.shared.connectionDidSucceed()
 		} else {
 			if expectedState == true && !force && !isExpired {
 				return
 			}
+			if checkResult.errorCode != -9, _beginCellularAssistIfEligible() { return }
 			await _resetRSDTunnel()
 			if checkResult.errorCode == -9 {
 				_finishTransition(to: .disconnected, diagnostic: .invalidPairing)
@@ -521,6 +546,34 @@ public final class DeviceConnectionManager: ObservableObject {
 		await Task.detached(priority: .utility) {
 			HeartbeatManager.shared.resetRSDTunnel()
 		}.value
+	}
+
+	private func _beginCellularAssistIfEligible() -> Bool {
+		guard tunnelMethod == .inApp, physicalNetworkState == .cellularOnly else { return false }
+		let tunnelIsRunning: Bool
+		tunnelIsRunning = EmbeddedTunnelManager.shared.isConnected
+		let started = CellularAssistManager.shared.beginBootstrapIfPossible(
+			cellularOnly: true,
+			tunnelIsRunning: tunnelIsRunning
+		)
+		if started {
+			return true
+		}
+		return CellularAssistManager.shared.beginManualRecoveryIfNeeded(
+			cellularOnly: true,
+			tunnelIsRunning: tunnelIsRunning
+		)
+	}
+
+	private static func classify(_ path: NWPath) -> PhysicalNetworkState {
+		guard path.status == .satisfied else { return .offline }
+		if path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet) {
+			return .wifiOrWired
+		}
+		if path.usesInterfaceType(.cellular) {
+			return .cellularOnly
+		}
+		return .unknown
 	}
 
 	private func _setLocalDevVPNConnection(enabled: Bool, generation: UUID) {

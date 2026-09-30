@@ -127,6 +127,7 @@
 		<string>prefs</string>
 		<string>localdevvpn</string>
 		<string>itms-apps</string>
+		<string>shortcuts</string>
 	</array>
 	<key>NSBonjourServices</key>
 	<array>

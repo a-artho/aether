@@ -16,6 +16,7 @@ struct InstalledAppsView: View {
 	@StateObject private var store: InstalledAppsStore
 	@ObservedObject private var installationManager = AppInstallationManager.shared
 	@ObservedObject private var connection = DeviceConnectionManager.shared
+	@ObservedObject private var cellularAssist = CellularAssistManager.shared
 	@ObservedObject private var tabManager = AppTabManager.shared
 	@State private var topCardMaxY: CGFloat = 160
 	@State private var isSpoofingPresented = false
@@ -396,6 +397,19 @@ struct InstalledAppsView: View {
 				}
 				.buttonStyle(.borderless)
 			}
+		} else if _showsCellularConnectionGuidance && store.apps.isEmpty {
+			TabPlaceholderView(
+				title: _needsManualCellularRefresh
+					? .localized("Refresh Cellular Connection")
+					: .localized("Connecting on Cellular"),
+				description: _needsManualCellularRefresh
+					? .localized("Turn off Mobile Data or briefly enable Airplane Mode. Switch it back on once Aether connects.")
+					: .localized("Aether is refreshing the cellular connection to reach your device."),
+				systemImage: "antenna.radiowaves.left.and.right"
+			) {
+				ProgressView()
+					.controlSize(.small)
+			}
 		} else if connection.isUpdating && store.apps.isEmpty {
 			TabPlaceholderView(
 				title: .localized("Connecting Tunnel"),
@@ -438,6 +452,20 @@ struct InstalledAppsView: View {
 				systemImage: "square.stack.3d.up.slash"
 			)
 		}
+	}
+
+	private var _showsCellularConnectionGuidance: Bool {
+		guard installationMethod == 1, connection.physicalNetworkState == .cellularOnly else { return false }
+		if connection.tunnelMethod == .inApp {
+			return cellularAssist.isBusy || cellularAssist.isWaitingForManualRecovery
+		}
+		// LocalDevVPN cannot be controlled by Aether's shortcut, but it hits the
+		// same cellular socket condition. Keep the recovery advice in one place.
+		return !connection.isConnected
+	}
+
+	private var _needsManualCellularRefresh: Bool {
+		cellularAssist.isWaitingForManualRecovery || connection.tunnelMethod == .localDevVPN
 	}
 
 	private func _toggleInstallationMode() {
