@@ -32,7 +32,6 @@ struct LibraryCellView: View {
 	@Binding var selectedInfoAppPresenting: AnyApp?
 	@Binding var selectedSigningAppPresenting: AnyApp?
 	@Binding var selectedAppUUIDs: Set<String>
-	@State private var installSelectionFeedback = UISelectionFeedbackGenerator()
 	
 	// MARK: Selections
 	private var _isSelected: Bool {
@@ -100,9 +99,6 @@ struct LibraryCellView: View {
 				Divider()
 				_actions(for: app)
 			}
-		}
-		.onAppear {
-			installSelectionFeedback.prepare()
 		}
 	}
 	
@@ -207,8 +203,7 @@ extension LibraryCellView {
 		Button {
 			if app.isSigned {
 				AppInstallationManager.shared.startInstall(app: app)
-				installSelectionFeedback.selectionChanged()
-				installSelectionFeedback.prepare()
+				HapticManager.shared.selection()
 			} else {
 				selectedSigningAppPresenting = AnyApp(base: app)
 			}

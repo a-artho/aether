@@ -286,8 +286,7 @@ extension SigningView {
 			return
 		}
 
-		let generator = UIImpactFeedbackGenerator(style: .light)
-		generator.impactOccurred()
+		HapticManager.shared.impact()
 		_isSigning = true
 		
 		FR.signPackageFile(

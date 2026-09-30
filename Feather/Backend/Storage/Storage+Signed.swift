@@ -42,7 +42,7 @@ extension Storage {
 		if context.hasChanges {
 			try context.save()
 		}
-		UIImpactFeedbackGenerator(style: .light).impactOccurred()
+		HapticManager.shared.impact()
 	}
 
 	@MainActor

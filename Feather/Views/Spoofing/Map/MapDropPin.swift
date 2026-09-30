@@ -59,7 +59,7 @@ struct MapDropPin: View {
                     if let drag {
                         if !isDragging {
                             onDragBegan()
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            HapticManager.shared.impact()
                         }
                         onDragMoved(drag.location)
                     }

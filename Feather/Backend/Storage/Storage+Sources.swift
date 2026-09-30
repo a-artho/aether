@@ -32,8 +32,6 @@ extension Storage {
 			return
 		}
 		
-		let generator = UIImpactFeedbackGenerator(style: .light)
-		
 		let new = AltSource(context: context)
 		new.name = name
 		new.date = Date()
@@ -44,7 +42,7 @@ extension Storage {
 		do {
 			if !deferSave {
 				try context.save()
-				generator.impactOccurred()
+				HapticManager.shared.impact()
 			}
 			completion(nil)
 		} catch {
@@ -75,8 +73,6 @@ extension Storage {
 		repos: [URL: ASRepository],
 		completion: @escaping (Error?) -> Void
 	) {
-		let generator = UIImpactFeedbackGenerator(style: .light)
-		
 		for (url, repo) in repos {
 			addSource(
 				url,
@@ -91,7 +87,7 @@ extension Storage {
 		}
 		
 		saveContext()
-		generator.impactOccurred()
+		HapticManager.shared.impact()
 		completion(nil)
 	}
 

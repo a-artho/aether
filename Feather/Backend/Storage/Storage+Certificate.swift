@@ -20,8 +20,6 @@ extension Storage {
 		expiration: Date,
 		isDefault: Bool = false
 	) throws {
-		let generator = UIImpactFeedbackGenerator(style: .light)
-		
 		let new = CertificatePair(context: context)
 		new.uuid = uuid
 		new.date = Date()
@@ -34,7 +32,7 @@ extension Storage {
 		if let error = saveContext() {
 			throw error
 		}
-		generator.impactOccurred()
+		HapticManager.shared.impact()
 	}
 	
 	func deleteCertificate(for cert: CertificatePair) {

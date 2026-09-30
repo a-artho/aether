@@ -19,7 +19,6 @@ struct InstalledAppDetailView: View {
 	@State private var isUninstalling = false
 	@State private var uninstallErrorMessage: String?
 	@State private var isFilesPresented = false
-	@State private var feedbackGenerator = UIImpactFeedbackGenerator(style: .light)
 
 	var body: some View {
 		ScrollViewReader { scrollProxy in
@@ -33,6 +32,19 @@ struct InstalledAppDetailView: View {
 			.listSectionSeparator(.hidden)
 
 			Section {
+				HStack {
+					SettingsRowLabel(
+						.localized("Signer"),
+						systemImage: "signature",
+						backgroundColor: .orange
+					)
+					Spacer(minLength: 8)
+					Text(app.signerIdentity ?? .localized("Unavailable"))
+						.font(.subheadline)
+						.foregroundStyle(.secondary)
+						.multilineTextAlignment(.trailing)
+				}
+
 				NavigationLink {
 					InstalledAppSpecificationsView(app: app)
 				} label: {
@@ -56,21 +68,6 @@ struct InstalledAppDetailView: View {
 						Text("\(app.entitlementsList.count)")
 							.foregroundStyle(.secondary)
 					}
-				}
-
-				HStack {
-					SettingsRowLabel(
-						.localized("Signer"),
-						systemImage: "signature",
-						backgroundColor: .orange
-					)
-					Spacer(minLength: 8)
-					Text(app.signerIdentity ?? .localized("Unavailable"))
-						.font(.subheadline)
-						.foregroundStyle(.secondary)
-						.lineLimit(1)
-						.truncationMode(.middle)
-						.multilineTextAlignment(.trailing)
 				}
 			}
 			.id("informationSection")
@@ -201,9 +198,6 @@ struct InstalledAppDetailView: View {
 				)
 			}
 		}
-		.onAppear {
-			feedbackGenerator.prepare()
-		}
 	}
 
 	@ViewBuilder
@@ -254,8 +248,7 @@ struct InstalledAppDetailView: View {
 			}
 		}
 		.buttonStyle(_TileButtonStyle {
-			feedbackGenerator.impactOccurred()
-			feedbackGenerator.prepare()
+			HapticManager.shared.impact()
 		})
 		.disabled(isDisabled)
 		.opacity(isDisabled ? 0.6 : 1.0)
@@ -423,7 +416,7 @@ private struct InstalledAppSpecificationsView: View {
 	}
 
 	private func _triggerCopyFeedback(label: String) {
-		UIImpactFeedbackGenerator(style: .light).impactOccurred()
+		HapticManager.shared.impact()
 		withAnimation(.easeInOut(duration: 0.2)) {
 			copiedItemText = label
 		}
@@ -507,7 +500,7 @@ private struct InstalledAppEntitlementsView: View {
 	}
 
 	private func _triggerCopyFeedback(label: String) {
-		UIImpactFeedbackGenerator(style: .light).impactOccurred()
+		HapticManager.shared.impact()
 		withAnimation(.easeInOut(duration: 0.2)) {
 			copiedItemText = label
 		}

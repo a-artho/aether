@@ -18,8 +18,6 @@ struct InstalledAppsView: View {
 	@ObservedObject private var connection = DeviceConnectionManager.shared
 	@ObservedObject private var tabManager = AppTabManager.shared
 	@State private var topCardMaxY: CGFloat = 160
-	@State private var modeSelectionFeedback = UISelectionFeedbackGenerator()
-	@State private var deviceControlFeedback = UIImpactFeedbackGenerator(style: .light)
 	@State private var isSpoofingPresented = false
 	@State private var isModeSwitchBlocked = false
 	@State private var selectedAppBundleId: String?
@@ -175,9 +173,6 @@ struct InstalledAppsView: View {
 					}
 				}
 			}
-			.onAppear {
-				modeSelectionFeedback.prepare()
-			}
 			.toolbar {
 				ToolbarItem(placement: .topBarLeading) {
 					Button {
@@ -263,9 +258,6 @@ struct InstalledAppsView: View {
 			.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select iDevice mode and connect the tunnel to open spoofing controls.")
 		}
 		.opacity(installationMethod == 1 ? 1 : 0.45)
-		.onAppear {
-			deviceControlFeedback.prepare()
-		}
 	}
 
 	@ViewBuilder
@@ -309,8 +301,7 @@ struct InstalledAppsView: View {
 			}
 		}
 		.buttonStyle(_HomeCardButtonStyle {
-			deviceControlFeedback.impactOccurred()
-			deviceControlFeedback.prepare()
+			HapticManager.shared.impact()
 		})
 		.disabled(isDisabled)
 		.opacity(isDisabled ? 0.6 : 1.0)
@@ -462,14 +453,12 @@ struct InstalledAppsView: View {
 		} else {
 			_ = connection.setInstallationMode(1)
 		}
-		modeSelectionFeedback.selectionChanged()
-		modeSelectionFeedback.prepare()
+		HapticManager.shared.selection()
 	}
 
 	private func _switchToIDeviceMode() {
 		guard connection.setInstallationMode(1) else { return }
-		modeSelectionFeedback.selectionChanged()
-		modeSelectionFeedback.prepare()
+		HapticManager.shared.selection()
 	}
 
 	private struct _DeviceControlStatus {

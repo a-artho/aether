@@ -31,7 +31,7 @@ extension Storage {
 				appVersion: appVersion,
 				appIcon: appIcon
 			)
-			UIImpactFeedbackGenerator(style: .light).impactOccurred()
+			HapticManager.shared.impact()
 			completion(nil)
 		} catch {
 			completion(error)

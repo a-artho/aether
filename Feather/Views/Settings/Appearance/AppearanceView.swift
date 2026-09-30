@@ -98,6 +98,26 @@ struct AppearanceView: View {
 				.labelsHidden()
 				.pickerStyle(.inline)
 			}
+
+			Section {
+				Picker(selection: Binding(
+					get: { HapticManager.shared.currentStrength },
+					set: { newValue in
+						UserDefaults.standard.set(newValue.rawValue, forKey: HapticManager.preferenceKey)
+						HapticManager.shared.impact(newValue)
+					}
+				)) {
+					ForEach(HapticStrength.allCases) { strength in
+						Text(strength.title).tag(strength)
+					}
+				} label: {
+					SettingsRowLabel(
+						.localized("Haptics"),
+						systemImage: "waveform",
+						backgroundColor: .pink
+					)
+				}
+			}
 		}
 		.onChange(of: _userInterfaceStyle) { value in
 			if let style = UIUserInterfaceStyle(rawValue: value) {

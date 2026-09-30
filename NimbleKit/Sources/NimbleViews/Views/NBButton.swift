@@ -30,7 +30,7 @@ public struct NBButton: View {
 		case .icon:
 			Image(systemName: _icon)
 				.font(.caption).bold()
-				.frame(width: 29, height: 29)
+				.frame(width: 35, height: 35)
 				.background(Color(uiColor: .quaternarySystemFill))
 				.clipShape(Circle())
 			
@@ -38,7 +38,7 @@ public struct NBButton: View {
 			Text(_title)
 				.font(.footnote).bold()
 				.padding(.horizontal, _horizontalPadding)
-				.frame(height: 29)
+				.frame(height: 35)
 				.background(Color(uiColor: .quaternarySystemFill))
 				.clipShape(Capsule())
 		}
