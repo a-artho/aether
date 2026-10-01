@@ -331,7 +331,16 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		let controller = UIDocumentInteractionController(url: url)
 		controller.delegate = self
 		documentController = controller
-		controller.presentOpenInMenu(from: presenter.view.bounds, in: presenter.view, animated: true)
+		let presented = controller.presentOpenInMenu(
+			from: presenter.view.bounds,
+			in: presenter.view,
+			animated: true
+		)
+		guard presented else {
+			documentController = nil
+			_finishHelperSetupFailure("Aether could not present the Cellular Assist helper.")
+			return
+		}
 	}
 
 	public func documentInteractionController(_ controller: UIDocumentInteractionController, willBeginSendingToApplication application: String?) {

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import AltSourceKit
 
 @MainActor
 final class SourcesRouter: ObservableObject {
@@ -19,8 +20,20 @@ final class SourcesRouter: ObservableObject {
 		case app(
 			parent: CollectionRoute,
 			sourceObjectURI: String,
-			appUniqueID: String
+			appLocator: AppLocator
 		)
+	}
+
+	enum AppLocator: Hashable {
+		case bundleID(String)
+		case fallback(name: String, developer: String?)
+
+		static func locator(for app: ASRepository.App) -> AppLocator {
+			if let id = app.id?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
+				return .bundleID(id)
+			}
+			return .fallback(name: app.currentName, developer: app.developer)
+		}
 	}
 
 	enum NavigationIntent: Equatable {
@@ -52,7 +65,10 @@ final class SourcesRouter: ObservableObject {
 	}
 
 	@Published var path: [Route] = [] {
-		didSet { _reconcileSearchTarget() }
+		didSet {
+			_reconcileSearchTarget()
+			_reconcilePendingAppRequest()
+		}
 	}
 	@Published var navigationIntent: NavigationIntent?
 	@Published var pendingAppRequest: PendingAppRequest?
@@ -94,7 +110,7 @@ final class SourcesRouter: ObservableObject {
 	func openResolvedApp(
 		parent: CollectionRoute,
 		sourceObjectURI: String,
-		appUniqueID: String
+		appLocator: AppLocator
 	) {
 		pendingAppRequest = nil
 		searchTarget = nil
@@ -107,7 +123,7 @@ final class SourcesRouter: ObservableObject {
 		let appRoute = Route.app(
 			parent: parent,
 			sourceObjectURI: sourceObjectURI,
-			appUniqueID: appUniqueID
+			appLocator: appLocator
 		)
 		guard path.last != appRoute else { return }
 		path.append(appRoute)
@@ -140,6 +156,14 @@ final class SourcesRouter: ObservableObject {
 			if path.last != .collection(collection) {
 				self.searchTarget = nil
 			}
+		}
+	}
+
+	private func _reconcilePendingAppRequest() {
+		guard let request = pendingAppRequest else { return }
+		guard path.last == .collection(request.parent) else {
+			pendingAppRequest = nil
+			return
 		}
 	}
 }

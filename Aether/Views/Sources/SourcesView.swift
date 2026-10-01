@@ -146,8 +146,8 @@ struct SourcesView: View {
 					} else {
 						_unavailableSourceView()
 					}
-				case .app(_, let sourceObjectURI, let appUniqueID):
-					_appDestination(sourceObjectURI: sourceObjectURI, appUniqueID: appUniqueID)
+				case .app(_, let sourceObjectURI, let appLocator):
+					_appDestination(sourceObjectURI: sourceObjectURI, appLocator: appLocator)
 				}
 			}
 		}
@@ -174,15 +174,32 @@ struct SourcesView: View {
 	}
 
 	@ViewBuilder
-	private func _appDestination(sourceObjectURI: String, appUniqueID: String) -> some View {
+	private func _appDestination(
+		sourceObjectURI: String,
+		appLocator: SourcesRouter.AppLocator
+	) -> some View {
 		if
 			let source = _source(withObjectURI: sourceObjectURI),
 			let repository = viewModel.repository(for: source),
-			let app = repository.apps.first(where: { $0.currentUniqueId == appUniqueID })
+			let app = _app(matching: appLocator, in: repository)
 		{
 			SourceAppsDetailView(sourceURL: source.sourceURL, source: repository, app: app)
 		} else {
 			ProgressView()
+		}
+	}
+
+	private func _app(
+		matching locator: SourcesRouter.AppLocator,
+		in repository: ASRepository
+	) -> ASRepository.App? {
+		switch locator {
+		case .bundleID(let id):
+			return repository.apps.first { $0.id == id }
+		case .fallback(let name, let developer):
+			return repository.apps.first {
+				$0.currentName == name && $0.developer == developer
+			}
 		}
 	}
 

@@ -83,7 +83,7 @@ struct SourceAppsView: View {
 						router.openResolvedApp(
 							parent: collectionRoute,
 							sourceObjectURI: selection.sourceObjectURI,
-							appUniqueID: selection.appUniqueID
+							appLocator: selection.appLocator
 						)
 					}
 				)
@@ -216,7 +216,7 @@ struct SourceAppsView: View {
 		router.openResolvedApp(
 			parent: request.parent,
 			sourceObjectURI: request.sourceObjectURI,
-			appUniqueID: app.currentUniqueId
+			appLocator: .locator(for: app)
 		)
 	}
 	
@@ -250,7 +250,7 @@ struct SourceAppsView: View {
 	
 	struct SourceAppSelection: Hashable {
 		let sourceObjectURI: String
-		let appUniqueID: String
+		let appLocator: SourcesRouter.AppLocator
 	}
 }
 

@@ -334,7 +334,7 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		onSelect(
 			SourceAppsView.SourceAppSelection(
 				sourceObjectURI: entry.sourceObjectURI,
-				appUniqueID: entry.app.currentUniqueId
+				appLocator: .locator(for: entry.app)
 			)
 		)
 	}
