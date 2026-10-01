@@ -191,7 +191,7 @@ struct OnDevicePairingView: View {
 				.foregroundStyle(.green)
 			Text(.localized("Device paired"))
 				.font(.title3.weight(.semibold))
-			Text(.localized("Aether will use this pairing record for iDevice installs."))
+			Text(.localized("Aether will use this pairing record for Local installs."))
 				.foregroundStyle(.secondary)
 		}
 	}

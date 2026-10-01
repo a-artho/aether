@@ -234,8 +234,10 @@ struct InstalledAppsView: View {
 				action: {
 					if !connection.hasPairingFile {
 						tabManager.openSettings(page: .pairingFile)
-					} else if !connection.isConnected {
-						connection.reconnectForIDeviceMode()
+			} else if connection.requiresInAppTunnelSetup {
+				connection.setUpInAppTunnel()
+			} else if !connection.isConnected {
+				connection.reconnectForIDeviceMode()
 					} else {
 						tabManager.openSettings(page: .tunnel)
 					}
@@ -256,7 +258,7 @@ struct InstalledAppsView: View {
 				}
 			)
 			.accessibilityLabel("Spoofing, \(_spoofingStatus.text)")
-			.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select iDevice mode and connect the tunnel to open spoofing controls.")
+			.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select Local mode and connect the tunnel to open spoofing controls.")
 		}
 		.opacity(installationMethod == 1 ? 1 : 0.45)
 	}
@@ -314,7 +316,7 @@ struct InstalledAppsView: View {
 
 	private var _tunnelStatus: _DeviceControlStatus {
 		guard installationMethod == 1 else {
-			return .init(text: .localized("iDevice required"), color: .secondary)
+			return .init(text: .localized("Local required"), color: .secondary)
 		}
 		if connection.isUpdating {
 			return .init(text: .localized("Connecting"), color: .orange)
@@ -330,7 +332,7 @@ struct InstalledAppsView: View {
 
 	private var _spoofingStatus: _DeviceControlStatus {
 		guard installationMethod == 1 else {
-			return .init(text: .localized("iDevice required"), color: .secondary)
+			return .init(text: .localized("Local required"), color: .secondary)
 		}
 		if isSpoofingActive {
 			return .init(text: .localized("Active"), color: .green)
@@ -370,14 +372,14 @@ struct InstalledAppsView: View {
 	private var _placeholderContent: some View {
 		if installationMethod == 0 {
 			TabPlaceholderView(
-				title: .localized("Switch to iDevice"),
-				description: .localized("Use iDevice mode to view sideloaded apps or spoof your device location."),
+				title: .localized("Switch to Local"),
+				description: .localized("Use Local mode to view sideloaded apps or spoof your device location."),
 				systemImage: "iphone"
 			) {
 				Button {
 					_switchToIDeviceMode()
 				} label: {
-					NBButton(.localized("Use iDevice"), style: .text)
+					NBButton(.localized("Use Local"), style: .text)
 				}
 				.buttonStyle(.borderless)
 			}
@@ -394,6 +396,19 @@ struct InstalledAppsView: View {
 					tabManager.openSettings(page: .pairingFile)
 				} label: {
 					NBButton(.localized("Pair"), style: .text)
+				}
+				.buttonStyle(.borderless)
+			}
+		} else if connection.requiresInAppTunnelSetup && store.apps.isEmpty {
+			TabPlaceholderView(
+				title: .localized("VPN Setup Required"),
+				description: .localized("Set up Aether’s VPN profile to connect to your device."),
+				systemImage: "network.badge.shield.half.filled"
+			) {
+				Button {
+					connection.setUpInAppTunnel()
+				} label: {
+					NBButton(.localized("Set Up"), style: .text)
 				}
 				.buttonStyle(.borderless)
 			}

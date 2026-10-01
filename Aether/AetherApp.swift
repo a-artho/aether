@@ -188,10 +188,6 @@ struct AetherApp: App {
 				NotificationCenter.default.post(name: Notification.Name("Aether.scrollDetailToBottom"), object: nil)
 				return
 			}
-			if url.host == "open-app-sandbox" {
-				NotificationCenter.default.post(name: Notification.Name("Aether.openAppSandbox"), object: nil)
-				return
-			}
 			if url.host == "mock-install" {
 				AppInstallationManager.shared.startMockInstall(progress: 0.62, status: .installing)
 				AppTabManager.shared.switchTo(.installed)

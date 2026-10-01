@@ -69,9 +69,6 @@ struct SettingsView: View {
 					NavigationLink(destination: TunnelView()) {
 						SettingsRowLabel(.localized("Tunneling"), systemImage: "network", backgroundColor: .green)
 					}
-					NavigationLink(destination: ServerView()) {
-						SettingsRowLabel(.localized("Server Config"), systemImage: "server.rack", backgroundColor: .blue)
-					}
 				}
 
 				Section {
@@ -120,7 +117,8 @@ struct SettingsView: View {
 					case .certificates: CertificatesView()
 					case .signing: ConfigurationView()
 					case .archive: ArchiveView()
-					case .serverConfig, .installation: ServerView()
+					case .installation: InstallationView()
+					case .serverConfig: EmptyView()
 					case .pairingFile: PairingFileView()
 					case .tunnel: TunnelView()
 					case .logs: LogsView()

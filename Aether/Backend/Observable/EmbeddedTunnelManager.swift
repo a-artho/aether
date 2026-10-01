@@ -129,6 +129,27 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		return false
 	}
 
+	/// Checks whether Aether already has a saved tunnel profile without creating
+	/// one or triggering iOS's VPN-profile approval prompt.
+	public func hasSavedConfiguration() async -> Bool {
+		#if targetEnvironment(simulator)
+		return true
+		#elseif os(iOS) && !targetEnvironment(macCatalyst)
+		do {
+			let providerIdentifier = try discoverProviderIdentifier()
+			return try await loadManagers().contains { manager in
+				Self.isAetherManaged(manager)
+					&& (manager.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == providerIdentifier
+			}
+		} catch {
+			_log("Could not check for an in-app tunnel configuration: \(error.localizedDescription)", level: .warning)
+			return false
+		}
+		#else
+		return false
+		#endif
+	}
+
 	public func refresh() async {
 		#if os(iOS) && !targetEnvironment(macCatalyst)
 		do {

@@ -57,7 +57,7 @@ struct TunnelView: View {
 		.onAppear {
 			_refreshLocalDevVPNAvailability()
 			_syncDraftsFromManager()
-			Task { await embeddedTunnel.refresh() }
+			Task { await connection.refresh() }
 		}
 	}
 
@@ -206,8 +206,8 @@ struct TunnelView: View {
 			return .localized("Updating connection")
 		}
 		return connection.isConnected
-			? .localized("Connected automatically by iDevice mode")
-			: .localized("Managed automatically by iDevice mode")
+			? .localized("Connected automatically by Local mode")
+			: .localized("Managed automatically by Local mode")
 	}
 
 	private var _embeddedStatusIcon: String {

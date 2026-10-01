@@ -19,7 +19,7 @@ struct InstallationView: View {
 
 	private let _installationMethods: [String] = [
 		.localized("Server"),
-		.localized("idevice")
+		.localized("Local")
 	]
 	
 	// MARK: Body
@@ -45,20 +45,17 @@ struct InstallationView: View {
 			} footer: {
 				Text(_installationManager.isInstalling
 					? .localized("Installation type cannot change while an install is in progress.")
-					: .localized("Server (Recommended):\nUses a locally hosted server and itms-services:// to install applications.\n\nIDevice (advanced):\nUses a VPN and a pairing file. Writes to AFC and manually calls installd, while monitoring install progress by using a callback\nAdvantage: It is very reliable, does not need SSL certificates or a externally hosted server. Rather, works similarly to a computer."))
+					: .localized("Server (Recommended):\nUses a locally hosted server and itms-services:// to install applications.\n\nLocal:\nUses a tunnel and pairing file to install directly to your device. It does not require SSL certificates or an externally hosted server."))
 			}
 			
-			if _installationMethod == 0 {
-				ServerView(embedInList: false)
-			}
 		}
-		.alert(.localized("Advanced Installation Method"), isPresented: $_showMethodChangedAlert) {
+		.alert(.localized("Local Installation"), isPresented: $_showMethodChangedAlert) {
 			Button(.localized("Switch Back"), role: .destructive) {
 				_selectInstallationMethod(0)
 			}
 			Button(.localized("OK"), role: .cancel) {}
 		} message: {
-			Text(.localized("idevice warning"))
+			Text(.localized("Local installs use a tunnel and a pairing file to install directly to your device."))
 		}
 		.alert(.localized("Stop Spoofing First"), isPresented: $_showStopSpoofingAlert) {
 			Button(.localized("OK"), role: .cancel) {}

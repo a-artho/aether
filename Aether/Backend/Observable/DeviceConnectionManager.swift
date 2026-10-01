@@ -85,6 +85,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	@Published public private(set) var tunnelMethod: DeviceTunnelMethod
 	@Published public private(set) var isAutoTunnelLifecycleEnabled: Bool
 	@Published public private(set) var physicalNetworkState: PhysicalNetworkState = .unknown
+	@Published public private(set) var requiresInAppTunnelSetup = false
 
 	public var isConnected: Bool {
 		state == .connected
@@ -191,9 +192,13 @@ public final class DeviceConnectionManager: ObservableObject {
 		guard state == .disconnected else { return }
 		guard tunnelMethod != method else { return }
 		tunnelMethod = method
+		requiresInAppTunnelSetup = false
 		UserDefaults.standard.set(method.rawValue, forKey: "Aether.tunnelMethod")
 		diagnostic = .tunnelUnavailable
 		_log("Tunneling provider changed to \(method.displayName).", category: "Tunnel", level: .notice)
+		Task { [weak self] in
+			self?.reconnectForIDeviceMode()
+		}
 	}
 
 	// MARK: - Installation Mode
@@ -260,6 +265,19 @@ public final class DeviceConnectionManager: ObservableObject {
 		_connectForIDeviceMode()
 	}
 
+	/// Creates the in-app VPN profile only after an explicit user action.
+	/// Automatic reconciliation deliberately never calls this path.
+	public func setUpInAppTunnel() {
+		guard isIDeviceInstallationMode, tunnelMethod == .inApp, !isUpdating else { return }
+		hasPairingFile = HeartbeatManager.hasPairingFile()
+		guard hasPairingFile else {
+			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
+			return
+		}
+		requiresInAppTunnelSetup = false
+		setConnection(enabled: true)
+	}
+
 	/// Checks whether any long-running operation requires the device tunnel to stay open in background.
 	public var hasActiveTunnelDependencies: Bool {
 		// 1. Location spoofing
@@ -324,12 +342,19 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _connectForIDeviceMode() {
-		hasPairingFile = HeartbeatManager.hasPairingFile()
-		guard hasPairingFile else {
-			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
-			return
+		Task { [weak self] in
+			guard let self else { return }
+			self.hasPairingFile = HeartbeatManager.hasPairingFile()
+			guard self.hasPairingFile else {
+				self._finishTransition(to: .disconnected, diagnostic: .pairingMissing)
+				return
+			}
+			guard await self._hasRequiredTunnelProfile() else {
+				self._finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+				return
+			}
+			self.setConnection(enabled: true)
 		}
-		setConnection(enabled: true)
 	}
 
 	// MARK: - Toggle Connection
@@ -380,6 +405,10 @@ public final class DeviceConnectionManager: ObservableObject {
 
 		let method = tunnelMethod
 		if method == .inApp {
+			guard await _hasRequiredTunnelProfile() else {
+				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+				throw DeviceConnectionError.tunnelUnavailable("Set up the Aether VPN profile first")
+			}
 			await EmbeddedTunnelManager.shared.refresh()
 			let embeddedReady = EmbeddedTunnelManager.shared.isConnected
 			guard embeddedReady else {
@@ -475,6 +504,11 @@ public final class DeviceConnectionManager: ObservableObject {
 
 		if method == .inApp {
 			HeartbeatManager.shared.ipAddress = EmbeddedTunnelManager.shared.peerIPOnly
+			guard await _hasRequiredTunnelProfile() else {
+				await _resetRSDTunnel()
+				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+				return
+			}
 			await EmbeddedTunnelManager.shared.refresh()
 			let embeddedReady = EmbeddedTunnelManager.shared.isConnected
 			guard embeddedReady else {
@@ -562,6 +596,16 @@ public final class DeviceConnectionManager: ObservableObject {
 		await Task.detached(priority: .utility) {
 			HeartbeatManager.shared.resetRSDTunnel()
 		}.value
+	}
+
+	private func _hasRequiredTunnelProfile() async -> Bool {
+		guard tunnelMethod == .inApp else {
+			requiresInAppTunnelSetup = false
+			return true
+		}
+		let hasProfile = await EmbeddedTunnelManager.shared.hasSavedConfiguration()
+		requiresInAppTunnelSetup = !hasProfile
+		return hasProfile
 	}
 
 	private func _beginCellularAssistIfEligible() -> Bool {
