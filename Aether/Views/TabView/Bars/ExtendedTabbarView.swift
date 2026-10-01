@@ -7,22 +7,12 @@
 //
 
 import SwiftUI
-import NukeUI
 
 struct ExtendedTabbarView: View {
 	@Environment(\.horizontalSizeClass) var horizontalSizeClass
 	@AppStorage("Aether.tabCustomization") var customization = TabViewCustomization()
-	@StateObject var viewModel = SourcesViewModel.shared
-	
-	@State private var _isAddingPresenting = false
 	
 	@ObservedObject private var tabManager = AppTabManager.shared
-	
-	@FetchRequest(
-		entity: AltSource.entity(),
-		sortDescriptors: [NSSortDescriptor(keyPath: \AltSource.name, ascending: true)],
-		animation: .snappy
-	) private var _sources: FetchedResults<AltSource>
 	
 	private var _selectedTabBinding: Binding<String> {
 		Binding(
@@ -53,69 +43,11 @@ struct ExtendedTabbarView: View {
 				.hidden(horizontalSizeClass == .compact)
 			}
 			
-			TabSection("Sources") {
-				Tab(.localized("All Repos"), systemImage: "globe.desk", value: "all_repositories") {
-					NavigationStack {
-						SourceAppsView(object: Array(_sources), viewModel: viewModel, isAllRepos: true)
-					}
-				}
-				
-			ForEach(_sources, id: \.objectID) { source in
-				Tab(value: "source.\(source.identifier ?? source.objectID.uriRepresentation().absoluteString)") {
-						NavigationStack {
-							SourceAppsView(object: [source], viewModel: viewModel, isAllRepos: false)
-						}
-					} label: {
-						_icon(source.name ?? .localized("Unknown"), iconUrl: source.iconURL)
-					}
-					.swipeActions {
-						Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
-							Storage.shared.deleteSource(for: source)
-						}
-					}
-				}
-			}
-			.sectionActions {
-				Button(.localized("Add Source"), systemImage: "plus") {
-					_isAddingPresenting = true
-				}
-			}
-			.defaultVisibility(.hidden, for: .tabBar)
-			.hidden(horizontalSizeClass == .compact)
 		}
 		.tabViewStyle(.sidebarAdaptable)
 		.tabViewCustomization($customization)
 		.sheet(isPresented: $tabManager.isSettingsPresented) {
 			SettingsView()
 		}
-		.sheet(isPresented: $_isAddingPresenting) {
-			SourcesAddView()
-				.presentationDetents([.medium])
-		}
-	}
-	
-	@ViewBuilder
-	private func _icon(_ title: String, iconUrl: URL?) -> some View {
-		Label {
-			Text(title)
-		} icon: {
-			if let iconURL = iconUrl {
-				LazyImage(url: iconURL) { state in
-					if let image = state.image {
-						image
-					} else {
-						standardIcon
-					}
-				}
-				.processors([.resize(width: 14), .circle()])
-			} else {
-				standardIcon
-			}
-		}
-	}
-
-	
-	var standardIcon: some View {
-		Image(systemName: "app.dashed")
 	}
 }

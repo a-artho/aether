@@ -33,12 +33,10 @@ struct SourceAppsView: View {
 	@AppStorage("Aether.sortAscending") private var _sortAscending: Bool = true
 	
 	@State private var _sortOption: SortOption = .default
-	@State private var _selectedRoute: SourceAppRoute?
-	
 	@State var isLoading = true
 	@State var hasLoadedOnce = false
 	@State private var _searchText = ""
-	@State private var _isSearchPresented = false
+	@ObservedObject private var router = SourcesRouter.shared
 
 	private var _navigationTitle: String {
 		if object.count == 1 {
@@ -51,7 +49,22 @@ struct SourceAppsView: View {
 	var object: [AltSource]
 	@ObservedObject var viewModel: SourcesViewModel
 	var isAllRepos: Bool = false
+	let collectionRoute: SourcesRouter.CollectionRoute
 	@State private var _sourceContexts: [SourceRepositoryContext]?
+
+	private var _collectionSearchPresented: Binding<Bool> {
+		Binding(
+			get: { router.searchTarget == .collection(collectionRoute) },
+			set: { presented in
+				let target = SourcesRouter.SearchTarget.collection(collectionRoute)
+				if presented {
+					router.searchTarget = target
+				} else if router.searchTarget == target {
+					router.searchTarget = nil
+				}
+			}
+		)
+	}
 	
 	// MARK: Body
 	var body: some View {
@@ -66,7 +79,13 @@ struct SourceAppsView: View {
 					sortOption: $_sortOption,
 					sortAscending: $_sortAscending,
 					showSourceBadge: isAllRepos,
-					onSelect: {self._selectedRoute = $0}
+					onSelect: { selection in
+						router.openResolvedApp(
+							parent: collectionRoute,
+							sourceObjectURI: selection.sourceObjectURI,
+							appUniqueID: selection.appUniqueID
+						)
+					}
 				)
 				.ignoresSafeArea()
 			} else if isLoading {
@@ -124,13 +143,13 @@ struct SourceAppsView: View {
 		}
 		.searchable(
 			text: $_searchText,
-			isPresented: $_isSearchPresented,
+			isPresented: _collectionSearchPresented,
 			placement: .toolbar,
 			prompt: Text(.localized("Search"))
 		)
 		.searchToolbarBehavior(.minimize)
-		.onChange(of: _isSearchPresented) { presented in
-			if !presented {
+		.onChange(of: router.searchTarget) { target in
+			if target != .collection(collectionRoute) {
 				_searchText = ""
 			}
 		}
@@ -147,25 +166,8 @@ struct SourceAppsView: View {
 		.onChange(of: _sortOption) { newValue in
 			_sortOptionRawValue = newValue.rawValue
 		}
-		.navigationDestinationIfAvailable(item: $_selectedRoute) { route in
-			SourceAppsDetailView(
-				sourceURL: route.sourceURL,
-				source: route.source,
-				app: route.app
-			)
-		}
-		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.openApp"))) { notif in
-			let targetName = notif.userInfo?["name"] as? String
-			if let context = _sourceContexts?.first(where: { ctx in
-				ctx.repository.apps.contains(where: { app in
-					targetName == nil || app.currentName.localizedCaseInsensitiveContains(targetName!)
-				})
-			}) ?? _sourceContexts?.first,
-			let app = context.repository.apps.first(where: { app in
-				targetName == nil || app.currentName.localizedCaseInsensitiveContains(targetName!)
-			}) ?? context.repository.apps.first {
-				_selectedRoute = SourceAppRoute(sourceURL: context.sourceURL, source: context.repository, app: app)
-			}
+		.onChange(of: router.pendingAppRequest) { _ in
+			_consumePendingAppRequestIfPossible()
 		}
 	}
 	
@@ -174,20 +176,58 @@ struct SourceAppsView: View {
 
 		let loadedSources = object.compactMap { source -> SourceRepositoryContext? in
 			guard let repository = viewModel.repository(for: source) else { return nil }
-			return SourceRepositoryContext(sourceURL: source.sourceURL, repository: repository)
+			return SourceRepositoryContext(
+				sourceObjectURI: source.objectID.uriRepresentation().absoluteString,
+				sourceURL: source.sourceURL,
+				repository: repository
+			)
 		}
 		_sourceContexts = loadedSources
 		withAnimation(.easeIn(duration: 0.2)) {
 			isLoading = false
 		}
+		_consumePendingAppRequestIfPossible()
+	}
+
+	private func _consumePendingAppRequestIfPossible() {
+		guard
+			let request = router.pendingAppRequest,
+			request.parent == collectionRoute,
+			let contexts = _sourceContexts,
+			let context = contexts.first(where: { $0.sourceObjectURI == request.sourceObjectURI })
+		else {
+			return
+		}
+
+		let app: ASRepository.App?
+		if let appName = request.appName {
+			app = context.repository.apps.first {
+				$0.currentName.localizedCaseInsensitiveContains(appName)
+			}
+		} else {
+			app = context.repository.apps.first
+		}
+
+		guard let app else {
+			router.pendingAppRequest = nil
+			return
+		}
+
+		router.openResolvedApp(
+			parent: request.parent,
+			sourceObjectURI: request.sourceObjectURI,
+			appUniqueID: app.currentUniqueId
+		)
 	}
 	
 	struct SourceRepositoryContext: Equatable {
+		let sourceObjectURI: String
 		let sourceURL: URL?
 		let repository: ASRepository
 		private let appFingerprint: String
 
-		init(sourceURL: URL?, repository: ASRepository) {
+		init(sourceObjectURI: String, sourceURL: URL?, repository: ASRepository) {
+			self.sourceObjectURI = sourceObjectURI
 			self.sourceURL = sourceURL
 			self.repository = repository
 			var fingerprint = ""
@@ -200,6 +240,7 @@ struct SourceAppsView: View {
 		}
 		
 		static func == (lhs: SourceRepositoryContext, rhs: SourceRepositoryContext) -> Bool {
+			lhs.sourceObjectURI == rhs.sourceObjectURI &&
 			lhs.sourceURL == rhs.sourceURL &&
 			lhs.repository.id == rhs.repository.id &&
 			lhs.repository.name == rhs.repository.name &&
@@ -207,11 +248,9 @@ struct SourceAppsView: View {
 		}
 	}
 	
-	struct SourceAppRoute: Identifiable, Hashable {
-		let sourceURL: URL?
-		let source: ASRepository
-		let app: ASRepository.App
-		let id: String = UUID().uuidString
+	struct SourceAppSelection: Hashable {
+		let sourceObjectURI: String
+		let appUniqueID: String
 	}
 }
 

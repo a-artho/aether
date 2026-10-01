@@ -30,8 +30,7 @@ final class AppTabManager: ObservableObject {
 	@Published var isSettingsPresented = false
 	@Published var requestedSettingsPage: SettingsPage? = nil
 	@Published private(set) var isInstallationSettingsRequested = false
-	@Published var isLibrarySearchRequested = false
-	@Published var isSourcesSearchRequested = false
+	@Published var isLibrarySearchPresented = false
 	
 	private init() {}
 	
@@ -62,17 +61,18 @@ final class AppTabManager: ObservableObject {
 	func openSearch() {
 		switch selectedTab {
 		case .library:
-			isLibrarySearchRequested = true
+			isLibrarySearchPresented = true
 		case .sources:
-			isSourcesSearchRequested = true
+			SourcesRouter.shared.openSearchForVisibleScreen()
 		default:
 			switchTo(.sources)
-			isSourcesSearchRequested = true
+			SourcesRouter.shared.path = []
+			SourcesRouter.shared.searchTarget = .root
 		}
 	}
 
 	func closeSearch() {
-		isLibrarySearchRequested = false
-		isSourcesSearchRequested = false
+		isLibrarySearchPresented = false
+		SourcesRouter.shared.closeSearch()
 	}
 }

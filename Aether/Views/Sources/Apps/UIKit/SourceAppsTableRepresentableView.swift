@@ -15,7 +15,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	@Binding var sortOption: SourceAppsView.SortOption
 	@Binding var sortAscending: Bool
 	var showSourceBadge: Bool = false
-	var onSelect: (SourceAppsView.SourceAppRoute) -> Void
+	var onSelect: (SourceAppsView.SourceAppSelection) -> Void
 	
 	func makeUIView(context: Context) -> UITableView {
 		let tableView = UITableView(frame: .zero, style: .plain)
@@ -75,7 +75,7 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	var sortOption: SourceAppsView.SortOption
 	var sortAscending: Bool
 	var showSourceBadge: Bool
-	let onSelect: (SourceAppsView.SourceAppRoute) -> Void
+	let onSelect: (SourceAppsView.SourceAppSelection) -> Void
 	
 	private var _groupedAppsByNameFirstLetter: [String: [SourceAppEntry]] = [:]
 	private var _groupedAppsByDate: [String: [SourceAppEntry]] = [:]
@@ -90,9 +90,10 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	weak var uiTableView: UITableView?
 	
 	private var _allAppsWithSource: [SourceAppEntry] {
-		sourceContexts.flatMap { context in
+			sourceContexts.flatMap { context in
 			context.repository.apps.map {
 				SourceAppEntry(
+					sourceObjectURI: context.sourceObjectURI,
 					sourceURL: context.sourceURL,
 					source: context.repository,
 					app: $0
@@ -115,7 +116,7 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		sortOption: SourceAppsView.SortOption,
 		sortAscending: Bool,
 		showSourceBadge: Bool,
-		onSelect: @escaping (SourceAppsView.SourceAppRoute) -> Void
+		onSelect: @escaping (SourceAppsView.SourceAppSelection) -> Void
 	) {
 		self.sourceContexts = sourceContexts
 		self.searchText = searchText
@@ -330,7 +331,12 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		case .date: entry = _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
 		}
 
-		onSelect(SourceAppsView.SourceAppRoute(sourceURL: entry.sourceURL, source: entry.source, app: entry.app))
+		onSelect(
+			SourceAppsView.SourceAppSelection(
+				sourceObjectURI: entry.sourceObjectURI,
+				appUniqueID: entry.app.currentUniqueId
+			)
+		)
 	}
 	
 	func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
@@ -435,6 +441,7 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 }}
 
 private struct SourceAppEntry {
+	let sourceObjectURI: String
 	let sourceURL: URL?
 	let source: ASRepository
 	let app: ASRepository.App

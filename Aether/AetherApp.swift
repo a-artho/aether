@@ -91,33 +91,19 @@ struct AetherApp: App {
 			}
 			if url.host == "open-all-repos" {
 				AppTabManager.shared.switchTo(.sources)
-				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-					NotificationCenter.default.post(name: Notification.Name("Aether.openAllRepos"), object: nil)
-				}
+				SourcesRouter.shared.requestNavigation(.allRepos)
 				return
 			}
 			if url.host == "open-first-source" {
 				AppTabManager.shared.switchTo(.sources)
-				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-					NotificationCenter.default.post(name: Notification.Name("Aether.openFirstSource"), object: nil)
-				}
+				SourcesRouter.shared.requestNavigation(.firstSource)
 				return
 			}
 			if url.host == "open-source" {
 				AppTabManager.shared.switchTo(.sources)
 				let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
 				let name = components?.queryItems?.first(where: { $0.name == "name" })?.value
-				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-					var userInfo: [String: Any]? = nil
-					if let name {
-						userInfo = ["name": name]
-					}
-					NotificationCenter.default.post(
-						name: Notification.Name("Aether.openSource"),
-						object: nil,
-						userInfo: userInfo
-					)
-				}
+				SourcesRouter.shared.requestNavigation(.source(name: name))
 				return
 			}
 			if url.host == "open-app" {
@@ -125,33 +111,16 @@ struct AetherApp: App {
 				let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
 				let appName = components?.queryItems?.first(where: { $0.name == "name" })?.value
 				let sourceName = components?.queryItems?.first(where: { $0.name == "source" })?.value
-				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-					if let sourceName {
-						NotificationCenter.default.post(name: Notification.Name("Aether.openSource"), object: nil, userInfo: ["name": sourceName])
-					} else {
-						NotificationCenter.default.post(name: Notification.Name("Aether.openFirstSource"), object: nil)
-					}
-					DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-						var userInfo: [String: Any]? = nil
-						if let appName {
-							userInfo = ["name": appName]
-						}
-						NotificationCenter.default.post(name: Notification.Name("Aether.openApp"), object: nil, userInfo: userInfo)
-					}
-				}
+				SourcesRouter.shared.requestNavigation(
+					.app(sourceName: sourceName, appName: appName)
+				)
 				return
 			}
 			if url.host == "open-add-source" {
 				AppTabManager.shared.switchTo(.sources)
 				let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
 				let prepopulateURL = components?.queryItems?.first(where: { $0.name == "url" })?.value ?? ""
-				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-					NotificationCenter.default.post(
-						name: Notification.Name("Aether.openAddSource"),
-						object: nil,
-						userInfo: prepopulateURL.isEmpty ? nil : ["url": prepopulateURL]
-					)
-				}
+				SourcesRouter.shared.presentAddSource(initialURL: prepopulateURL)
 				return
 			}
 			if url.host == "trigger-save-source" {

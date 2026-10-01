@@ -24,7 +24,6 @@ struct LibraryView: View {
 	@State private var _editMode: EditMode = .inactive
 
 	@State private var _searchText = ""
-	@State private var _isSearchPresented = false
 	@ObservedObject private var tabManager = AppTabManager.shared
 
 	@Namespace private var _namespace
@@ -207,20 +206,14 @@ struct LibraryView: View {
 			.environment(\.editMode, $_editMode)
 			.searchable(
 				text: $_searchText,
-				isPresented: $_isSearchPresented,
+				isPresented: $tabManager.isLibrarySearchPresented,
 				placement: .toolbar,
 				prompt: Text(.localized("Search"))
 			)
 			.searchToolbarBehavior(.minimize)
-			.onChange(of: _isSearchPresented) { presented in
+			.onChange(of: tabManager.isLibrarySearchPresented) { presented in
 				if !presented {
 					_searchText = ""
-				}
-			}
-			.onChange(of: tabManager.isLibrarySearchRequested) { requested in
-				if requested {
-					_isSearchPresented = true
-					tabManager.isLibrarySearchRequested = false
 				}
 			}
 			.sheet(item: $_selectedInfoAppPresenting) { app in

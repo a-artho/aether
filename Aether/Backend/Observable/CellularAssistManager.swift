@@ -34,11 +34,16 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		case active
 		case consumed
 	}
-	private enum HelperSetupPhase {
+	private enum HelperProbePurpose: Equatable {
+		case initial
+		case postInstall
+	}
+
+	private enum HelperSetupPhase: Equatable {
 		case idle
-		case probing
+		case probing(HelperProbePurpose)
 		case presentingInstaller
-		case verifyAfterInstall
+		case waitingForPostInstallVerification
 	}
 	private static let enabledKey = "Aether.cellularAssistEnabled"
 	private static let restoreKey = "Aether.cellularAssistNeedsDataRestore"
@@ -97,7 +102,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			return
 		}
 		automaticRecoveryEpisode = .armed
-		helperSetupPhase = .probing
+		helperSetupPhase = .probing(.initial)
 		state = .checkingSetup
 		_startShortcut(.probe)
 	}
@@ -141,14 +146,26 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 		if status != "success" {
 			let message = values["errorMessage"] ?? "The Cellular Assist shortcut did not finish."
+			if phase == Command.probe.rawValue,
+				case let .probing(purpose) = helperSetupPhase {
+				_handleHelperProbeFailure(message, purpose: purpose)
+				return
+			}
 			_handleShortcutFailure(message, phase: phase)
 			return
 		}
 
 		switch phase {
 		case Command.probe.rawValue:
+			guard case let .probing(purpose) = helperSetupPhase else {
+				_log("Ignored a shortcut probe outside helper setup.", level: .warning)
+				return
+			}
 			guard values["result"] == Self.helperVersion else {
-				_installHelper()
+				_handleHelperProbeFailure(
+					"The Cellular Assist helper could not be verified.",
+					purpose: purpose
+				)
 				return
 			}
 			isEnabled = true
@@ -180,8 +197,8 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	}
 
 	public func handleApplicationDidBecomeActive() {
-		if helperSetupPhase == .verifyAfterInstall {
-			helperSetupPhase = .probing
+		if helperSetupPhase == .waitingForPostInstallVerification {
+			helperSetupPhase = .probing(.postInstall)
 			state = .checkingSetup
 			_startShortcut(.probe)
 			return
@@ -291,6 +308,13 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		guard let url = request.url else { return }
 		UIApplication.shared.open(url, options: [:]) { [weak self] opened in
 			guard let self, !opened else { return }
+			if command == .probe, case let .probing(purpose) = self.helperSetupPhase {
+				self._handleHelperProbeFailure(
+					"Aether could not open the Cellular Assist shortcut.",
+					purpose: purpose
+				)
+				return
+			}
 			self._handleShortcutFailure("Aether could not open the Cellular Assist shortcut.", phase: command.rawValue)
 		}
 	}
@@ -312,15 +336,14 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 	public func documentInteractionController(_ controller: UIDocumentInteractionController, willBeginSendingToApplication application: String?) {
 		if helperSetupPhase == .presentingInstaller {
-			helperSetupPhase = .verifyAfterInstall
+			helperSetupPhase = .waitingForPostInstallVerification
 		}
 	}
 
 	public func documentInteractionControllerDidDismissOpenInMenu(_ controller: UIDocumentInteractionController) {
 		documentController = nil
 		if helperSetupPhase == .presentingInstaller {
-			helperSetupPhase = .idle
-			state = .idle
+			_cancelHelperSetup()
 		}
 	}
 
@@ -350,16 +373,43 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	}
 
 	private func _handleShortcutCancel(phase: String) {
-		operationID = nil
 		if phase == Command.probe.rawValue {
-			helperSetupPhase = .idle
-			isEnabled = false
-			UserDefaults.standard.set(false, forKey: Self.enabledKey)
-			state = .idle
+			_cancelHelperSetup()
 			_log("Cellular Assist setup was cancelled.")
 			return
 		}
+		operationID = nil
 		_handleShortcutFailure("The Cellular Assist shortcut was cancelled.", phase: phase)
+	}
+
+	private func _handleHelperProbeFailure(_ message: String, purpose: HelperProbePurpose) {
+		operationID = nil
+
+		switch purpose {
+		case .initial:
+			_installHelper()
+		case .postInstall:
+			_finishHelperSetupFailure(message)
+		}
+	}
+
+	private func _cancelHelperSetup() {
+		operationID = nil
+		helperSetupPhase = .idle
+		isEnabled = false
+		UserDefaults.standard.set(false, forKey: Self.enabledKey)
+		state = .idle
+	}
+
+	private func _finishHelperSetupFailure(_ message: String) {
+		retryTask?.cancel()
+		retryTask = nil
+		operationID = nil
+		helperSetupPhase = .idle
+		isEnabled = false
+		UserDefaults.standard.set(false, forKey: Self.enabledKey)
+		state = .failed(message)
+		_showFailure(message)
 	}
 
 	private func _handleShortcutFailure(_ message: String, phase: String? = nil) {
