@@ -22,6 +22,8 @@ struct InstalledAppsView: View {
 	@State private var isSpoofingPresented = false
 	@State private var isModeSwitchBlocked = false
 	@State private var selectedAppBundleId: String?
+	@State private var searchText = ""
+	@State private var isSearchPresented = false
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
 
@@ -85,26 +87,31 @@ struct InstalledAppsView: View {
 						if !store.apps.isEmpty {
 							NBSection(
 								.localized("Sideloaded"),
-								secondary: store.apps.count.description
+								secondary: _filteredApps.count.description
 							) {
-								ForEach(store.apps) { app in
-									NavigationLink(
-										destination: InstalledAppDetailView(app: app, store: store),
-										isActive: Binding(
-											get: { selectedAppBundleId == app.bundleIdentifier },
-											set: { isActive in
-												if isActive {
-													selectedAppBundleId = app.bundleIdentifier
-												} else if selectedAppBundleId == app.bundleIdentifier {
-													selectedAppBundleId = nil
+								if _filteredApps.isEmpty {
+									Text(.localized("No Results"))
+										.foregroundStyle(.secondary)
+								} else {
+									ForEach(_filteredApps) { app in
+										NavigationLink(
+											destination: InstalledAppDetailView(app: app, store: store),
+											isActive: Binding(
+												get: { selectedAppBundleId == app.bundleIdentifier },
+												set: { isActive in
+													if isActive {
+														selectedAppBundleId = app.bundleIdentifier
+													} else if selectedAppBundleId == app.bundleIdentifier {
+														selectedAppBundleId = nil
+													}
 												}
-											}
-										)
-									) {
-										InstalledAppCellView(app: app, loadsIcon: loadsIcons)
-									}
-									.buttonStyle(.plain)
-									.id(app.id)
+											)
+										) {
+											InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+										}
+										.buttonStyle(.plain)
+										.id(app.id)
+								}
 								}
 							}
 						}
@@ -209,6 +216,13 @@ struct InstalledAppsView: View {
 					.accessibilityLabel(.localized("Settings"))
 				}
 			}
+			.searchable(
+				text: $searchText,
+				isPresented: $isSearchPresented,
+				placement: .toolbar,
+				prompt: Text(.localized("Search"))
+			)
+			.searchToolbarBehavior(.minimize)
 			.sheet(isPresented: $isSpoofingPresented) {
 				SpoofingEntryView()
 			}
@@ -220,6 +234,14 @@ struct InstalledAppsView: View {
 			} message: {
 				Text(.localized("Stop the simulated location before switching to Server mode."))
 			}
+		}
+	}
+
+	private var _filteredApps: [InstalledApp] {
+		guard !searchText.isEmpty else { return store.apps }
+		return store.apps.filter {
+			$0.displayName.localizedCaseInsensitiveContains(searchText)
+				|| $0.bundleIdentifier.localizedCaseInsensitiveContains(searchText)
 		}
 	}
 
