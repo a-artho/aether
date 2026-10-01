@@ -30,6 +30,8 @@ final class AppTabManager: ObservableObject {
 	@Published var isSettingsPresented = false
 	@Published var requestedSettingsPage: SettingsPage? = nil
 	@Published private(set) var isInstallationSettingsRequested = false
+	@Published var isLibrarySearchRequested = false
+	@Published var isSourcesSearchRequested = false
 	
 	private init() {}
 	
@@ -55,5 +57,22 @@ final class AppTabManager: ObservableObject {
 
 	func consumeInstallationSettingsRequest() {
 		isInstallationSettingsRequested = false
+	}
+
+	func openSearch() {
+		switch selectedTab {
+		case .library:
+			isLibrarySearchRequested = true
+		case .sources:
+			isSourcesSearchRequested = true
+		default:
+			switchTo(.sources)
+			isSourcesSearchRequested = true
+		}
+	}
+
+	func closeSearch() {
+		isLibrarySearchRequested = false
+		isSourcesSearchRequested = false
 	}
 }

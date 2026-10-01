@@ -18,8 +18,10 @@ struct ExpandableText: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: 4) {
 			Text(text)
-				.lineLimit(expanded ? nil : lineLimit)
+				.font(.body)
 				.foregroundStyle(.secondary)
+				.lineSpacing(3)
+				.lineLimit(expanded ? nil : lineLimit)
 				.background(
 					Text(text)
 						.lineLimit(lineLimit)
@@ -46,11 +48,10 @@ struct ExpandableText: View {
 					}
 				}) {
 					Text(expanded ? .localized("Less") : .localized("More"))
-						.font(.caption)
+						.font(.subheadline.weight(.medium))
 						.foregroundColor(.accentColor)
 				}
 			}
 		}
 	}
 }
-

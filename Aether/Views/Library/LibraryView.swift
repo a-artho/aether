@@ -25,8 +25,7 @@ struct LibraryView: View {
 
 	@State private var _searchText = ""
 	@State private var _isSearchPresented = false
-	@FocusState private var _isSearchFocused: Bool
-
+	@ObservedObject private var tabManager = AppTabManager.shared
 
 	@Namespace private var _namespace
 
@@ -76,7 +75,7 @@ struct LibraryView: View {
 
 	// MARK: Body
 	var body: some View {
-		NBNavigationView(_isSearchPresented ? "" : .localized("Library"), displayMode: .inline) {
+		NBNavigationView(.localized("Library"), displayMode: .inline) {
 			NBListAdaptable {
 				if !exportManager.exports.isEmpty {
 					NBSection(.localized("Exports")) {
@@ -167,68 +166,8 @@ struct LibraryView: View {
 						.disabled(_selectedAppUUIDs.isEmpty)
 						.accessibilityLabel(.localized("Delete"))
 					}
-				} else if _isSearchPresented {
-					ToolbarItem(placement: .principal) {
-						HStack(spacing: 8) {
-							Image(systemName: "magnifyingglass")
-								.font(.system(size: 15, weight: .semibold))
-								.foregroundColor(.secondary)
-								.padding(.leading, 12)
-							
-							TextField(.localized("Search"), text: $_searchText)
-								.font(.system(size: 16))
-								.focused($_isSearchFocused)
-								.textInputAutocapitalization(.never)
-								.disableAutocorrection(true)
-								.onAppear {
-									_isSearchFocused = true
-								}
-							
-							if !_searchText.isEmpty {
-								Button {
-									_searchText = ""
-								} label: {
-									Image(systemName: "xmark.circle.fill")
-										.font(.system(size: 14))
-										.foregroundColor(.secondary)
-								}
-								.buttonStyle(.plain)
-								.padding(.trailing, 8)
-							}
-						}
-						.frame(height: 36)
-						.frame(maxWidth: 500)
-						.background {
-							Color.clear
-								.glassEffect(.regular, in: .capsule)
-						}
-					}
-
-					ToolbarItem(placement: .topBarTrailing) {
-						Button {
-							_isSearchFocused = false
-							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-								_isSearchPresented = false
-								_searchText = ""
-							}
-						} label: {
-							Image(systemName: "xmark")
-						}
-						.accessibilityLabel(.localized("Cancel"))
-					}
 				} else {
 					ToolbarItem(placement: .topBarLeading) {
-						Button {
-							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-								_isSearchPresented = true
-							}
-						} label: {
-							Image(systemName: "magnifyingglass")
-						}
-						.accessibilityLabel(.localized("Search"))
-					}
-
-					ToolbarItem(placement: .topBarTrailing) {
 						Button {
 							_isImportingPresenting = true
 						} label: {
@@ -266,8 +205,24 @@ struct LibraryView: View {
 				}
 			}
 			.environment(\.editMode, $_editMode)
-			.animation(.spring(response: 0.35, dampingFraction: 0.82), value: _isSearchPresented)
-			.animation(.snappy(duration: 0.25), value: _searchText)
+			.searchable(
+				text: $_searchText,
+				isPresented: $_isSearchPresented,
+				placement: .toolbar,
+				prompt: Text(.localized("Search"))
+			)
+			.searchToolbarBehavior(.minimize)
+			.onChange(of: _isSearchPresented) { presented in
+				if !presented {
+					_searchText = ""
+				}
+			}
+			.onChange(of: tabManager.isLibrarySearchRequested) { requested in
+				if requested {
+					_isSearchPresented = true
+					tabManager.isLibrarySearchRequested = false
+				}
+			}
 			.sheet(item: $_selectedInfoAppPresenting) { app in
 				LibraryInfoView(app: app.base)
 			}
@@ -296,18 +251,6 @@ struct LibraryView: View {
 				}
 			} message: {
 				Text(.localized("This permanently removes all signed and imported apps from your library."))
-			}
-			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.openSearch"))) { _ in
-				withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-					_isSearchPresented = true
-				}
-			}
-			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.closeSearch"))) { _ in
-				_isSearchFocused = false
-				withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-					_isSearchPresented = false
-					_searchText = ""
-				}
 			}
 			.onChange(of: _editMode) { mode in
 				if mode == .inactive {

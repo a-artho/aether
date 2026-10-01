@@ -82,11 +82,11 @@ struct AetherApp: App {
 				return
 			}
 			if url.host == "open-search" {
-				NotificationCenter.default.post(name: Notification.Name("Aether.openSearch"), object: nil)
+				AppTabManager.shared.openSearch()
 				return
 			}
 			if url.host == "close-search" {
-				NotificationCenter.default.post(name: Notification.Name("Aether.closeSearch"), object: nil)
+				AppTabManager.shared.closeSearch()
 				return
 			}
 			if url.host == "open-all-repos" {

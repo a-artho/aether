@@ -20,36 +20,40 @@ struct SourceAppsDetailView: View {
 	@State private var _isScreenshotPreviewPresented: Bool = false
 	@State private var _selectedScreenshotIndex: Int = 0
 	@State private var _appStoreDestination: AppStoreDestination?
-	
+
 	var currentDownload: Download? {
 		downloadManager.getDownload(by: app.currentUniqueId)
 	}
-	
+
 	let sourceURL: URL?
 	let source: ASRepository
 	let app: ASRepository.App
-	
+
 	var body: some View {
 		ScrollView {
-			VStack(alignment: .leading, spacing: 24) {
-				_metadataTiles()
+			VStack(alignment: .leading, spacing: 28) {
+				_metadataStrip()
 
 				if let screenshotURLs = app.screenshotURLs, !screenshotURLs.isEmpty {
-					NBSection(.localized("Screenshots")) {
+					_detailSection(.localized("Screenshots")) {
 						_screenshots(screenshotURLs: screenshotURLs)
 					}
 				}
 
-				if
-					let currentVer = app.currentVersion,
-					let whatsNewDesc = app.currentAppVersion?.localizedDescription
-				{
-					NBSection(.localized("What's New")) {
-						VStack(alignment: .leading, spacing: 8) {
+				if let currentVersion = app.currentVersion,
+				   !currentVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+
+					let releaseNotes = _cleanSourceText(
+						app.currentAppVersion?.localizedDescription
+					)
+
+					_detailSection(.localized("What's New")) {
+						VStack(alignment: .leading, spacing: 10) {
 							AppVersionInfo(
-								version: currentVer,
+								version: currentVersion,
 								date: app.currentDate?.date,
-								description: whatsNewDesc
+								description: releaseNotes ?? .localized("No release notes provided."),
+								isPlaceholder: releaseNotes == nil
 							)
 
 							if let versions = app.versions, versions.count > 1 {
@@ -63,43 +67,54 @@ struct SourceAppsDetailView: View {
 									.navigationTitle(.localized("Version History"))
 									.navigationBarTitleDisplayMode(.inline)
 								) {
-									HStack {
+									HStack(spacing: 8) {
 										Text(.localized("Version History"))
 											.font(.subheadline.weight(.medium))
-											.foregroundStyle(Color.accentColor)
+
 										Spacer()
+
 										Image(systemName: "chevron.right")
 											.font(.caption2.weight(.semibold))
-											.foregroundStyle(Color.secondary.opacity(0.4))
+											.foregroundStyle(.tertiary)
 									}
-									.padding(.top, 4)
+									.foregroundStyle(Color.accentColor)
+									.contentShape(Rectangle())
 								}
+								.buttonStyle(.plain)
+								.padding(.top, 2)
 							}
 						}
 					}
 				}
 
-				if let appDesc = app.localizedDescription, !appDesc.isEmpty {
-					NBSection(.localized("Description"), trailing: {
-						_appStoreLink()
-					}) {
-						ExpandableText(text: appDesc, lineLimit: 4)
-							.lineSpacing(3)
-					}
-				} else if _appStoreDestination != nil {
-					NBSection(.localized("Description"), trailing: {
-						_appStoreLink()
-					}) {
-						EmptyView()
+				let appDescription = _cleanSourceText(app.localizedDescription)
+
+				if appDescription != nil || _appStoreDestination != nil {
+					_detailSection(
+						.localized("Description"),
+						trailing: {
+							_appStoreLink()
+						}
+					) {
+						if let appDescription {
+							ExpandableText(
+								text: appDescription,
+								lineLimit: 4
+							)
+						} else {
+							Text(.localized("No description provided."))
+								.font(.body)
+								.foregroundStyle(.secondary)
+						}
 					}
 				}
 
-				NBSection(.localized("Information")) {
+				_detailSection(.localized("Information")) {
 					_informationRows()
 				}
 
 				if let appPermissions = app.appPermissions {
-					NBSection(.localized("Permissions")) {
+					_detailSection(.localized("Permissions")) {
 						Group {
 							if let entitlements = appPermissions.entitlements {
 								NBTitleWithSubtitleView(
@@ -132,9 +147,9 @@ struct SourceAppsDetailView: View {
 					}
 				}
 			}
-			.padding(.horizontal, 16)
-			.padding(.top, 8)
-			.padding(.bottom, 36)
+			.padding(.horizontal, 20)
+			.padding(.top, 10)
+			.padding(.bottom, 44)
 		}
 		.background(Color(uiColor: .systemBackground).ignoresSafeArea())
 		.navigationTitle(app.currentName)
@@ -172,7 +187,7 @@ struct SourceAppsDetailView: View {
 			)
 		}
 	}
-	
+
 	@ViewBuilder
 	private var _navigationIcon: some View {
 		if let iconURL = app.iconURL {
@@ -221,60 +236,154 @@ struct SourceAppsDetailView: View {
 
 // MARK: - SourceAppsDetailView (Extension): Builders
 extension SourceAppsDetailView {
-	@ViewBuilder
-	private func _metadataTiles() -> some View {
-		let version = app.currentVersion.flatMap { $0.isEmpty ? nil : $0 } ?? "—"
-		let size = app.size?.formattedByteCount ?? "—"
 
-		HStack(spacing: 12) {
-			_metadataTile(
-				title: .localized("Version"),
-				subtitle: version,
-				systemImage: "tag"
-			)
+	// MARK: Boilerplate cleanup
 
-			_metadataTile(
-				title: .localized("Size"),
-				subtitle: size,
-				systemImage: "internaldrive"
-			)
+	private static let _genericSourcePlaceholder =
+		"No tweak information supplied by the source."
+
+	private func _cleanSourceText(_ rawValue: String?) -> String? {
+		guard let rawValue else { return nil }
+
+		var text = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+
+		guard !text.isEmpty else {
+			return nil
 		}
+
+		if text.localizedCaseInsensitiveCompare(Self._genericSourcePlaceholder) == .orderedSame {
+			return nil
+		}
+
+		if text.hasPrefix(Self._genericSourcePlaceholder) {
+			text = String(text.dropFirst(Self._genericSourcePlaceholder.count))
+				.trimmingCharacters(in: .whitespacesAndNewlines)
+
+			return text.isEmpty ? nil : text
+		}
+
+		return text
 	}
 
-	private func _metadataTile(
-		title: String,
-		subtitle: String,
-		systemImage: String
+	// MARK: Section helpers (local to this screen — do not use NBSection here)
+
+	@ViewBuilder
+	private func _detailSection<Content: View>(
+		_ title: String,
+		@ViewBuilder content: () -> Content
 	) -> some View {
-		HStack(spacing: 8) {
-			Image(systemName: systemImage)
-				.font(.system(size: 17, weight: .semibold))
-				.foregroundStyle(.secondary)
-				.frame(width: 24, height: 24)
+		VStack(alignment: .leading, spacing: 10) {
+			Text(title)
+				.font(.title3.weight(.semibold))
+				.foregroundStyle(.primary)
 
-			VStack(alignment: .leading, spacing: 2) {
+			content()
+		}
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	@ViewBuilder
+	private func _detailSection<Trailing: View, Content: View>(
+		_ title: String,
+		@ViewBuilder trailing: () -> Trailing,
+		@ViewBuilder content: () -> Content
+	) -> some View {
+		VStack(alignment: .leading, spacing: 10) {
+			HStack(alignment: .firstTextBaseline, spacing: 12) {
 				Text(title)
-					.font(.subheadline.weight(.semibold))
+					.font(.title3.weight(.semibold))
 					.foregroundStyle(.primary)
-					.lineLimit(1)
 
-				Text(subtitle)
-					.font(.caption2.weight(.medium))
-					.foregroundStyle(.secondary)
-					.lineLimit(1)
-					.minimumScaleFactor(0.8)
+				Spacer(minLength: 8)
+
+				trailing()
 			}
 
-			Spacer(minLength: 0)
+			content()
 		}
-		.padding(.horizontal, 10)
-		.padding(.vertical, 8)
-		.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-		.background {
-			RoundedRectangle(cornerRadius: 15, style: .continuous)
-				.fill(Color(uiColor: .secondarySystemGroupedBackground))
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	// MARK: Metadata strip
+
+	private struct DetailMetric: Identifiable {
+		let id: String
+		let label: String
+		let value: String
+	}
+
+	private var _metadataMetrics: [DetailMetric] {
+		var metrics: [DetailMetric] = []
+
+		if let version = app.currentVersion,
+		   !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+			metrics.append(
+				DetailMetric(
+					id: "version",
+					label: .localized("Version").uppercased(),
+					value: version
+				)
+			)
+		}
+
+		if let size = app.size {
+			metrics.append(
+				DetailMetric(
+					id: "size",
+					label: .localized("Size").uppercased(),
+					value: size.formattedByteCount
+				)
+			)
+		}
+
+		if let date = app.currentDate?.date {
+			metrics.append(
+				DetailMetric(
+					id: "updated",
+					label: .localized("Updated").uppercased(),
+					value: date.formatted(.relative(presentation: .named))
+				)
+			)
+		}
+
+		return metrics
+	}
+
+	@ViewBuilder
+	private func _metadataStrip() -> some View {
+		let metrics = _metadataMetrics
+
+		if !metrics.isEmpty {
+			HStack(spacing: 0) {
+				ForEach(metrics.indices, id: \.self) { index in
+					let metric = metrics[index]
+
+					if index > 0 {
+						Divider()
+							.frame(height: 32)
+							.padding(.horizontal, 12)
+					}
+
+					VStack(alignment: .leading, spacing: 3) {
+						Text(metric.label)
+							.font(.caption2.weight(.medium))
+							.foregroundStyle(.secondary)
+							.lineLimit(1)
+
+						Text(metric.value)
+							.font(.subheadline.weight(.semibold))
+							.foregroundStyle(.primary)
+							.lineLimit(1)
+							.minimumScaleFactor(0.8)
+					}
+					.frame(maxWidth: .infinity, alignment: .leading)
+				}
+			}
+			.padding(.vertical, 4)
 		}
 	}
+
+	// MARK: App Store link
 
 	@ViewBuilder
 	private func _appStoreLink() -> some View {
@@ -283,13 +392,6 @@ extension SourceAppsDetailView {
 				_openAppStore(destination.url)
 			} label: {
 				HStack(spacing: 4) {
-					Image("AppStore")
-						.renderingMode(.template)
-						.resizable()
-						.scaledToFit()
-						.frame(width: 12, height: 12)
-						.foregroundStyle(.secondary)
-
 					Text("App Store")
 						.underline()
 						.foregroundStyle(.secondary)
@@ -304,50 +406,81 @@ extension SourceAppsDetailView {
 		}
 	}
 
+	// MARK: Information rows
+
 	@ViewBuilder
 	private func _informationRows() -> some View {
 		let rows: [(title: String, value: String)] = [
-			source.name.flatMap { (title: .localized("Source"), value: $0) },
-			app.developer.flatMap { (title: .localized("Developer"), value: $0) },
-			app.size.flatMap { (title: .localized("Size"), value: $0.formattedByteCount) },
-			app.category.flatMap { (title: .localized("Category"), value: $0.capitalized) },
-			app.currentVersion.flatMap { (title: .localized("Version"), value: $0) },
-			(app.currentDate?.date).flatMap { (title: .localized("Updated"), value: DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .none)) },
-			app.id.flatMap { (title: .localized("Identifier"), value: $0) }
-		].compactMap { $0 }
+			source.name.flatMap {
+				(title: .localized("Source"), value: $0)
+			},
 
-		VStack(spacing: 8) {
+			app.developer.flatMap {
+				(title: .localized("Developer"), value: $0)
+			},
+
+			app.category.flatMap {
+				(title: .localized("Category"), value: $0.capitalized)
+			},
+
+			app.id.flatMap {
+				(title: .localized("Identifier"), value: $0)
+			}
+		]
+		.compactMap { $0 }
+
+		VStack(spacing: 0) {
 			ForEach(rows.indices, id: \.self) { index in
 				let row = rows[index]
-				_infoRow(title: row.title, value: row.value, isLast: index == rows.count - 1)
+
+				_infoRow(
+					title: row.title,
+					value: row.value,
+					isLast: index == rows.count - 1
+				)
 			}
 		}
+		.background {
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+				.fill(Color(uiColor: .secondarySystemGroupedBackground))
+		}
+		.clipShape(
+			RoundedRectangle(cornerRadius: 16, style: .continuous)
+		)
 	}
-	
+
 	@ViewBuilder
-	private func _infoRow(title: String, value: String, isLast: Bool) -> some View {
-		HStack(alignment: .firstTextBaseline) {
+	private func _infoRow(
+		title: String,
+		value: String,
+		isLast: Bool
+	) -> some View {
+		HStack(alignment: .firstTextBaseline, spacing: 16) {
 			Text(title)
 				.font(.subheadline)
 				.foregroundStyle(.secondary)
+				.layoutPriority(1)
 
-			Spacer(minLength: 16)
+			Spacer(minLength: 12)
 
 			Text(value)
 				.font(.subheadline)
 				.foregroundStyle(.primary)
 				.multilineTextAlignment(.trailing)
 				.lineLimit(2)
+				.fixedSize(horizontal: false, vertical: true)
 		}
-		.padding(.vertical, 3)
+		.padding(.horizontal, 14)
+		.padding(.vertical, 11)
 
 		if !isLast {
-			Rectangle()
-				.fill(Color.primary.opacity(0.06))
-				.frame(height: 0.5)
+			Divider()
+				.padding(.leading, 14)
 		}
 	}
-	
+
+	// MARK: Screenshots
+
 	@ViewBuilder
 	private func _screenshots(screenshotURLs: [URL]) -> some View {
 		ScrollView(.horizontal, showsIndicators: false) {
@@ -377,6 +510,6 @@ extension SourceAppsDetailView {
 			.compatScrollTargetLayout()
 		}
 		.compatScrollTargetBehavior()
-		.padding(.horizontal, -16)
+		.padding(.horizontal, -20)
 	}
 }

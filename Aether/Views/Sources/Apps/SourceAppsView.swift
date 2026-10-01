@@ -39,7 +39,6 @@ struct SourceAppsView: View {
 	@State var hasLoadedOnce = false
 	@State private var _searchText = ""
 	@State private var _isSearchPresented = false
-	@FocusState private var _isSearchFocused: Bool
 
 	private var _navigationTitle: String {
 		if object.count == 1 {
@@ -80,9 +79,8 @@ struct SourceAppsView: View {
 				)
 			}
 		}
-		.navigationTitle(_isSearchPresented ? "" : _navigationTitle)
-		.navigationBarBackButtonHidden(_isSearchPresented)
-		.toolbarTitleMenuIf(!_isSearchPresented) {
+		.navigationTitle(_navigationTitle)
+		.toolbarTitleMenu {
 			_sortActions()
 
 			if
@@ -122,73 +120,20 @@ struct SourceAppsView: View {
 			}
 		}
 		.toolbar {
-			if _isSearchPresented {
-				ToolbarItem(placement: .principal) {
-					HStack(spacing: 8) {
-						Image(systemName: "magnifyingglass")
-							.font(.system(size: 15, weight: .semibold))
-							.foregroundColor(.secondary)
-							.padding(.leading, 12)
-
-						TextField(.localized("Search"), text: $_searchText)
-							.font(.system(size: 16))
-							.focused($_isSearchFocused)
-							.textInputAutocapitalization(.never)
-							.disableAutocorrection(true)
-							.onAppear {
-								// A toolbar principal item is created after the navigation
-								// bar's layout pass. Focus from the field itself instead of
-								// racing that layout with a fixed delay.
-								DispatchQueue.main.async {
-									guard _isSearchPresented else { return }
-									_isSearchFocused = true
-								}
-							}
-
-						if !_searchText.isEmpty {
-							Button {
-								_searchText = ""
-							} label: {
-								Image(systemName: "xmark.circle.fill")
-									.font(.system(size: 14))
-									.foregroundColor(.secondary)
-							}
-							.buttonStyle(.plain)
-							.padding(.trailing, 8)
-						}
-					}
-					.frame(height: 36)
-					.frame(maxWidth: 500)
-					.background {
-						Color.clear
-							.glassEffect(.regular, in: .capsule)
-					}
-				}
-
-				ToolbarItem(placement: .topBarTrailing) {
-					Button {
-						_isSearchFocused = false
-						withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-							_isSearchPresented = false
-							_searchText = ""
-						}
-					} label: {
-						Image(systemName: "xmark")
-					}
-					.accessibilityLabel(.localized("Cancel"))
-				}
-			} else {
-				ToolbarItem(placement: .topBarTrailing) {
-					Button {
-						_presentSearch()
-					} label: {
-						Image(systemName: "magnifyingglass")
-					}
-					.accessibilityLabel(.localized("Search"))
-				}
+			// Other toolbar items if any, search is provided natively by .searchable
+		}
+		.searchable(
+			text: $_searchText,
+			isPresented: $_isSearchPresented,
+			placement: .toolbar,
+			prompt: Text(.localized("Search"))
+		)
+		.searchToolbarBehavior(.minimize)
+		.onChange(of: _isSearchPresented) { presented in
+			if !presented {
+				_searchText = ""
 			}
 		}
-		.animation(.spring(response: 0.35, dampingFraction: 0.82), value: _isSearchPresented)
 		.onAppear {
 			if !hasLoadedOnce, viewModel.isFinished {
 				_load()
@@ -208,16 +153,6 @@ struct SourceAppsView: View {
 				source: route.source,
 				app: route.app
 			)
-		}
-		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.openSearch"))) { _ in
-			_presentSearch()
-		}
-		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.closeSearch"))) { _ in
-			_isSearchFocused = false
-			withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-				_isSearchPresented = false
-				_searchText = ""
-			}
 		}
 		.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.openApp"))) { notif in
 			let targetName = notif.userInfo?["name"] as? String
@@ -244,13 +179,6 @@ struct SourceAppsView: View {
 		_sourceContexts = loadedSources
 		withAnimation(.easeIn(duration: 0.2)) {
 			isLoading = false
-		}
-	}
-
-	private func _presentSearch() {
-		guard !_isSearchPresented else { return }
-		withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-			_isSearchPresented = true
 		}
 	}
 	
