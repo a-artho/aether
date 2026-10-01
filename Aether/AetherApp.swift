@@ -123,6 +123,7 @@ struct AetherApp: App {
 				SourcesRouter.shared.presentAddSource(initialURL: prepopulateURL)
 				return
 			}
+			#if DEBUG
 			if url.host == "trigger-save-source" {
 				NotificationCenter.default.post(name: Notification.Name("Aether.triggerSaveSource"), object: nil)
 				return
@@ -134,7 +135,6 @@ struct AetherApp: App {
 				}
 				return
 			}
-			#if DEBUG
 			if url.host == "mock-apps" {
 				NotificationCenter.default.post(name: Notification.Name("Aether.mockApps"), object: nil)
 				AppTabManager.shared.switchTo(.installed)

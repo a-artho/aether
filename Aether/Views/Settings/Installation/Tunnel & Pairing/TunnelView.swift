@@ -189,7 +189,7 @@ struct TunnelView: View {
 		} header: {
 			Text(.localized("Automation"))
 		} footer: {
-			Text(.localized("In Local mode, connects when Aether opens and disconnects in the background when idle."))
+			Text(.localized("Turns off the tunnel in the background when no device activity needs it. (In Local mode, Aether starts the tunnel on launch regardless of this setting.)"))
 		}
 
 		Section {

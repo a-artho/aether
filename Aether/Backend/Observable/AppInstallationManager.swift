@@ -123,6 +123,11 @@ final class AppInstallationManager: ObservableObject {
 		#endif
 		
 		installTask = Task.detached { [weak self, appSnapshot] in
+			defer {
+				Task { @MainActor [weak self] in
+					self?._installWorkerDidFinish(generation: generation)
+				}
+			}
 			var currentHandler: ArchiveHandler?
 			do {
 				try Task.checkCancellation()
@@ -192,6 +197,20 @@ final class AppInstallationManager: ObservableObject {
 		}
 	}
 
+	private func _installWorkerDidFinish(generation: UUID) {
+		guard installGeneration == generation else { return }
+		installTask = nil
+
+		guard UIApplication.shared.applicationState == .background,
+		      let status = viewModel?.status else { return }
+		switch status {
+		case .completed, .broken:
+			DeviceConnectionManager.shared.handleAppBackground()
+		default:
+			break
+		}
+	}
+
 	private func _showIDevicePreflightAlert(title: String, message: String) {
 		UIAlertController.showAlertWithOk(title: title, message: message)
 	}
@@ -257,11 +276,6 @@ final class AppInstallationManager: ObservableObject {
 				_log("Device install completed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .notice)
 				_cleanupInstallResources()
 				NotificationCenter.default.post(name: Notification.Name("Aether.installedAppsRefresh"), object: nil)
-				if UIApplication.shared.applicationState == .background,
-				   DeviceConnectionManager.shared.isAutoTunnelLifecycleEnabled,
-				   !DeviceConnectionManager.shared.hasActiveTunnelDependencies {
-					DeviceConnectionManager.shared.setConnection(enabled: false)
-				}
 				Task { [weak self] in
 					try? await Task.sleep(nanoseconds: 3_000_000_000)
 					await MainActor.run {
@@ -273,11 +287,6 @@ final class AppInstallationManager: ObservableObject {
 			case .broken:
 				_log("Device install failed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .error)
 				_cleanupInstallResources()
-				if UIApplication.shared.applicationState == .background,
-				   DeviceConnectionManager.shared.isAutoTunnelLifecycleEnabled,
-				   !DeviceConnectionManager.shared.hasActiveTunnelDependencies {
-					DeviceConnectionManager.shared.setConnection(enabled: false)
-				}
 			default:
 				break
 			}

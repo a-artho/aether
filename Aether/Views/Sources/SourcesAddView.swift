@@ -131,9 +131,11 @@ struct SourcesAddView: View {
 					_sourceURL = _initialURL
 				}
 			}
+			#if DEBUG
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.triggerSaveSource"))) { _ in
 				_saveSource()
 			}
+			#endif
 		}
 		.presentationDetents([.height(370)])
 	}
