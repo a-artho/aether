@@ -13,15 +13,13 @@ import UIKit
 // MARK: - Extension: View (Enil)
 extension SourceAppsView {
 	enum SortOption: String, CaseIterable {
-		case `default` = "default"
 		case name
-		case date
+		case latest
 		
 		var displayName: String {
 			switch self {
-			case .default:  .localized("Default")
 			case .name: 	.localized("Name")
-			case .date: 	.localized("Date")
+			case .latest: 	.localized("Latest")
 			}
 		}
 	}
@@ -29,10 +27,9 @@ extension SourceAppsView {
 
 // MARK: - View
 struct SourceAppsView: View {
-	@AppStorage("Aether.sortOptionRawValue") private var _sortOptionRawValue: String = SortOption.default.rawValue
-	@AppStorage("Aether.sortAscending") private var _sortAscending: Bool = true
+	@AppStorage("Aether.sortOptionRawValue") private var _sortOptionRawValue: String = SortOption.latest.rawValue
 	
-	@State private var _sortOption: SortOption = .default
+	@State private var _sortOption: SortOption = .latest
 	@State var isLoading = true
 	@State var hasLoadedOnce = false
 	@State private var _searchText = ""
@@ -82,7 +79,7 @@ struct SourceAppsView: View {
 					sourceContexts: _sourceContexts,
 					searchText: $_searchText,
 					sortOption: $_sortOption,
-					sortAscending: $_sortAscending,
+					sortAscending: _sortOption == .name,
 					showSourceBadge: isAllRepos,
 					onSelect: { selection in
 						router.openResolvedApp(
@@ -191,7 +188,9 @@ struct SourceAppsView: View {
 				_load()
 				hasLoadedOnce = true
 			}
-			_sortOption = SortOption(rawValue: _sortOptionRawValue) ?? .default
+			_sortOption = _sortOptionRawValue == "date"
+				? .latest
+				: SortOption(rawValue: _sortOptionRawValue) ?? .latest
 		}
 		.onChange(of: viewModel.isFinished) { _ in
 			_load()
@@ -300,18 +299,13 @@ extension SourceAppsView {
 	
 	private func _sortButton(for option: SortOption) -> some View {
 		Button {
-			if _sortOption == option {
-				_sortAscending.toggle()
-			} else {
-				_sortOption = option
-				_sortAscending = true
-			}
+			_sortOption = option
 		} label: {
 			HStack {
 				Text(option.displayName)
 				Spacer()
 				if _sortOption == option {
-					Image(systemName: _sortAscending ? "chevron.up" : "chevron.down")
+					Image(systemName: "checkmark")
 				}
 			}
 		}

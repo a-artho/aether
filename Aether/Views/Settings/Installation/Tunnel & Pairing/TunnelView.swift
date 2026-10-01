@@ -50,9 +50,8 @@ struct TunnelView: View {
 				_inAppControls
 			case .localDevVPN:
 				_localDevVPNControls
+				_automationControls
 			}
-
-			_automationControls
 		}
 		.onAppear {
 			_refreshLocalDevVPNAvailability()
@@ -76,6 +75,8 @@ struct TunnelView: View {
 			}
 
 		}
+
+		_automationControls
 
 		Section {
 			HStack {
@@ -185,7 +186,13 @@ struct TunnelView: View {
 			)) {
 				SettingsRowLabel(.localized("Tunnel Lifecycle"), systemImage: "bolt.badge.automatic", backgroundColor: .blue)
 			}
+		} header: {
+			Text(.localized("Automation"))
+		} footer: {
+			Text(.localized("In Local mode, connects when Aether opens and disconnects in the background when idle."))
+		}
 
+		Section {
 			Toggle(isOn: Binding(
 				get: { cellularAssist.isEnabled },
 				set: { cellularAssist.requestEnabled($0) }
@@ -193,10 +200,8 @@ struct TunnelView: View {
 				SettingsRowLabel(.localized("Cellular Assist"), systemImage: "antenna.radiowaves.left.and.right", backgroundColor: .orange)
 			}
 			.disabled(cellularAssist.isBusy || connection.tunnelMethod != .inApp)
-		} header: {
-			Text(.localized("Automation"))
 		} footer: {
-			Text(.localized("Uses Aether Cellular in Apple Shortcuts to manage Mobile Data when needed. If it isn’t installed, export it to Shortcuts and choose Always Allow when prompted."))
+			Text(.localized("With In-App tunneling on cellular without Wi-Fi, briefly turns Mobile Data off to connect to your device, then restores it. Add the exported Aether Cellular shortcut to Shortcuts and choose Always Allow when prompted."))
 		}
 	}
 

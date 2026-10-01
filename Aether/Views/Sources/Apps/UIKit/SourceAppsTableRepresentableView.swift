@@ -13,7 +13,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
 	@Binding var searchText: String
 	@Binding var sortOption: SourceAppsView.SortOption
-	@Binding var sortAscending: Bool
+	var sortAscending: Bool
 	var showSourceBadge: Bool = false
 	var onSelect: (SourceAppsView.SourceAppSelection) -> Void
 	
@@ -126,9 +126,7 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		self.onSelect = onSelect
 		super.init()
 		
-		if sortOption != .default {
-			invalidateCache()
-		}
+		invalidateCache()
 	}
 	
 	private func _calculateSortedApps() -> [SourceAppEntry] {
@@ -142,12 +140,7 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		}
 		
 		switch sortOption {
-		case .default:
-			_groupedAppsByDate = [:]
-			_groupedAppsByNameFirstLetter = [:]
-			_sortedSectionTitles = []
-			return sortAscending ? filtered : filtered.reversed()
-		case .date:
+		case .latest:
 			let sorted = filtered.sorted {
 				switch ($0.app.currentDate?.date, $1.app.currentDate?.date) {
 				case let (d1?, d2?):
@@ -287,16 +280,14 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	
 	func numberOfSections(in tableView: UITableView) -> Int {
 		switch sortOption {
-		case .default: 1
-		case .name, .date: _sortedSectionTitles.count
+		case .name, .latest: _sortedSectionTitles.count
 		}
 	}
 	
 	func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
 		switch sortOption {
-		case .default: _sortedApps.count
 		case .name: _groupedAppsByNameFirstLetter[_sortedSectionTitles[section]]?.count ?? 0
-		case .date: _groupedAppsByDate[_sortedSectionTitles[section]]?.count ?? 0
+		case .latest: _groupedAppsByDate[_sortedSectionTitles[section]]?.count ?? 0
 		}
 	}
 	
@@ -304,9 +295,8 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		let cell = tableView.dequeueReusableCell(withIdentifier: "AppCell", for: indexPath)
 		let entry: SourceAppEntry
 		switch sortOption {
-		case .default: entry = _sortedApps[indexPath.row]
 		case .name: entry = _groupedAppsByNameFirstLetter[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
-		case .date: entry = _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
+		case .latest: entry = _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
 		}
 
 		cell.contentConfiguration = UIHostingConfiguration {
@@ -326,9 +316,8 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 
 		let entry: SourceAppEntry
 		switch sortOption {
-		case .default: entry = _sortedApps[indexPath.row]
 		case .name: entry = _groupedAppsByNameFirstLetter[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
-		case .date: entry = _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
+		case .latest: entry = _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
 		}
 
 		onSelect(
@@ -344,8 +333,7 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		let title: String
 		
 		switch sortOption {
-		case .default: title = .localized("%lld Apps", arguments: _sortedApps.count)
-		case .name, .date: title = _sortedSectionTitles[section]
+		case .name, .latest: title = _sortedSectionTitles[section]
 		}
 		
 		headerView?.contentConfiguration = UIHostingConfiguration {
@@ -371,9 +359,8 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
 		let entry: SourceAppEntry
 		switch sortOption {
-		case .default: entry = _sortedApps[indexPath.row]
 		case .name: entry = _groupedAppsByNameFirstLetter[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
-		case .date: entry = _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
+		case .latest: entry = _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
 		}
 		
 		return UIContextMenuConfiguration(

@@ -26,7 +26,16 @@ final class AppTabManager: ObservableObject {
 		case root
 	}
 	
-	@Published var selectedTab: TabEnum = .sources
+	@Published var selectedTab: TabEnum = .sources {
+		didSet {
+			guard selectedTab != oldValue else { return }
+			var transaction = Transaction()
+			transaction.disablesAnimations = true
+			withTransaction(transaction) {
+				closeSearch()
+			}
+		}
+	}
 	@Published var isSettingsPresented = false
 	@Published var requestedSettingsPage: SettingsPage? = nil
 	@Published private(set) var isInstallationSettingsRequested = false
