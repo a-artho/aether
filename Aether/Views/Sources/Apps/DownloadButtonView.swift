@@ -45,6 +45,8 @@ struct DownloadButtonView: View {
 							.frame(width: 35, height: 35)
 							.background(Color(uiColor: .quaternarySystemFill))
 							.clipShape(Circle())
+							.frame(width: 44, height: 44)
+							.contentShape(Rectangle())
 					case .navigation:
 						Image(systemName: "icloud.and.arrow.down")
 							.fontWeight(.semibold)

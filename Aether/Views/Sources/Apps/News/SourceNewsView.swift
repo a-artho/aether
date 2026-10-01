@@ -22,7 +22,7 @@ struct SourceNewsView: View {
 	
 	// MARK: Body
 	var body: some View {
-		VStack {
+		Group {
 			if
 				let news,
 				!news.isEmpty
@@ -40,12 +40,11 @@ struct SourceNewsView: View {
 					}
 					.padding(.horizontal, 16)
 				}
-				.frame(height: 160)
+				.frame(height: 150)
 				.opacity(isLoading ? 0 : 1)
 				.transition(.opacity)
 			}
 		}
-		.frame(height: (news?.isEmpty == false) ? 150 : 0)
 		.onAppear {
 			if !hasLoadedInitialData && news?.isEmpty == false {
 				_load()

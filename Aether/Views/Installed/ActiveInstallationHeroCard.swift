@@ -45,14 +45,18 @@ struct ActiveInstallationHeroCard: View {
 				Button {
 					installationManager.cancel()
 				} label: {
-					Image(systemName: "xmark")
-						.font(.system(size: 12, weight: .bold))
-						.foregroundColor(.secondary)
-						.frame(width: 28, height: 28)
-						.background(Color(UIColor.tertiarySystemFill), in: Circle())
+					ZStack {
+						Image(systemName: "xmark")
+							.font(.system(size: 12, weight: .bold))
+							.foregroundColor(.secondary)
+							.frame(width: 28, height: 28)
+							.background(Color(UIColor.tertiarySystemFill), in: Circle())
+					}
+					.frame(width: 44, height: 44)
+					.contentShape(Rectangle())
 				}
 				.buttonStyle(.plain)
-				.accessibilityLabel(.localized("Dismiss"))
+				.accessibilityLabel(.localized("Cancel Installation"))
 			}
 
 			// Progress bar row

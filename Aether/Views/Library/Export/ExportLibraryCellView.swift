@@ -78,6 +78,8 @@ private struct ExportProgressButton: View {
 					.font(.footnote.bold())
 			}
 			.frame(width: 31, height: 31)
+			.frame(width: 44, height: 44)
+			.contentShape(Rectangle())
 		}
 		.buttonStyle(.borderless)
 		.accessibilityLabel(_accessibilityLabel)

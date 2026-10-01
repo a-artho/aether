@@ -54,31 +54,9 @@ struct SigningView: View {
 				_customizationOptions(for: app)
 				_cert()
 				_customizationProperties(for: app)
-				
-				// horrible
-				Rectangle()
-					.foregroundStyle(.clear)
-					.frame(height: 30)
-					.listRowBackground(EmptyView())
 			}
-			.overlay {
-				VStack(spacing: 0) {
-					Spacer()
-					NBVariableBlurView()
-						.frame(height: UIDevice.current.userInterfaceIdiom == .pad ? 60 : 80)
-						.rotationEffect(.degrees(180))
-						.overlay {
-							Button {
-								_start()
-							} label: {
-								NBSheetButton(title: .localized("Start Signing"), style: .prominent)
-									.padding()
-							}
-							.buttonStyle(.plain)
-							.offset(y: UIDevice.current.userInterfaceIdiom == .pad ? -20 : -40)
-						}
-				}
-				.ignoresSafeArea(edges: .bottom)
+			.safeAreaInset(edge: .bottom, spacing: 0) {
+				_signingBottomBar
 			}
 
 			.toolbar {
@@ -159,6 +137,25 @@ struct SigningView: View {
 
 // MARK: - Extension: View
 extension SigningView {
+	@ViewBuilder
+	private var _signingBottomBar: some View {
+		Button {
+			_start()
+		} label: {
+			NBSheetButton(title: .localized("Start Signing"), style: .prominent)
+		}
+		.buttonStyle(.plain)
+		.padding(.horizontal, 16)
+		.padding(.vertical, 10)
+		.frame(maxWidth: .infinity)
+		.background {
+			NBVariableBlurView()
+				.rotationEffect(.degrees(180))
+				.ignoresSafeArea(edges: .bottom)
+				.allowsHitTesting(false)
+		}
+	}
+
 	@ViewBuilder
 	private func _customizationOptions(for app: AppInfoPresentable) -> some View {
 		NBSection(.localized("Customization")) {

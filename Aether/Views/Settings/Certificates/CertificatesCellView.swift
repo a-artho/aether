@@ -34,7 +34,7 @@ struct CertificatesCellView: View {
 			
 			_certInfoPill(data: cert)
 		}
-		.frame(height: 80)
+		.frame(minHeight: 80)
 		.contentTransition(.opacity)
 		.frame(maxWidth: .infinity, alignment: .leading)
 		.onAppear {

@@ -16,7 +16,6 @@ struct SpoofingFeatureView: View {
 			.environmentObject(session)
 			.navigationBarBackButtonHidden()
 			.toolbar(.hidden, for: .navigationBar)
-			.ignoresSafeArea()
 	}
 }
 

@@ -33,6 +33,8 @@ public struct NBButton: View {
 				.frame(width: 35, height: 35)
 				.background(Color(uiColor: .quaternarySystemFill))
 				.clipShape(Circle())
+				.frame(minWidth: 44, minHeight: 44)
+				.contentShape(Rectangle())
 			
 		case .text:
 			Text(_title)
@@ -41,6 +43,8 @@ public struct NBButton: View {
 				.frame(height: 35)
 				.background(Color(uiColor: .quaternarySystemFill))
 				.clipShape(Capsule())
+				.frame(minHeight: 44)
+				.contentShape(Rectangle())
 		}
 	}
 }
