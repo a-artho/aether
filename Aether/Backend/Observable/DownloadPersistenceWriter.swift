@@ -40,6 +40,20 @@ actor DownloadPersistenceWriter {
 		}
 	}
 
+	/// Commits a lifecycle-critical snapshot before a background URLSession task
+	/// is resumed. This is intentionally separate from progress persistence: a
+	/// process kill may lose a progress update, but it must not orphan a newly
+	/// started system download.
+	func commit(records: [StoredDownload], revision: UInt64) throws {
+		guard revision >= latestAcceptedRevision else { return }
+		latestAcceptedRevision = revision
+		pendingSnapshot = nil
+		scheduledFlush?.cancel()
+		scheduledFlush = nil
+		scheduledFlushID = nil
+		try store.save(records: records)
+	}
+
 	private func flush(identifier: UUID) {
 		guard scheduledFlushID == identifier else { return }
 		scheduledFlush = nil

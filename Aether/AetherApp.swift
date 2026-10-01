@@ -248,7 +248,7 @@ struct AetherApp: App {
 					message: .localized("Do you want to download and install this file?") + "\n\n\(downloadURL)",
 					actions: [
 						UIAlertAction(title: .localized("Install"), style: .default) { _ in
-							_ = DownloadManager.shared.startDownload(from: downloadURL)
+							Task { _ = await DownloadManager.shared.startDownload(from: downloadURL) }
 						}
 					]
 				)

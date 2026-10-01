@@ -98,9 +98,9 @@ struct DownloadProgressButton: View {
 		case .downloading:
 			downloadManager.pauseDownload(download)
 		case .paused:
-			downloadManager.resumeDownload(download)
+			Task { await downloadManager.resumeDownload(download) }
 		case .failed:
-			downloadManager.retryDownload(download)
+			Task { await downloadManager.retryDownload(download) }
 		case .pausing, .resuming, .processing:
 			break
 		}

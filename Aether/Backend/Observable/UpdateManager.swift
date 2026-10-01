@@ -173,7 +173,7 @@ final class UpdateManager: ObservableObject {
 					continue
 				}
 				
-				guard remoteVersion != sourceAppVersion else {
+				guard _isNewer(remoteVersion: remoteVersion, than: sourceAppVersion ?? localApp.version) else {
 					continue
 				}
 				
@@ -205,6 +205,18 @@ final class UpdateManager: ObservableObject {
 		}
 		
 		return foundUpdates
+	}
+
+	/// Repository versions are not guaranteed to be strict semantic versions,
+	/// but Foundation's numeric comparison handles normal dotted/date versions
+	/// without treating a downgrade as an update. Equal or unorderable values
+	/// remain unchanged rather than prompting a potentially destructive update.
+	private func _isNewer(remoteVersion: String, than localVersion: String?) -> Bool {
+		guard let localVersion, !localVersion.isEmpty else { return true }
+		return remoteVersion.compare(
+			localVersion,
+			options: [.numeric, .caseInsensitive, .widthInsensitive]
+		) == .orderedDescending
 	}
 	
 	private func _matchesStoredRepository(

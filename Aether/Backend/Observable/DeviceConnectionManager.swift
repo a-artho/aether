@@ -420,6 +420,19 @@ public final class DeviceConnectionManager: ObservableObject {
 				_log("Device action blocked because the in-app tunnel is not ready.", category: "Tunnel", level: .warning)
 				throw DeviceConnectionError.tunnelUnavailable("In-app tunnel is not ready")
 			}
+
+			// Explicit device actions (installation and spoofing) must follow the
+			// same cellular policy as background reconciliation. Without this,
+			// those actions could probe the device immediately and fail while
+			// Cellular Assist is still establishing the usable route.
+			if _routeCellularRecoveryIfNeeded() {
+				if await _waitForCellularRecovery() {
+					return true
+				}
+				throw DeviceConnectionError.tunnelUnavailable(
+					"Waiting for the device connection after Cellular Assist."
+				)
+			}
 		}
 
 		let isRsd = HeartbeatManager.shared.isRsd
@@ -634,6 +647,33 @@ public final class DeviceConnectionManager: ObservableObject {
 			cellularOnly: true,
 			tunnelIsRunning: tunnelIsRunning
 		)
+	}
+
+	/// Returns true whenever cellular recovery owns the route, including an
+	/// already-running automatic or manual recovery. This prevents an explicit
+	/// action from falling through to a socket probe during the transition.
+	private func _routeCellularRecoveryIfNeeded() -> Bool {
+		guard tunnelMethod == .inApp, physicalNetworkState == .cellularOnly else { return false }
+		if CellularAssistManager.shared.isAutomaticRecoveryInProgress
+			|| CellularAssistManager.shared.isWaitingForManualRecovery {
+			return true
+		}
+		return _beginCellularAssistIfEligible()
+	}
+
+	/// Cellular Assist can briefly background Aether while the helper changes
+	/// Mobile Data. Keep the initiating action alive across that handoff instead
+	/// of reporting an immediate transport error. A bounded wait still gives the
+	/// caller a useful failure if the user never completes manual recovery.
+	private func _waitForCellularRecovery() async -> Bool {
+		let deadline = CACurrentMediaTime() + 60
+		while !Task.isCancelled, CACurrentMediaTime() < deadline {
+			if isConnected { return true }
+			try? await Task.sleep(nanoseconds: 500_000_000)
+			guard !Task.isCancelled else { return false }
+			await reconcile(force: true)
+		}
+		return isConnected
 	}
 
 	private static func classify(_ path: NWPath) -> PhysicalNetworkState {

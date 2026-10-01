@@ -301,28 +301,39 @@ public final class EmbeddedTunnelManager: ObservableObject {
 			allowIntermediateAddresses: allowIntermediate
 		)
 
-		interfaceAddress = interface.trimmingCharacters(in: .whitespacesAndNewlines)
-		peerAddress = peer.trimmingCharacters(in: .whitespacesAndNewlines)
-		allowIntermediateAddresses = allowIntermediate
-
-		UserDefaults.standard.set(interfaceAddress, forKey: Self.interfaceAddressKey)
-		UserDefaults.standard.set(peerAddress, forKey: Self.peerAddressKey)
-		UserDefaults.standard.set(allowIntermediateAddresses, forKey: Self.allowIntermediateAddressesKey)
-
-		HeartbeatManager.shared.ipAddress = peerParsed.ip
-		_log("Updated in-app tunnel network configuration.", level: .notice)
+		let normalizedInterface = interface.trimmingCharacters(in: .whitespacesAndNewlines)
+		let normalizedPeer = peer.trimmingCharacters(in: .whitespacesAndNewlines)
 
 		#if os(iOS) && !targetEnvironment(macCatalyst)
 		if let manager {
 			let providerIdentifier = try discoverProviderIdentifier()
-			configure(manager, providerIdentifier: providerIdentifier)
+			configure(
+				manager,
+				providerIdentifier: providerIdentifier,
+				interfaceAddress: normalizedInterface,
+				peerAddress: normalizedPeer
+			)
 			try await save(manager)
 			try await load(manager)
+		}
+		#endif
 
-			if manager.connection.status == .connected || manager.connection.status == .connecting {
-				await stop()
-				try await start()
-			}
+		// Do not publish the new values until the persisted VPN configuration
+		// accepted them. This keeps the UI, heartbeat target, and profile in sync
+		// if saving or reloading the profile fails.
+		interfaceAddress = normalizedInterface
+		peerAddress = normalizedPeer
+		allowIntermediateAddresses = allowIntermediate
+		UserDefaults.standard.set(interfaceAddress, forKey: Self.interfaceAddressKey)
+		UserDefaults.standard.set(peerAddress, forKey: Self.peerAddressKey)
+		UserDefaults.standard.set(allowIntermediateAddresses, forKey: Self.allowIntermediateAddressesKey)
+		HeartbeatManager.shared.ipAddress = peerParsed.ip
+		_log("Updated in-app tunnel network configuration.", level: .notice)
+
+		#if os(iOS) && !targetEnvironment(macCatalyst)
+		if let manager, manager.connection.status == .connected || manager.connection.status == .connecting {
+			await stop()
+			try await start()
 		}
 		#endif
 	}
@@ -381,15 +392,20 @@ private extension EmbeddedTunnelManager {
 		return configuration[managedMarkerKey] as? Bool == true
 	}
 
-	func configure(_ manager: NETunnelProviderManager, providerIdentifier: String) {
+	func configure(
+		_ manager: NETunnelProviderManager,
+		providerIdentifier: String,
+		interfaceAddress: String? = nil,
+		peerAddress: String? = nil
+	) {
 		let protocolConfiguration = (manager.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
 		protocolConfiguration.providerBundleIdentifier = providerIdentifier
 		protocolConfiguration.serverAddress = "Aether Local Device"
 		protocolConfiguration.providerConfiguration = [
 			Self.managedMarkerKey: true,
 			Self.schemaKey: Self.schema,
-			Self.interfaceAddressKey: interfaceAddress,
-			Self.peerAddressKey: peerAddress,
+			Self.interfaceAddressKey: interfaceAddress ?? self.interfaceAddress,
+			Self.peerAddressKey: peerAddress ?? self.peerAddress,
 		]
 		manager.protocolConfiguration = protocolConfiguration
 		manager.localizedDescription = "Aether Local Device"

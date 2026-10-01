@@ -146,7 +146,7 @@ class DownloadManager: NSObject, ObservableObject {
 		from url: URL,
 		id logicalIdentifier: String = UUID().uuidString,
 		sourceProvenance: SourceAppProvenance? = nil
-	) -> Download {
+	) async -> Download {
 		let identity = _downloadIdentity(url: url, provenance: sourceProvenance)
 		if let existingDownload = downloads.first(where: {
 			_downloadIdentity(url: $0.url, provenance: $0.sourceProvenance) == identity
@@ -160,7 +160,7 @@ class DownloadManager: NSObject, ObservableObject {
 			sourceProvenance: sourceProvenance
 		)
 		downloads.append(download)
-		_persistDownloads()
+		guard await _persistBeforeResuming(download) else { return download }
 
 		let task = _makeFreshTask(for: download)
 		download.task = task
@@ -193,7 +193,7 @@ class DownloadManager: NSObject, ObservableObject {
 		_requestResumeDataForPause(download)
 	}
 
-	func resumeDownload(_ download: Download) {
+	func resumeDownload(_ download: Download) async {
 		guard _isCurrent(download), case .paused = download.state else { return }
 		guard let resumeData = download.resumeData else {
 			_markRestartRequired(
@@ -207,12 +207,12 @@ class DownloadManager: NSObject, ObservableObject {
 		let task = _session.downloadTask(withResumeData: resumeData)
 		task.taskDescription = download.id
 		download.task = task
-		_persistDownloads()
+		guard await _persistBeforeResuming(download) else { return }
 		_startContinuedTask(for: download)
 		task.resume()
 	}
 
-	func restartDownload(_ download: Download) {
+	func restartDownload(_ download: Download) async {
 		guard _isCurrent(download) else { return }
 		download.task?.cancel()
 		download.task = nil
@@ -227,19 +227,19 @@ class DownloadManager: NSObject, ObservableObject {
 
 		let task = _makeFreshTask(for: download)
 		download.task = task
-		_persistDownloads()
+		guard await _persistBeforeResuming(download) else { return }
 		_startContinuedTask(for: download)
 		task.resume()
 	}
 
-	func retryDownload(_ download: Download) {
+	func retryDownload(_ download: Download) async {
 		guard case .failed(_, let action) = download.state else { return }
 		switch action {
 		case .resume:
 			download.state = .paused
-			resumeDownload(download)
+			await resumeDownload(download)
 		case .restart:
-			restartDownload(download)
+			await restartDownload(download)
 		case .retryProcessing:
 			retryProcessing(download)
 		}
@@ -662,6 +662,31 @@ class DownloadManager: NSObject, ObservableObject {
 		let writer = _persistenceWriter
 		Task {
 			await writer.schedule(records: records, immediately: immediately, revision: revision)
+		}
+	}
+
+	private func _persistBeforeResuming(_ download: Download) async -> Bool {
+		_persistenceRevision &+= 1
+		let revision = _persistenceRevision
+		let records = downloads
+			.filter { !$0.onlyArchiving }
+			.map(StoredDownload.init)
+		do {
+			try await _persistenceWriter.commit(records: records, revision: revision)
+			return true
+		} catch {
+			download.task = nil
+			download.state = .failed(
+				"Aether couldn’t save this download before starting it: \(error.localizedDescription)",
+				.restart
+			)
+			await DebugLogManager.shared.log(
+				"Could not persist download before resuming: \(error.localizedDescription)",
+				category: "Download",
+				level: .error
+			)
+			_persistDownloads()
+			return false
 		}
 	}
 

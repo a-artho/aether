@@ -383,12 +383,13 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 	private func _disableForMissingShortcuts() {
 		let shouldPreserveRestoreDebt = UserDefaults.standard.bool(forKey: Self.restoreKey)
+		let message = shouldPreserveRestoreDebt
+			? "Apple Shortcuts isn’t available. Mobile Data may still be off. Check it in Settings."
+			: "Apple Shortcuts isn’t available."
 		_finishRuntimeFailure(
-			shouldPreserveRestoreDebt
-				? "Apple Shortcuts isn’t available. Mobile Data may still be off. Check it in Settings."
-				: "Apple Shortcuts isn’t available.",
+			message,
 			preservingRestoreDebt: shouldPreserveRestoreDebt,
-			showShortcutsUnavailablePrompt: !shouldPreserveRestoreDebt
+			showShortcutsUnavailablePrompt: true
 		)
 	}
 
@@ -483,7 +484,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	) {
 		_finishTerminalState(preservingRestoreDebt: preservingRestoreDebt, state: .failed(message))
 		if showShortcutsUnavailablePrompt {
-			_presentShortcutsUnavailableAlert()
+			_presentShortcutsUnavailableAlert(message: message)
 		} else {
 			_presentTerminalAlert(title: "Cellular Assist Disabled", message: message)
 		}
@@ -517,7 +518,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		_startShortcut(.on)
 	}
 
-	private func _presentShortcutsUnavailableAlert() {
+	private func _presentShortcutsUnavailableAlert(message: String) {
 		guard !didPresentTerminalPrompt else { return }
 		didPresentTerminalPrompt = true
 		let appStore = UIAlertAction(title: .localized("Open App Store"), style: .default) { _ in
@@ -526,7 +527,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		}
 		UIAlertController.showAlertWithCancel(
 			title: .localized("Cellular Assist Disabled"),
-			message: .localized("Apple Shortcuts isn’t available."),
+			message: message,
 			actions: [appStore]
 		)
 	}

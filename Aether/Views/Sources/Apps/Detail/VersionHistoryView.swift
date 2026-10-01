@@ -31,16 +31,18 @@ struct VersionHistoryView: View {
 					.contextMenu {
 						if let downloadURL = version.downloadURL {
 							Button {
-								_ = DownloadManager.shared.startDownload(
-									from: downloadURL,
-									id: app.currentUniqueId,
-									sourceProvenance: SourceAppProvenance(
-										sourceURL: sourceURL,
-										repository: source,
-										app: app,
-										version: version
+								Task {
+									_ = await DownloadManager.shared.startDownload(
+										from: downloadURL,
+										id: app.currentUniqueId,
+										sourceProvenance: SourceAppProvenance(
+											sourceURL: sourceURL,
+											repository: source,
+											app: app,
+											version: version
+										)
 									)
-								)
+								}
 								dismiss()
 							} label: {
 								Label(version.version, systemImage: "arrow.down")

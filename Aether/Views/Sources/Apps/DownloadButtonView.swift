@@ -30,11 +30,13 @@ struct DownloadButtonView: View {
 			} else {
 				Button {
 					if let url = app.currentDownloadUrl {
-						_ = downloadManager.startDownload(
-							from: url,
-							id: app.currentUniqueId,
-							sourceProvenance: _sourceProvenance()
-						)
+						Task {
+							_ = await downloadManager.startDownload(
+								from: url,
+								id: app.currentUniqueId,
+								sourceProvenance: _sourceProvenance()
+							)
+						}
 					}
 				} label: {
 					switch style {
