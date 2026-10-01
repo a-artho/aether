@@ -359,10 +359,7 @@ extension SourceAppsDetailView {
 							image
 								.resizable()
 								.aspectRatio(contentMode: .fit)
-								.frame(
-									maxWidth: UIScreen.main.bounds.width - 32,
-									maxHeight: 350
-								)
+								.frame(maxWidth: .infinity, maxHeight: 350)
 								.clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
 								.overlay {
 									RoundedRectangle(cornerRadius: 18, style: .continuous)

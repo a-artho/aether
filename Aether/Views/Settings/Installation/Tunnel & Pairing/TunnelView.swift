@@ -198,7 +198,6 @@ struct TunnelView: View {
 		} footer: {
 			Text(.localized("Tunnel Lifecycle starts the device tunnel when Aether opens and stops it in the background when no device task is active. Cellular Assist briefly changes Mobile Data when a cellular tunnel needs help connecting."))
 		}
-		.disabled(connection.tunnelMethod != .inApp)
 	}
 
 	private var _automaticConnectionStatus: String {
@@ -211,6 +210,9 @@ struct TunnelView: View {
 	}
 
 	private var _embeddedStatusIcon: String {
+		if connection.requiresInAppTunnelSetup {
+			return "network.badge.shield.half.filled"
+		}
 		switch embeddedTunnel.state {
 		case .connected: return "checkmark.shield.fill"
 		case .error: return "exclamationmark.shield.fill"
@@ -220,6 +222,9 @@ struct TunnelView: View {
 	}
 
 	private var _embeddedStatusColor: Color {
+		if connection.requiresInAppTunnelSetup {
+			return .orange
+		}
 		switch embeddedTunnel.state {
 		case .connected: return .green
 		case .error, .unavailable: return .red
@@ -228,6 +233,9 @@ struct TunnelView: View {
 	}
 
 	private var _embeddedStatusText: String {
+		if connection.requiresInAppTunnelSetup {
+			return .localized("Setup Required")
+		}
 		switch embeddedTunnel.state {
 		case .unavailable: return .localized("Unavailable on this platform")
 		case .disconnected: return .localized("Ready to connect")

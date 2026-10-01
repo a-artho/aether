@@ -60,8 +60,8 @@ struct ExtendedTabbarView: View {
 					}
 				}
 				
-				ForEach(_sources, id: \.identifier) { source in
-					Tab(value: "source.\(source.identifier ?? UUID().uuidString)") {
+			ForEach(_sources, id: \.objectID) { source in
+				Tab(value: "source.\(source.identifier ?? source.objectID.uriRepresentation().absoluteString)") {
 						NavigationStack {
 							SourceAppsView(object: [source], viewModel: viewModel, isAllRepos: false)
 						}
@@ -85,6 +85,9 @@ struct ExtendedTabbarView: View {
 		}
 		.tabViewStyle(.sidebarAdaptable)
 		.tabViewCustomization($customization)
+		.sheet(isPresented: $tabManager.isSettingsPresented) {
+			SettingsView()
+		}
 		.sheet(isPresented: $_isAddingPresenting) {
 			SourcesAddView()
 				.presentationDetents([.medium])

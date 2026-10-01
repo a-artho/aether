@@ -158,7 +158,7 @@ struct SourceAppsView: View {
 						}
 					}
 					.frame(height: 36)
-					.frame(width: min(500, UIScreen.main.bounds.width - 74))
+					.frame(maxWidth: 500)
 					.background {
 						Color.clear
 							.glassEffect(.regular, in: .capsule)

@@ -93,7 +93,11 @@ struct InstalledAppsView: View {
 										isActive: Binding(
 											get: { selectedAppBundleId == app.bundleIdentifier },
 											set: { isActive in
-												selectedAppBundleId = isActive ? app.bundleIdentifier : nil
+												if isActive {
+													selectedAppBundleId = app.bundleIdentifier
+												} else if selectedAppBundleId == app.bundleIdentifier {
+													selectedAppBundleId = nil
+												}
 											}
 										)
 									) {
@@ -130,8 +134,7 @@ struct InstalledAppsView: View {
 					GeometryReader { rootGeo in
 						let cardBottom = topCardMaxY
 						// Account for the floating tab bar clearance (tab bar height + safe area insets)
-						let tabbarClearance: CGFloat = 95
-						let bottomEdge = max(cardBottom + 50, rootGeo.size.height - tabbarClearance)
+						let bottomEdge = max(cardBottom, rootGeo.size.height - rootGeo.safeAreaInsets.bottom)
 						let availableHeight = bottomEdge - cardBottom
 						let centerY = cardBottom + (availableHeight / 2)
 
@@ -199,15 +202,12 @@ struct InstalledAppsView: View {
 
 				ToolbarItem(placement: .topBarTrailing) {
 					Button {
-						tabManager.isSettingsPresented = true
+						tabManager.openSettings()
 					} label: {
 						Image(systemName: "gear")
 					}
 					.accessibilityLabel(.localized("Settings"))
 				}
-			}
-			.sheet(isPresented: $tabManager.isSettingsPresented) {
-				SettingsView()
 			}
 			.sheet(isPresented: $isSpoofingPresented) {
 				SpoofingEntryView()
@@ -326,6 +326,9 @@ struct InstalledAppsView: View {
 		}
 		if !connection.hasPairingFile {
 			return .init(text: .localized("Needs Pairing"), color: .red)
+		}
+		if connection.requiresInAppTunnelSetup {
+			return .init(text: .localized("Setup Required"), color: .orange)
 		}
 		return .init(text: .localized("Unavailable"), color: .red)
 	}

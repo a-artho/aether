@@ -34,14 +34,16 @@ struct ResetView: View {
 	static func resetAlert(
 		title: String,
 		message: String = "",
-		action: @escaping () -> Void
+		action: @escaping @MainActor () async -> Void
 	) {
 		let action = UIAlertAction(
 			title: .localized("Proceed"),
 			style: .destructive
 		) { _ in
-			action()
-			UIApplication.shared.suspendAndReopen()
+			Task { @MainActor in
+				await action()
+				UIApplication.shared.suspendAndReopen()
+			}
 		}
 		
 		let style: UIAlertController.Style = UIDevice.current.userInterfaceIdiom == .pad
@@ -100,7 +102,7 @@ extension ResetView {
 			
 			Button {
 				Self.resetAlert(title: .localized("Reset Tunneling")) {
-					Self.resetTunneling()
+					await Self.resetTunneling()
 				}
 			} label: {
 				SettingsRowLabel(.localized("Reset Tunneling"), systemImage: "network", backgroundColor: .green)
@@ -175,7 +177,7 @@ extension ResetView {
 			
 			Button {
 				Self.resetAlert(title: .localized("Reset All")) {
-					Self.resetAll()
+					await Self.resetAll()
 				}
 			} label: {
 				SettingsRowLabel(
@@ -248,19 +250,15 @@ extension ResetView {
 	
 	static func resetPairing() {
 		let fm = FileManager.default
-		let pairingDir = HeartbeatManager.pairingDirectoryURL()
-		try? fm.removeItem(at: pairingDir)
 		try? fm.removeItem(at: HeartbeatManager.importedPairingFileURL())
 		try? fm.removeItem(at: HeartbeatManager.onDevicePairingFileURL())
 		UserDefaults.standard.removeObject(forKey: "aether.activePairingRecordSource")
 		HeartbeatManager.shared.resetRSDTunnel()
 	}
 	
-	static func resetTunneling() {
-		Task { @MainActor in
-			await EmbeddedTunnelManager.shared.resetConfiguration()
-			try? await EmbeddedTunnelManager.shared.resetNetworkConfiguration()
-		}
+	static func resetTunneling() async {
+		await EmbeddedTunnelManager.shared.resetConfiguration()
+		try? await EmbeddedTunnelManager.shared.resetNetworkConfiguration()
 		UserDefaults.standard.removeObject(forKey: "Aether.tunnelMethod")
 		UserDefaults.standard.removeObject(forKey: EmbeddedTunnelManager.interfaceAddressKey)
 		UserDefaults.standard.removeObject(forKey: EmbeddedTunnelManager.peerAddressKey)
@@ -277,11 +275,11 @@ extension ResetView {
 		UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
 	}
 	
-	static func resetAll() {
+	static func resetAll() async {
 		clearWorkCache()
 		clearNetworkCache()
 		resetPairing()
-		resetTunneling()
+		await resetTunneling()
 		resetSources()
 		deleteSignedApps()
 		deleteImportedApps()

@@ -158,15 +158,32 @@ struct SourcesAddView: View {
 		
 		Task {
 			let fetched = await _concurrentFetchRepositories(from: repoUrls)
-			
+			guard !fetched.isEmpty else {
+				await MainActor.run {
+					_isImporting = false
+					UIAlertController.showAlertWithOk(
+						title: .localized("Error"),
+						message: .localized("No sources could be imported.")
+					)
+				}
+				return
+			}
+
 			let dict = Dictionary(fetched, uniquingKeysWith: { first, _ in first })
 
-		await MainActor.run {
-			Storage.shared.addSources(repos: dict) { _ in
-				SourcesViewModel.shared.cache(dict)
-				_isImporting = false
-				completion()
-			}
+			await MainActor.run {
+				Storage.shared.addSources(repos: dict) { error in
+					_isImporting = false
+					if let error {
+						UIAlertController.showAlertWithOk(
+							title: .localized("Error"),
+							message: error.localizedDescription
+						)
+						return
+					}
+					SourcesViewModel.shared.cache(dict)
+					completion()
+				}
 			}
 		}
 	}

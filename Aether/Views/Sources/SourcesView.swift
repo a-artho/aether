@@ -76,7 +76,7 @@ struct SourcesView: View {
 			}
 			.scrollDismissesKeyboard(.interactively)
 			.overlay {
-				if _filteredSources.isEmpty {
+				if _sources.isEmpty {
 					TabPlaceholderView(
 						title: .localized("No Repos"),
 						description: .localized("Get started by adding your first repo."),
@@ -89,6 +89,13 @@ struct SourcesView: View {
 						}
 						.buttonStyle(.borderless)
 					}
+					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
+				} else if !_searchText.isEmpty && _filteredSources.isEmpty {
+					TabPlaceholderView(
+						title: .localized("No Results"),
+						description: .localized("Try another search."),
+						systemImage: "magnifyingglass"
+					)
 					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
 				}
 			}
@@ -123,7 +130,7 @@ struct SourcesView: View {
 							}
 						}
 						.frame(height: 36)
-						.frame(width: min(500, UIScreen.main.bounds.width - 74))
+						.frame(maxWidth: 500)
 						.background {
 							Color.clear
 								.glassEffect(.regular, in: .capsule)

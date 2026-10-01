@@ -73,20 +73,34 @@ extension Storage {
 		repos: [URL: ASRepository],
 		completion: @escaping (Error?) -> Void
 	) {
-		for (url, repo) in repos {
-			addSource(
-				url,
-				repository: repo,
-				deferSave: true,
-				completion: { error in
-					if let error {
-						completion(error)
-					}
-				}
-			)
+		guard !repos.isEmpty else {
+			completion(NSError(
+				domain: "com.anfear.aether.sources",
+				code: 1,
+				userInfo: [NSLocalizedDescriptionKey: "No sources could be imported."]
+			))
+			return
 		}
-		
-		saveContext()
+
+		for (url, repo) in repos {
+			let identifier = repo.id ?? url.absoluteString
+			guard !sourceExists(identifier) else {
+				Logger.misc.debug("ignoring \(identifier)")
+				continue
+			}
+
+			let new = AltSource(context: context)
+			new.name = repo.name
+			new.date = Date()
+			new.identifier = identifier
+			new.sourceURL = url
+			new.iconURL = repo.currentIconURL
+		}
+
+		if let error = saveContext() {
+			completion(error)
+			return
+		}
 		HapticManager.shared.impact()
 		completion(nil)
 	}

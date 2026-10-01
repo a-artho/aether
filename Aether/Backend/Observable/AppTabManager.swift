@@ -46,23 +46,7 @@ final class AppTabManager: ObservableObject {
 
 	func openSettings(page: SettingsPage? = nil) {
 		requestedSettingsPage = page
-		if isSettingsPresented {
-			isSettingsPresented = false
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-				self.isSettingsPresented = true
-			}
-			return
-		}
-		if selectedTab != .installed {
-			withAnimation(.easeInOut(duration: 0.25)) {
-				self.selectedTab = .installed
-			}
-			DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-				self.isSettingsPresented = true
-			}
-		} else {
-			isSettingsPresented = true
-		}
+		isSettingsPresented = true
 	}
 
 	func openInstallationSettings() {

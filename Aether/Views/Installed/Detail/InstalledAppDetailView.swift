@@ -207,7 +207,7 @@ struct InstalledAppDetailView: View {
 			Text(label)
 				.font(.subheadline)
 				.foregroundStyle(.secondary)
-				.frame(width: 110, alignment: .leading)
+				.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
 			Spacer(minLength: 8)
 
@@ -216,6 +216,7 @@ struct InstalledAppDetailView: View {
 				.foregroundStyle(.primary)
 				.multilineTextAlignment(.trailing)
 				.textSelection(.enabled)
+				.frame(minWidth: 0, maxWidth: .infinity, alignment: .trailing)
 
 			if isCopyable {
 				Button {

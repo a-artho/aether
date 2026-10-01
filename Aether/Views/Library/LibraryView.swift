@@ -46,6 +46,21 @@ struct LibraryView: View {
 		filteredAndSortedApps(from: _importedApps)
 	}
 
+	private var _libraryIsEmpty: Bool {
+		exportManager.exports.isEmpty &&
+		downloadManager.downloads.isEmpty &&
+		_signedApps.isEmpty &&
+		_importedApps.isEmpty
+	}
+
+	private var _searchHasNoResults: Bool {
+		!_searchText.isEmpty &&
+		_filteredSignedApps.isEmpty &&
+		_filteredImportedApps.isEmpty &&
+		exportManager.exports.isEmpty &&
+		downloadManager.downloads.isEmpty
+	}
+
 	// MARK: Fetch
 	@FetchRequest(
 		entity: Signed.entity(),
@@ -109,11 +124,7 @@ struct LibraryView: View {
 			}
 			.scrollDismissesKeyboard(.interactively)
 			.overlay {
-				if
-					downloadManager.downloads.isEmpty,
-					_filteredSignedApps.isEmpty,
-					_filteredImportedApps.isEmpty
-				{
+				if _libraryIsEmpty {
 					TabPlaceholderView(
 						title: .localized("No Apps"),
 						description: .localized("Get started by importing your first IPA file."),
@@ -126,6 +137,13 @@ struct LibraryView: View {
 						}
 						.buttonStyle(.borderless)
 					}
+					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
+				} else if _searchHasNoResults {
+					TabPlaceholderView(
+						title: .localized("No Results"),
+						description: .localized("Try another search."),
+						systemImage: "magnifyingglass"
+					)
 					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
 				}
 			}
@@ -179,7 +197,7 @@ struct LibraryView: View {
 							}
 						}
 						.frame(height: 36)
-						.frame(width: min(500, UIScreen.main.bounds.width - 74))
+						.frame(maxWidth: 500)
 						.background {
 							Color.clear
 								.glassEffect(.regular, in: .capsule)

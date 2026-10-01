@@ -136,7 +136,7 @@
 		<string>_apple-mobdev2._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Aether needs local network access to pair this device for iDevice installs.</string>
+	<string>Aether needs local network access for device pairing and Local installs.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Aether uses your location to center the spoofing map and keep an active simulated location session while it is running.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

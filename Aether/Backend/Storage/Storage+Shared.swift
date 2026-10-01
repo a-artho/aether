@@ -102,9 +102,11 @@ struct SigningCertificateSnapshot: Sendable {
 
 struct AnyApp: Identifiable {
 	let base: AppInfoPresentable
-	
-	var id: String {
-		base.uuid ?? UUID().uuidString
+	let id: String
+
+	init(base: AppInfoPresentable) {
+		self.base = base
+		self.id = base.uuid ?? UUID().uuidString
 	}
 }
 

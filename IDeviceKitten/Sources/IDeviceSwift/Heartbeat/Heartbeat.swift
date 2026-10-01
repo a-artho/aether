@@ -83,12 +83,6 @@ public class HeartbeatManager {
 		}
 	}
 
-	/// Aether's visible Documents root, shared by both pairing record types.
-	static public func pairingDirectoryURL() -> URL {
-		migratePairingRecordsToDocumentsIfNeeded()
-		return pairingDirectory()
-	}
-
 	static public func importedPairingFileURL() -> URL {
 		migratePairingRecordsToDocumentsIfNeeded()
 		return importedPairingFile()

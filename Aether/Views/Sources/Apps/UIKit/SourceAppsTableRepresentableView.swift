@@ -26,24 +26,6 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 
 		tableView.allowsSelection = true
 
-		if
-			let firstSource = sourceContexts.first,
-			sourceContexts.count == 1,
-			let news = firstSource.repository.news,
-			!news.isEmpty
-		{
-			let header = UIHostingController(rootView: SourceNewsView(news: news))
-			header.view.translatesAutoresizingMaskIntoConstraints = true
-			header.view.backgroundColor = .clear
-			let fixedHeight: CGFloat = 161
-			let width = tableView.bounds.width
-			header.view.frame = CGRect(origin: .zero, size: CGSize(width: width, height: fixedHeight))
-
-			DispatchQueue.main.async {
-				tableView.tableHeaderView = header.view
-			}
-		}
-		
 		tableView.alpha = 0
 		
 		UIView.transition(with: tableView,  duration: 0.5, options: [.transitionCrossDissolve], animations: {
@@ -67,6 +49,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		context.coordinator.sortOption = sortOption
 		context.coordinator.sortAscending = sortAscending
 		context.coordinator.showSourceBadge = showSourceBadge
+		context.coordinator.updateNewsHeader(for: tableView)
 		
 		if sourcesChanged || searchChanged || sortOptionChanged || sortDirectionChanged || badgeChanged {
 			context.coordinator.invalidateCache(debouncingSearch: searchChanged && !sourcesChanged && !sortOptionChanged && !sortDirectionChanged && !badgeChanged)
@@ -97,9 +80,13 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	private var _groupedAppsByNameFirstLetter: [String: [SourceAppEntry]] = [:]
 	private var _groupedAppsByDate: [String: [SourceAppEntry]] = [:]
 	private var _sortedSectionTitles: [String] = []
+	private let _unknownDateSectionTitle = String.localized("Unknown Date")
 	
 	private var _cachedSortedApps: [SourceAppEntry]?
 	private var _searchReloadWorkItem: DispatchWorkItem?
+	private var _newsHeaderController: UIHostingController<SourceNewsView>?
+	private var _newsHeaderSignature: String?
+	private var _newsHeaderWidth: CGFloat = 0
 	weak var uiTableView: UITableView?
 	
 	private var _allAppsWithSource: [SourceAppEntry] {
@@ -161,26 +148,45 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 			return sortAscending ? filtered : filtered.reversed()
 		case .date:
 			let sorted = filtered.sorted {
-				let d1 = $0.app.currentDate?.date ?? .distantPast
-				let d2 = $1.app.currentDate?.date ?? .distantPast
-				return sortAscending ? (d1 < d2) : (d1 > d2)
+				switch ($0.app.currentDate?.date, $1.app.currentDate?.date) {
+				case let (d1?, d2?):
+					return sortAscending ? d1 < d2 : d1 > d2
+				case (.some, nil):
+					return true
+				case (nil, .some):
+					return false
+				case (nil, nil):
+					return ($0.app.name ?? "") < ($1.app.name ?? "")
+				}
 			}
 			
 			let formatter = DateFormatter()
 			formatter.dateFormat = "MMMM d, yyyy"
-			
-			let grouped = Dictionary(grouping: sorted) {
-				$0.app.currentDate?.date.stripTime() ?? .distantPast
+
+			var grouped: [String: [SourceAppEntry]] = [:]
+			var datesByTitle: [String: Date] = [:]
+			for entry in sorted {
+				guard let date = entry.app.currentDate?.date.stripTime() else {
+					grouped[_unknownDateSectionTitle, default: []].append(entry)
+					continue
+				}
+				let title = formatter.string(from: date)
+				datesByTitle[title] = date
+				grouped[title, default: []].append(entry)
 			}
-			
-			let sortedDates = grouped.keys.sorted(by: { sortAscending ? $0 > $1 : $0 < $1 })
-			
-			_groupedAppsByDate = grouped.reduce(into: [:]) { result, pair in
-				let key = formatter.string(from: pair.key)
-				result[key] = pair.value
+
+			var sortedTitles = datesByTitle.keys.sorted {
+				guard let left = datesByTitle[$0], let right = datesByTitle[$1] else {
+					return false
+				}
+				return sortAscending ? left < right : left > right
 			}
-			
-			_sortedSectionTitles = sortedDates.map { formatter.string(from: $0) }
+			if grouped[_unknownDateSectionTitle] != nil {
+				sortedTitles.append(_unknownDateSectionTitle)
+			}
+
+			_groupedAppsByDate = grouped
+			_sortedSectionTitles = sortedTitles
 			return sorted
 		case .name:
 			let sorted = filtered.sorted {
@@ -227,6 +233,53 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		let workItem = DispatchWorkItem(block: reload)
 		_searchReloadWorkItem = workItem
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+	}
+
+	func updateNewsHeader(for tableView: UITableView) {
+		guard
+			sourceContexts.count == 1,
+			let news = sourceContexts[0].repository.news,
+			!news.isEmpty
+		else {
+			_newsHeaderController = nil
+			_newsHeaderSignature = nil
+			_newsHeaderWidth = 0
+			tableView.tableHeaderView = nil
+			return
+		}
+
+		let width = tableView.bounds.width
+		guard width > 0 else { return }
+		let signature = news.map { "\($0.id)|\($0.title)|\($0.caption)|\(String(describing: $0.date))" }
+			.joined(separator: "\n")
+
+		let headerController: UIHostingController<SourceNewsView>
+		if let _newsHeaderController {
+			headerController = _newsHeaderController
+			if _newsHeaderSignature != signature {
+				headerController.rootView = SourceNewsView(news: news)
+			}
+		} else {
+			headerController = UIHostingController(rootView: SourceNewsView(news: news))
+			headerController.view.backgroundColor = .clear
+			headerController.view.translatesAutoresizingMaskIntoConstraints = true
+			_newsHeaderController = headerController
+		}
+
+		_newsHeaderSignature = signature
+		headerController.view.frame = CGRect(x: 0, y: 0, width: width, height: 1)
+		let fittingSize = headerController.sizeThatFits(in:
+			CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
+		)
+		let height = max(0, ceil(fittingSize.height))
+		let needsReplacement = tableView.tableHeaderView !== headerController.view ||
+			_newsHeaderWidth != width ||
+			headerController.view.bounds.height != height
+		guard needsReplacement else { return }
+
+		_newsHeaderWidth = width
+		headerController.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
+		tableView.tableHeaderView = headerController.view
 	}
 	
 	// MARK: TableView
