@@ -147,11 +147,18 @@ extension HeartbeatManager {
 	func withRSDServiceConnection(
 		_ connect: (AdapterHandle, RsdHandshakeHandle) -> UnsafeMutablePointer<IdeviceFfiError>?
 	) throws {
+		try withRSDServiceConnection(discoveryTimeout: nil, connect)
+	}
+
+	func withRSDServiceConnection(
+		discoveryTimeout: TimeInterval?,
+		_ connect: (AdapterHandle, RsdHandshakeHandle) -> UnsafeMutablePointer<IdeviceFfiError>?
+	) throws {
 		rsdConnectionLock.lock()
 		defer { rsdConnectionLock.unlock() }
 
 		for attempt in 0..<3 {
-			try _ensureRSDTunnelLocked()
+			try _ensureRSDTunnelLocked(discoveryTimeout: discoveryTimeout)
 			guard let adapter = rsdAdapter, let handshake = rsdHandshake else {
 				throw IDeviceConnectionError.rsdTunnelUnavailable("The adapter or handshake is missing.")
 			}
@@ -173,7 +180,7 @@ extension HeartbeatManager {
 		}
 	}
 
-	private func _ensureRSDTunnelLocked() throws {
+	private func _ensureRSDTunnelLocked(discoveryTimeout: TimeInterval? = nil) throws {
 		if rsdAdapter != nil, rsdHandshake != nil {
 			return
 		}
@@ -190,47 +197,59 @@ extension HeartbeatManager {
 			throw IDeviceConnectionError.rsdEndpointInvalid
 		}
 
-		var ports = RSDPortDiscovery.resolvePorts()
+		var ports: [UInt16] = []
+		if let lastSuccessfulRSDPort { ports.append(lastSuccessfulRSDPort) }
 		if !ports.contains(port_rsd) { ports.append(port_rsd) }
 		var failures: [String] = []
+		var attemptedPorts = Set<UInt16>()
+		var didDiscoverPorts = false
 
-		for port in ports {
-			address.sin_port = CFSwapInt16HostToBig(port)
-			var newAdapter: AdapterHandle?
-			var newHandshake: RsdHandshakeHandle?
-			let result = withUnsafePointer(to: &address) {
-				$0.withMemoryRebound(to: idevice_sockaddr.self, capacity: 1) { ptr in
-					tunnel_create_rppairing(
-						ptr,
-						socklen_t(MemoryLayout<sockaddr_in>.size),
-						"IdeviceKit",
-						pairingFile,
-						nil,
-						nil,
-						&newAdapter,
-						&newHandshake
-					)
+		while true {
+			for port in ports where attemptedPorts.insert(port).inserted {
+				address.sin_port = CFSwapInt16HostToBig(port)
+				var newAdapter: AdapterHandle?
+				var newHandshake: RsdHandshakeHandle?
+				let result = withUnsafePointer(to: &address) {
+					$0.withMemoryRebound(to: idevice_sockaddr.self, capacity: 1) { ptr in
+						tunnel_create_rppairing(
+							ptr,
+							socklen_t(MemoryLayout<sockaddr_in>.size),
+							"IdeviceKit",
+							pairingFile,
+							nil,
+							nil,
+							&newAdapter,
+							&newHandshake
+						)
+					}
 				}
+
+				if let result {
+					if let newHandshake { rsd_handshake_free(newHandshake) }
+					if let newAdapter { adapter_free(newAdapter) }
+					let error = IDeviceSwiftError(result)
+					failures.append("\(ipAddress):\(port) — \(error.localizedDescription)")
+					continue
+				}
+
+				guard let newAdapter, let newHandshake else {
+					if let newHandshake { rsd_handshake_free(newHandshake) }
+					if let newAdapter { adapter_free(newAdapter) }
+					failures.append("\(ipAddress):\(port) — The tunnel returned incomplete handles.")
+					continue
+				}
+
+				rsdAdapter = newAdapter
+				rsdHandshake = newHandshake
+				lastSuccessfulRSDPort = port
+				return
 			}
 
-			if let result {
-				if let newHandshake { rsd_handshake_free(newHandshake) }
-				if let newAdapter { adapter_free(newAdapter) }
-				let error = IDeviceSwiftError(result)
-				failures.append("\(ipAddress):\(port) — \(error.localizedDescription)")
-				continue
+			guard !didDiscoverPorts else { break }
+			didDiscoverPorts = true
+			for port in RSDPortDiscovery.resolvePorts(timeout: discoveryTimeout ?? 6) where !ports.contains(port) {
+				ports.append(port)
 			}
-
-			guard let newAdapter, let newHandshake else {
-				if let newHandshake { rsd_handshake_free(newHandshake) }
-				if let newAdapter { adapter_free(newAdapter) }
-				failures.append("\(ipAddress):\(port) — The tunnel returned incomplete handles.")
-				continue
-			}
-
-			rsdAdapter = newAdapter
-			rsdHandshake = newHandshake
-			return
 		}
 
 		let detail = failures.last ?? "No tunnel handles were returned."

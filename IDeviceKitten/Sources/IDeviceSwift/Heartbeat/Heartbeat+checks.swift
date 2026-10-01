@@ -20,7 +20,7 @@ extension HeartbeatManager {
 			// before a generic POSIX TCP probe to its virtual address succeeds.
 			// Let the handshake below verify the real transport instead of rejecting
 			// it based on that duplicate preflight.
-			return _checkRSDDeviceConnection()
+			return _checkRSDDeviceConnection(timeoutInSeconds: timeoutInSeconds)
 		}
 
 		let socketConnection = checkSocketConnection(timeoutInSeconds: timeoutInSeconds)
@@ -41,12 +41,12 @@ extension HeartbeatManager {
 		return (client != nil, client == nil ? "Installation Proxy unavailable" : nil, nil)
 	}
 
-	private func _checkRSDDeviceConnection() -> (isConnected: Bool, error: String?, errorCode: Int32?) {
+	private func _checkRSDDeviceConnection(timeoutInSeconds: Double) -> (isConnected: Bool, error: String?, errorCode: Int32?) {
 		var client: OpaquePointer?
 		defer { installation_proxy_client_free(client) }
 
 		do {
-			try withRSDServiceConnection { adapter, handshake in
+			try withRSDServiceConnection(discoveryTimeout: timeoutInSeconds) { adapter, handshake in
 				installation_proxy_connect_rsd(adapter, handshake, &client)
 			}
 			return (client != nil, client == nil ? "Installation Proxy unavailable" : nil, nil)

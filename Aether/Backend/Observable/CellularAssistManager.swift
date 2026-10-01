@@ -20,11 +20,19 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		case establishingTransport
 		case waitingForManualRecovery
 		case restoringData
-		case verifying
 		case failed(String)
 	}
 
 	private enum Command: String { case probe, off, on }
+	/// A Cellular Assist cycle deliberately gets one automatic opportunity to
+	/// change Mobile Data. Network callbacks are noisy while that happens, so a
+	/// completed or failed cycle stays consumed until the user explicitly asks
+	/// Aether to reconnect, or a later normal connection succeeds.
+	private enum AutomaticRecoveryEpisode {
+		case armed
+		case active
+		case consumed
+	}
 	private static let enabledKey = "Aether.cellularAssistEnabled"
 	private static let restoreKey = "Aether.cellularAssistNeedsDataRestore"
 	private static let helperName = "Aether Cellular"
@@ -35,7 +43,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 	public var isBusy: Bool {
 		switch state {
-		case .checkingSetup, .installingHelper, .waitingForDataOff, .establishingTransport, .restoringData, .verifying:
+		case .checkingSetup, .installingHelper, .waitingForDataOff, .establishingTransport, .restoringData:
 			return true
 		case .idle, .waitingForManualRecovery, .failed:
 			return false
@@ -50,12 +58,19 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		return false
 	}
 
+	/// Lets DeviceConnectionManager ignore ordinary path-change reconciliations
+	/// while this manager owns the temporary Mobile Data transition.
+	public var isAutomaticRecoveryInProgress: Bool {
+		automaticRecoveryEpisode == .active
+	}
+
 	private var operationID: UUID?
 	private var pendingSetup = false
 	private var documentController: UIDocumentInteractionController?
 	private var retryTask: Task<Void, Never>?
 	private var didAttemptRestore = false
 	private var didShowMissingShortcutsNotice = false
+	private var automaticRecoveryEpisode: AutomaticRecoveryEpisode = .armed
 
 	private override init() {
 		isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
@@ -73,6 +88,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			_disableForMissingShortcuts()
 			return
 		}
+		automaticRecoveryEpisode = .armed
 		pendingSetup = true
 		state = .checkingSetup
 		_startShortcut(.probe)
@@ -82,12 +98,14 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	/// deliberately left running while the helper briefly changes Mobile Data.
 	@discardableResult
 	public func beginBootstrapIfPossible(cellularOnly: Bool, tunnelIsRunning: Bool) -> Bool {
-		guard isEnabled, !isBusy, cellularOnly, tunnelIsRunning else { return false }
+		guard isEnabled, !isBusy, cellularOnly, tunnelIsRunning,
+			automaticRecoveryEpisode == .armed else { return false }
 		guard _shortcutsAvailable() else {
 			_disableForMissingShortcuts()
 			return false
 		}
 
+		automaticRecoveryEpisode = .active
 		didAttemptRestore = false
 		state = .waitingForDataOff
 		// `on` is idempotent. Persist this before asking Shortcuts to turn data
@@ -138,14 +156,10 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 				return
 			}
 			UserDefaults.standard.set(false, forKey: Self.restoreKey)
-			didAttemptRestore = false
 			operationID = nil
-			state = .verifying
-			Task { [weak self] in
-				await DeviceConnectionManager.shared.reconcile(force: true)
-				guard let self else { return }
-				self.state = DeviceConnectionManager.shared.isConnected ? .idle : .failed("The device tunnel needs another retry.")
-			}
+			automaticRecoveryEpisode = .consumed
+			state = .idle
+			_log("Cellular Assist restored Mobile Data after the device tunnel connected.")
 		default:
 			_log("Ignored an unknown shortcut callback phase.", level: .warning)
 		}
@@ -156,20 +170,18 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			requestEnabled(true)
 			return
 		}
-		guard UserDefaults.standard.bool(forKey: Self.restoreKey), !isBusy else { return }
+		guard UserDefaults.standard.bool(forKey: Self.restoreKey), !isBusy, !didAttemptRestore else { return }
 		guard _shortcutsAvailable() else {
 			_disableForMissingShortcuts()
 			return
 		}
-		state = .restoringData
-		_startShortcut(.on)
+		_restoreMobileDataOnce()
 	}
 
 	public func cancelAndRestoreIfNeeded() {
 		retryTask?.cancel()
 		retryTask = nil
 		operationID = nil
-		didAttemptRestore = true
 		guard UserDefaults.standard.bool(forKey: Self.restoreKey) else {
 			state = .idle
 			return
@@ -178,8 +190,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			_disableForMissingShortcuts()
 			return
 		}
-		state = .restoringData
-		_startShortcut(.on)
+		_restoreMobileDataOnce(force: true)
 	}
 
 	/// Holds the in-app tunnel open and asks the Device tab to guide the user
@@ -193,8 +204,19 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	}
 
 	public func connectionDidSucceed() {
-		guard isWaitingForManualRecovery else { return }
-		state = .idle
+		if isWaitingForManualRecovery {
+			state = .idle
+		}
+		if automaticRecoveryEpisode == .consumed {
+			automaticRecoveryEpisode = .armed
+		}
+	}
+
+	/// Re-arm only for an explicit Local-mode reconnect. Ordinary NWPath events
+	/// must not restart a just-finished Cellular Assist cycle.
+	public func rearmAutomaticRecovery() {
+		guard automaticRecoveryEpisode != .active else { return }
+		automaticRecoveryEpisode = .armed
 	}
 
 	public func networkNoLongerNeedsManualRecovery() {
@@ -209,16 +231,14 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			for delay in delays {
 				try? await Task.sleep(nanoseconds: delay)
 				guard !Task.isCancelled, let self, self.state == .establishingTransport else { return }
-				await DeviceConnectionManager.shared.reconcile(force: true)
+				await DeviceConnectionManager.shared.reconcile(force: true, cellularAssistTransaction: true)
 				if DeviceConnectionManager.shared.isConnected {
-					self.state = .restoringData
-					self._startShortcut(.on)
+					self._restoreMobileDataOnce()
 					return
 				}
 			}
 			guard let self else { return }
-			self.state = .restoringData
-			self._startShortcut(.on)
+			self._restoreMobileDataOnce()
 			self._showFailure("The device tunnel could not be established.")
 		}
 	}
@@ -297,6 +317,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		operationID = nil
 		pendingSetup = false
 		didAttemptRestore = false
+		automaticRecoveryEpisode = .consumed
 		isEnabled = false
 		UserDefaults.standard.set(false, forKey: Self.enabledKey)
 		UserDefaults.standard.set(false, forKey: Self.restoreKey)
@@ -315,19 +336,21 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		retryTask?.cancel()
 		retryTask = nil
 		operationID = nil
-		if UserDefaults.standard.bool(forKey: Self.restoreKey), !didAttemptRestore, _shortcutsAvailable() {
-			didAttemptRestore = true
-			state = .restoringData
-			_startShortcut(.on)
-			return
-		}
 		if UserDefaults.standard.bool(forKey: Self.restoreKey) {
+			automaticRecoveryEpisode = .consumed
 			state = .failed("Mobile Data may still be off. Turn it back on in Control Center or Settings.")
 			_showFailure("Mobile Data may still be off. Turn it back on in Control Center or Settings.")
 		} else {
 			state = .failed(message)
 			_showFailure(message)
 		}
+	}
+
+	private func _restoreMobileDataOnce(force: Bool = false) {
+		guard force || !didAttemptRestore else { return }
+		didAttemptRestore = true
+		state = .restoringData
+		_startShortcut(.on)
 	}
 
 	private func _showFailure(_ message: String) {

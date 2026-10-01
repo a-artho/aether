@@ -105,6 +105,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	private var reconciliationTask: Task<Void, Never>?
 	private var reconciliationPending = false
 	private var pendingReconciliationForce = false
+	private var pendingCellularAssistReconciliation = false
 
 	public init() {
 		hasPairingFile = HeartbeatManager.hasPairingFile()
@@ -233,12 +234,14 @@ public final class DeviceConnectionManager: ObservableObject {
 		UserDefaults.standard.set(normalizedMethod, forKey: Self.installationMethodKey)
 		guard previousMethod != normalizedMethod else {
 			if normalizedMethod == 1 {
+				CellularAssistManager.shared.rearmAutomaticRecovery()
 				_connectForIDeviceMode()
 			}
 			return true
 		}
 
 		if normalizedMethod == 1 {
+			CellularAssistManager.shared.rearmAutomaticRecovery()
 			_log("iDevice mode selected; preparing the device tunnel.", category: "Tunnel", level: .notice)
 			_connectForIDeviceMode()
 		} else {
@@ -253,6 +256,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	/// manual connection control in the interface.
 	public func reconnectForIDeviceMode() {
 		guard isIDeviceInstallationMode else { return }
+		CellularAssistManager.shared.rearmAutomaticRecovery()
 		_connectForIDeviceMode()
 	}
 
@@ -270,7 +274,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		if OnDevicePairingManager.shared.isActive {
 			return true
 		}
-		if CellularAssistManager.shared.isBusy {
+		if CellularAssistManager.shared.isBusy || CellularAssistManager.shared.isWaitingForManualRecovery {
 			return true
 		}
 		return false
@@ -424,16 +428,17 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	// MARK: - Ground Truth Reconciliation
 
-	public func reconcile(force: Bool = false) async {
+	public func reconcile(force: Bool = false, cellularAssistTransaction: Bool = false) async {
 		if reconciliationTask != nil {
 			reconciliationPending = true
 			pendingReconciliationForce = pendingReconciliationForce || force
+			pendingCellularAssistReconciliation = pendingCellularAssistReconciliation || cellularAssistTransaction
 			return
 		}
 
 		let task = Task { [weak self] in
 			guard let self else { return }
-			await self._reconcile(force: force)
+			await self._reconcile(force: force, cellularAssistTransaction: cellularAssistTransaction)
 		}
 		reconciliationTask = task
 		await task.value
@@ -441,16 +446,21 @@ public final class DeviceConnectionManager: ObservableObject {
 
 		guard reconciliationPending else { return }
 		let nextForce = pendingReconciliationForce
+		let nextCellularAssistTransaction = pendingCellularAssistReconciliation
 		reconciliationPending = false
 		pendingReconciliationForce = false
-		await reconcile(force: nextForce)
+		pendingCellularAssistReconciliation = false
+		await reconcile(force: nextForce, cellularAssistTransaction: nextCellularAssistTransaction)
 	}
 
-	private func _reconcile(force: Bool) async {
+	private func _reconcile(force: Bool, cellularAssistTransaction: Bool) async {
 		let reconciliationGeneration = transitionGeneration
 		let method = tunnelMethod
 		guard isIDeviceInstallationMode else {
 			_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+			return
+		}
+		guard !CellularAssistManager.shared.isAutomaticRecoveryInProgress || cellularAssistTransaction else {
 			return
 		}
 		hasPairingFile = HeartbeatManager.hasPairingFile()
@@ -492,6 +502,9 @@ public final class DeviceConnectionManager: ObservableObject {
 			else {
 				return
 			}
+			guard !CellularAssistManager.shared.isAutomaticRecoveryInProgress || cellularAssistTransaction else {
+				return
+			}
 
 			if !probe.isConnected {
 				if expectedState == true && !force && !isExpired {
@@ -514,6 +527,9 @@ public final class DeviceConnectionManager: ObservableObject {
 			!Task.isCancelled,
 			reconciliationGeneration == transitionGeneration
 		else {
+			return
+		}
+		guard !CellularAssistManager.shared.isAutomaticRecoveryInProgress || cellularAssistTransaction else {
 			return
 		}
 

@@ -49,6 +49,7 @@ public class HeartbeatManager {
 	let rsdConnectionLock = NSLock()
 	var rsdAdapter: AdapterHandle?
 	var rsdHandshake: RsdHandshakeHandle?
+	var lastSuccessfulRSDPort: UInt16?
 
 	public var cancellable: AnyCancellable? // Combine
 
