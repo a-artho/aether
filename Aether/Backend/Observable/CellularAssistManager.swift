@@ -55,6 +55,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	private var documentController: UIDocumentInteractionController?
 	private var retryTask: Task<Void, Never>?
 	private var didAttemptRestore = false
+	private var didShowMissingShortcutsNotice = false
 
 	private override init() {
 		isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
@@ -69,7 +70,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		}
 		guard !isBusy else { return }
 		guard _shortcutsAvailable() else {
-			_showShortcutsRequired()
+			_disableForMissingShortcuts()
 			return
 		}
 		pendingSetup = true
@@ -83,8 +84,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	public func beginBootstrapIfPossible(cellularOnly: Bool, tunnelIsRunning: Bool) -> Bool {
 		guard isEnabled, !isBusy, cellularOnly, tunnelIsRunning else { return false }
 		guard _shortcutsAvailable() else {
-			isEnabled = false
-			UserDefaults.standard.set(false, forKey: Self.enabledKey)
+			_disableForMissingShortcuts()
 			return false
 		}
 
@@ -157,6 +157,10 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			return
 		}
 		guard UserDefaults.standard.bool(forKey: Self.restoreKey), !isBusy else { return }
+		guard _shortcutsAvailable() else {
+			_disableForMissingShortcuts()
+			return
+		}
 		state = .restoringData
 		_startShortcut(.on)
 	}
@@ -166,8 +170,12 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		retryTask = nil
 		operationID = nil
 		didAttemptRestore = true
-		guard UserDefaults.standard.bool(forKey: Self.restoreKey), _shortcutsAvailable() else {
+		guard UserDefaults.standard.bool(forKey: Self.restoreKey) else {
 			state = .idle
+			return
+		}
+		guard _shortcutsAvailable() else {
+			_disableForMissingShortcuts()
 			return
 		}
 		state = .restoringData
@@ -216,6 +224,10 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	}
 
 	private func _startShortcut(_ command: Command) {
+		guard _shortcutsAvailable() else {
+			_disableForMissingShortcuts()
+			return
+		}
 		let id = UUID()
 		operationID = id
 		var callback = URLComponents()
@@ -272,19 +284,34 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	}
 
 	private func _shortcutsAvailable() -> Bool {
-		URL(string: "shortcuts://").map { UIApplication.shared.canOpenURL($0) } ?? false
+		let isAvailable = URL(string: "shortcuts://").map { UIApplication.shared.canOpenURL($0) } ?? false
+		if isAvailable {
+			didShowMissingShortcutsNotice = false
+		}
+		return isAvailable
 	}
 
-	private func _showShortcutsRequired() {
-		let action = UIAlertAction(title: "Download Shortcuts", style: .default) { _ in
-			if let url = URL(string: "itms-apps://apps.apple.com/app/id1462947752") {
-				UIApplication.shared.open(url)
-			}
-		}
-		UIAlertController.showAlertWithCancel(title: "Shortcuts Required", message: "Cellular Assist uses Apple Shortcuts to briefly toggle Mobile Data.", actions: [action])
+	private func _disableForMissingShortcuts() {
+		retryTask?.cancel()
+		retryTask = nil
+		operationID = nil
+		pendingSetup = false
+		didAttemptRestore = false
+		isEnabled = false
+		UserDefaults.standard.set(false, forKey: Self.enabledKey)
+		UserDefaults.standard.set(false, forKey: Self.restoreKey)
+		state = .idle
+
+		guard !didShowMissingShortcutsNotice else { return }
+		didShowMissingShortcutsNotice = true
+		_showFailure("Cellular Assist was turned off because the Shortcuts app isn’t installed.")
 	}
 
 	private func _handleShortcutFailure(_ message: String) {
+		guard _shortcutsAvailable() else {
+			_disableForMissingShortcuts()
+			return
+		}
 		retryTask?.cancel()
 		retryTask = nil
 		operationID = nil

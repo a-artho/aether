@@ -342,7 +342,7 @@ struct InstalledAppsView: View {
 	}
 
 	private var _installationMethodName: String {
-		installationMethod == 1 ? .localized("iDevice") : .localized("Server")
+		installationMethod == 1 ? .localized("Local") : .localized("Server")
 	}
 
 	private var _installationMethodIsReady: Bool {

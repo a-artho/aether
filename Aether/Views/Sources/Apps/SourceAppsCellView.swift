@@ -62,23 +62,13 @@ struct SourceAppsCellView: View {
 
 		if _storeCellAppearance != 0 {
 			if let version = app.currentVersion, !version.isEmpty {
-				HStack(spacing: 3) {
-					Image(systemName: "tag")
-						.font(.caption2.weight(.medium))
-						.foregroundStyle(Color.blue)
-					Text(version)
-						.foregroundStyle(.secondary)
-				}
+				Text(version)
+					.foregroundStyle(.secondary)
 			}
 		} else {
 			HStack(spacing: 4) {
 				if let version = app.currentVersion, !version.isEmpty {
-					HStack(spacing: 3) {
-						Image(systemName: "tag")
-							.font(.caption2.weight(.medium))
-							.foregroundStyle(Color.blue)
-						Text(version)
-					}
+					Text(version)
 					.layoutPriority(1)
 				}
 

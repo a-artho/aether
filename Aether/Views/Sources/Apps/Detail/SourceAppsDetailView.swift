@@ -230,15 +230,13 @@ extension SourceAppsDetailView {
 			_metadataTile(
 				title: .localized("Version"),
 				subtitle: version,
-				systemImage: "tag",
-				color: .blue
+				systemImage: "tag"
 			)
 
 			_metadataTile(
 				title: .localized("Size"),
 				subtitle: size,
-				systemImage: "internaldrive",
-				color: .purple
+				systemImage: "internaldrive"
 			)
 		}
 	}
@@ -246,13 +244,12 @@ extension SourceAppsDetailView {
 	private func _metadataTile(
 		title: String,
 		subtitle: String,
-		systemImage: String,
-		color: Color
+		systemImage: String
 	) -> some View {
 		HStack(spacing: 8) {
 			Image(systemName: systemImage)
 				.font(.system(size: 17, weight: .semibold))
-				.foregroundStyle(color)
+				.foregroundStyle(.secondary)
 				.frame(width: 24, height: 24)
 
 			VStack(alignment: .leading, spacing: 2) {
