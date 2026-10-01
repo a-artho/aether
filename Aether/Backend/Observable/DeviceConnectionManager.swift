@@ -523,6 +523,11 @@ public final class DeviceConnectionManager: ObservableObject {
 				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 				return
 			}
+			if !cellularAssistTransaction,
+				physicalNetworkState == .cellularOnly,
+				_beginCellularAssistIfEligible() {
+				return
+			}
 		}
 
 		// The legacy transport needs a socket preflight. RSD is verified by its
@@ -612,6 +617,8 @@ public final class DeviceConnectionManager: ObservableObject {
 		return hasProfile
 	}
 
+	/// Routes one ordinary reconciliation through cellular recovery only after
+	/// the in-app tunnel is running and the active physical route is cellular.
 	private func _beginCellularAssistIfEligible() -> Bool {
 		guard tunnelMethod == .inApp, physicalNetworkState == .cellularOnly else { return false }
 		let tunnelIsRunning: Bool

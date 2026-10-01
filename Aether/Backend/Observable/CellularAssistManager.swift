@@ -77,11 +77,13 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	}
 
 	private var operationID: UUID?
+	private var activeCommand: Command?
 	private var helperSetupPhase: HelperSetupPhase = .idle
 	private var documentController: UIDocumentInteractionController?
 	private var retryTask: Task<Void, Never>?
 	private var didAttemptRestore = false
-	private var didShowMissingShortcutsNotice = false
+	private var didPresentTerminalPrompt = false
+	private var pendingTransportFailureMessage: String?
 	private var automaticRecoveryEpisode: AutomaticRecoveryEpisode = .armed
 
 	private override init() {
@@ -91,12 +93,16 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 	public func requestEnabled(_ enabled: Bool) {
 		guard enabled else {
-			helperSetupPhase = .idle
-			isEnabled = false
-			UserDefaults.standard.set(false, forKey: Self.enabledKey)
+			_cancelHelperSetup()
 			return
 		}
 		guard !isBusy else { return }
+		didPresentTerminalPrompt = false
+		pendingTransportFailureMessage = nil
+		_clearActiveOperation()
+		helperSetupPhase = .idle
+		isEnabled = false
+		UserDefaults.standard.set(false, forKey: Self.enabledKey)
 		guard _shortcutsAvailable() else {
 			_disableForMissingShortcuts()
 			return
@@ -107,12 +113,13 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		_startShortcut(.probe)
 	}
 
-	/// Called only after a real device transport failure. The existing tunnel is
-	/// deliberately left running while the helper briefly changes Mobile Data.
+	/// Begins one automatic cellular recovery cycle after the in-app tunnel is
+	/// running and Aether knows the active physical route is cellular-only.
 	@discardableResult
 	public func beginBootstrapIfPossible(cellularOnly: Bool, tunnelIsRunning: Bool) -> Bool {
 		guard isEnabled, !isBusy, cellularOnly, tunnelIsRunning,
 			automaticRecoveryEpisode == .armed else { return false }
+		didPresentTerminalPrompt = false
 		guard _shortcutsAvailable() else {
 			_disableForMissingShortcuts()
 			return false
@@ -120,10 +127,9 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 		automaticRecoveryEpisode = .active
 		didAttemptRestore = false
+		pendingTransportFailureMessage = nil
 		state = .waitingForDataOff
-		// `on` is idempotent. Persist this before asking Shortcuts to turn data
-		// off so a future foreground launch can safely restore it after a crash.
-		UserDefaults.standard.set(true, forKey: Self.restoreKey)
+		UserDefaults.standard.set(false, forKey: Self.restoreKey)
 		_startShortcut(.off)
 		return true
 	}
@@ -134,24 +140,25 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			item.value.map { (item.name, $0) }
 		})
 		guard let rawID = values["operation"], let callbackID = UUID(uuidString: rawID), callbackID == operationID,
-			let phase = values["phase"], let status = values["status"] else {
+			let phase = values["phase"], let command = Command(rawValue: phase), command == activeCommand,
+			let status = values["status"] else {
 			_log("Ignored a stale or malformed shortcut callback.", level: .warning)
 			return
 		}
 
 		if status == "cancel" {
-			_handleShortcutCancel(phase: phase)
+			_handleShortcutCancel(command: command)
 			return
 		}
 
 		if status != "success" {
 			let message = values["errorMessage"] ?? "The Cellular Assist shortcut did not finish."
-			if phase == Command.probe.rawValue,
+			if command == .probe,
 				case let .probing(purpose) = helperSetupPhase {
 				_handleHelperProbeFailure(message, purpose: purpose)
 				return
 			}
-			_handleShortcutFailure(message, phase: phase)
+			_handleRuntimeFailure(message, command: command)
 			return
 		}
 
@@ -171,26 +178,37 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			isEnabled = true
 			UserDefaults.standard.set(true, forKey: Self.enabledKey)
 			helperSetupPhase = .idle
-			operationID = nil
+			_clearActiveOperation()
 			state = .idle
 			_log("Cellular Assist helper verified.")
 		case Command.off.rawValue:
 			guard values["result"] == "\(Self.helperVersion)_OFF" else {
-				_handleShortcutFailure("The Cellular Assist helper returned an invalid response.", phase: phase)
+				_handleRuntimeFailure("Aether Cellular failed or isn’t configured.", command: .off)
 				return
 			}
+			UserDefaults.standard.set(true, forKey: Self.restoreKey)
+			_clearActiveOperation()
 			state = .establishingTransport
 			_retryTransportWhileDataIsOff()
 		case Command.on.rawValue:
 			guard values["result"] == "\(Self.helperVersion)_ON" else {
-				_handleShortcutFailure("Mobile Data may still be off. Turn it back on in Control Center or Settings.", phase: phase)
+				_handleRuntimeFailure(
+					"Mobile Data may still be off. Check it in Settings.",
+					command: .on,
+					preservingRestoreDebt: true
+				)
 				return
 			}
 			UserDefaults.standard.set(false, forKey: Self.restoreKey)
-			operationID = nil
+			_clearActiveOperation()
 			automaticRecoveryEpisode = .consumed
-			state = .idle
-			_log("Cellular Assist restored Mobile Data after the device tunnel connected.")
+			if let pendingTransportFailureMessage {
+				self.pendingTransportFailureMessage = nil
+				_finishRuntimeFailure(pendingTransportFailureMessage)
+			} else {
+				state = .idle
+				_log("Cellular Assist restored Mobile Data after the device tunnel connected.")
+			}
 		default:
 			_log("Ignored an unknown shortcut callback phase.", level: .warning)
 		}
@@ -203,7 +221,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			_startShortcut(.probe)
 			return
 		}
-		guard UserDefaults.standard.bool(forKey: Self.restoreKey), !isBusy, !didAttemptRestore else { return }
+		guard isEnabled, UserDefaults.standard.bool(forKey: Self.restoreKey), !isBusy, !didAttemptRestore else { return }
 		guard _shortcutsAvailable() else {
 			_disableForMissingShortcuts()
 			return
@@ -214,8 +232,8 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	public func cancelAndRestoreIfNeeded() {
 		retryTask?.cancel()
 		retryTask = nil
-		operationID = nil
-		guard UserDefaults.standard.bool(forKey: Self.restoreKey) else {
+		_clearActiveOperation()
+		guard isEnabled, UserDefaults.standard.bool(forKey: Self.restoreKey) else {
 			state = .idle
 			return
 		}
@@ -268,8 +286,8 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 				}
 			}
 			guard let self else { return }
+			self.pendingTransportFailureMessage = "The device tunnel could not be established."
 			self._restoreMobileDataOnce()
-			self._showFailure("The device tunnel could not be established.")
 		}
 	}
 
@@ -280,6 +298,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		}
 		let id = UUID()
 		operationID = id
+		activeCommand = command
 		var callback = URLComponents()
 		callback.scheme = "aether"
 		callback.host = "cellular-assist"
@@ -307,25 +326,18 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		]
 		guard let url = request.url else { return }
 		UIApplication.shared.open(url, options: [:]) { [weak self] opened in
-			guard let self, !opened else { return }
-			if command == .probe, case let .probing(purpose) = self.helperSetupPhase {
-				self._handleHelperProbeFailure(
-					"Aether could not open the Cellular Assist shortcut.",
-					purpose: purpose
-				)
-				return
-			}
-			self._handleShortcutFailure("Aether could not open the Cellular Assist shortcut.", phase: command.rawValue)
+			guard let self, !opened, self.operationID == id, self.activeCommand == command else { return }
+			self._disableForMissingShortcuts()
 		}
 	}
 
 	private func _installHelper() {
-		operationID = nil
+		_clearActiveOperation()
 		helperSetupPhase = .presentingInstaller
 		state = .installingHelper
 		guard let url = Bundle.main.url(forResource: Self.helperName, withExtension: "shortcut"),
 			let presenter = UIApplication.topViewController() else {
-			_handleShortcutFailure("The Cellular Assist helper is unavailable.", phase: Command.probe.rawValue)
+			_finishHelperSetupFailure("The Cellular Assist helper is unavailable.")
 			return
 		}
 		let controller = UIDocumentInteractionController(url: url)
@@ -357,100 +369,136 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	}
 
 	private func _shortcutsAvailable() -> Bool {
-		let isAvailable = URL(string: "shortcuts://").map { UIApplication.shared.canOpenURL($0) } ?? false
-		if isAvailable {
-			didShowMissingShortcutsNotice = false
-		}
-		return isAvailable
+		URL(string: "shortcuts://").map { UIApplication.shared.canOpenURL($0) } ?? false
 	}
 
 	private func _disableForMissingShortcuts() {
-		retryTask?.cancel()
-		retryTask = nil
-		operationID = nil
-		helperSetupPhase = .idle
-		didAttemptRestore = false
-		automaticRecoveryEpisode = .consumed
-		isEnabled = false
-		UserDefaults.standard.set(false, forKey: Self.enabledKey)
-		UserDefaults.standard.set(false, forKey: Self.restoreKey)
-		state = .idle
-
-		guard !didShowMissingShortcutsNotice else { return }
-		didShowMissingShortcutsNotice = true
-		_showFailure("Cellular Assist was turned off because the Shortcuts app isn’t installed.")
+		let shouldPreserveRestoreDebt = UserDefaults.standard.bool(forKey: Self.restoreKey)
+		_finishRuntimeFailure(
+			shouldPreserveRestoreDebt
+				? "Apple Shortcuts isn’t available. Mobile Data may still be off. Check it in Settings."
+				: "Apple Shortcuts isn’t available.",
+			preservingRestoreDebt: shouldPreserveRestoreDebt,
+			showShortcutsUnavailablePrompt: !shouldPreserveRestoreDebt
+		)
 	}
 
-	private func _handleShortcutCancel(phase: String) {
-		if phase == Command.probe.rawValue {
-			_cancelHelperSetup()
-			_log("Cellular Assist setup was cancelled.")
-			return
+	private func _handleShortcutCancel(command: Command) {
+		switch command {
+		case .probe:
+			guard case let .probing(purpose) = helperSetupPhase else { return }
+			switch purpose {
+			case .initial:
+				_cancelHelperSetup()
+				_log("Cellular Assist setup was cancelled.")
+			case .postInstall:
+				_finishPostInstallVerificationFailure()
+			}
+		case .off, .on:
+			_handleRuntimeFailure(
+				command == .on ? "Mobile Data may still be off. Check it in Settings." : "Aether Cellular failed or isn’t configured.",
+				command: command,
+				preservingRestoreDebt: command == .on && UserDefaults.standard.bool(forKey: Self.restoreKey)
+			)
 		}
-		operationID = nil
-		_handleShortcutFailure("The Cellular Assist shortcut was cancelled.", phase: phase)
 	}
 
 	private func _handleHelperProbeFailure(_ message: String, purpose: HelperProbePurpose) {
-		operationID = nil
+		_clearActiveOperation()
 
 		switch purpose {
 		case .initial:
 			_installHelper()
 		case .postInstall:
-			_finishHelperSetupFailure(message)
+			_finishPostInstallVerificationFailure()
 		}
 	}
 
 	private func _cancelHelperSetup() {
-		operationID = nil
+		retryTask?.cancel()
+		retryTask = nil
+		pendingTransportFailureMessage = nil
+		_clearActiveOperation()
 		helperSetupPhase = .idle
+		didAttemptRestore = false
+		automaticRecoveryEpisode = .consumed
 		isEnabled = false
 		UserDefaults.standard.set(false, forKey: Self.enabledKey)
 		state = .idle
 	}
 
 	private func _finishHelperSetupFailure(_ message: String) {
-		retryTask?.cancel()
-		retryTask = nil
-		operationID = nil
-		helperSetupPhase = .idle
-		isEnabled = false
-		UserDefaults.standard.set(false, forKey: Self.enabledKey)
-		state = .failed(message)
-		_showFailure(message)
+		_finishTerminalState(preservingRestoreDebt: false, state: .failed(message))
+		_presentTerminalAlert(title: "Cellular Assist", message: message)
 	}
 
-	private func _handleShortcutFailure(_ message: String, phase: String? = nil) {
+	private func _finishPostInstallVerificationFailure() {
+		_finishTerminalState(preservingRestoreDebt: false, state: .failed("Shortcut Not Ready"))
+		guard !didPresentTerminalPrompt else { return }
+		didPresentTerminalPrompt = true
+		let retry = UIAlertAction(title: .localized("Try Again"), style: .default) { [weak self] _ in
+			self?._retryPostInstallVerification()
+		}
+		UIAlertController.showAlertWithCancel(
+			title: .localized("Shortcut Not Ready"),
+			message: .localized("Add Aether Cellular in Shortcuts and choose Always Allow, then try again."),
+			actions: [retry]
+		)
+	}
+
+	private func _retryPostInstallVerification() {
+		guard !isBusy else { return }
+		didPresentTerminalPrompt = false
 		guard _shortcutsAvailable() else {
 			_disableForMissingShortcuts()
 			return
 		}
+		helperSetupPhase = .probing(.postInstall)
+		state = .checkingSetup
+		_startShortcut(.probe)
+	}
+
+	private func _handleRuntimeFailure(
+		_ message: String,
+		command: Command? = nil,
+		preservingRestoreDebt: Bool = false
+	) {
+		let shouldPreserveRestoreDebt = preservingRestoreDebt || (command == .on && UserDefaults.standard.bool(forKey: Self.restoreKey))
+		_finishRuntimeFailure(message, preservingRestoreDebt: shouldPreserveRestoreDebt)
+	}
+
+	private func _finishRuntimeFailure(
+		_ message: String,
+		preservingRestoreDebt: Bool = false,
+		showShortcutsUnavailablePrompt: Bool = false
+	) {
+		_finishTerminalState(preservingRestoreDebt: preservingRestoreDebt, state: .failed(message))
+		if showShortcutsUnavailablePrompt {
+			_presentShortcutsUnavailableAlert()
+		} else {
+			_presentTerminalAlert(title: "Cellular Assist Disabled", message: message)
+		}
+	}
+
+	private func _finishTerminalState(preservingRestoreDebt: Bool, state: State) {
 		retryTask?.cancel()
 		retryTask = nil
+		pendingTransportFailureMessage = nil
+		_clearActiveOperation()
+		helperSetupPhase = .idle
+		didAttemptRestore = false
+		automaticRecoveryEpisode = .consumed
+		isEnabled = false
+		UserDefaults.standard.set(false, forKey: Self.enabledKey)
+		if !preservingRestoreDebt {
+			UserDefaults.standard.set(false, forKey: Self.restoreKey)
+		}
+		self.state = state
+	}
+
+	private func _clearActiveOperation() {
 		operationID = nil
-
-		if phase == Command.probe.rawValue || helperSetupPhase != .idle {
-			helperSetupPhase = .idle
-			isEnabled = false
-			UserDefaults.standard.set(false, forKey: Self.enabledKey)
-			state = .failed(message)
-			_showFailure(message)
-			return
-		}
-
-		if UserDefaults.standard.bool(forKey: Self.restoreKey) {
-			automaticRecoveryEpisode = .consumed
-			if !didAttemptRestore {
-				_restoreMobileDataOnce()
-				return
-			}
-			state = .failed("Mobile Data may still be off. Turn it back on in Control Center or Settings.")
-			_showFailure("Mobile Data may still be off. Turn it back on in Control Center or Settings.")
-		} else {
-			state = .failed(message)
-			_showFailure(message)
-		}
+		activeCommand = nil
 	}
 
 	private func _restoreMobileDataOnce(force: Bool = false) {
@@ -460,8 +508,24 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		_startShortcut(.on)
 	}
 
-	private func _showFailure(_ message: String) {
-		UIAlertController.showAlertWithOk(title: "Cellular Assist", message: message)
+	private func _presentShortcutsUnavailableAlert() {
+		guard !didPresentTerminalPrompt else { return }
+		didPresentTerminalPrompt = true
+		let appStore = UIAlertAction(title: .localized("Open App Store"), style: .default) { _ in
+			guard let url = URL(string: "itms-apps://apps.apple.com/app/shortcuts/id1462947752") else { return }
+			UIApplication.shared.open(url)
+		}
+		UIAlertController.showAlertWithCancel(
+			title: .localized("Cellular Assist Disabled"),
+			message: .localized("Apple Shortcuts isn’t available."),
+			actions: [appStore]
+		)
+	}
+
+	private func _presentTerminalAlert(title: String, message: String) {
+		guard !didPresentTerminalPrompt else { return }
+		didPresentTerminalPrompt = true
+		UIAlertController.showAlertWithOk(title: title, message: message)
 	}
 
 	private func _log(_ message: String, level: DebugLogItem.Level = .info) {

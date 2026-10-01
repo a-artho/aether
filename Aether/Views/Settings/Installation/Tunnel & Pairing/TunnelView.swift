@@ -196,7 +196,7 @@ struct TunnelView: View {
 		} header: {
 			Text(.localized("Automation"))
 		} footer: {
-			Text(.localized("Tunnel Lifecycle starts the device tunnel when Aether opens and stops it in the background when no device task is active. Cellular Assist briefly changes Mobile Data when a cellular tunnel needs help connecting."))
+			Text(.localized("Uses Aether Cellular in Apple Shortcuts to manage Mobile Data when needed. If it isn’t installed, export it to Shortcuts and choose Always Allow when prompted."))
 		}
 	}
 
