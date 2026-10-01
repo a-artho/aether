@@ -7,7 +7,12 @@ public enum RSDPortDiscovery {
 	public static func resolvePorts(timeout: TimeInterval = 6) -> [UInt16] {
 		let queue = DispatchQueue(label: "idevice.rsd-port-discovery")
 		let deadline = DispatchTime.now() + timeout
-		let browseDeadline = DispatchTime.now() + max(0, timeout - 1.5)
+		// Leave at least half a second for endpoint resolution while preserving the
+		// old 75/25 browse-versus-resolve split for the normal six-second path.
+		// A 1.5-second fast probe therefore still gets one full second of Bonjour
+		// discovery instead of silently skipping it.
+		let browseBudget = max(0, min(timeout * 0.75, timeout - 0.5))
+		let browseDeadline = DispatchTime.now() + browseBudget
 		var endpoints: [NWEndpoint] = []
 		var matchedBrowser: NWBrowser?
 

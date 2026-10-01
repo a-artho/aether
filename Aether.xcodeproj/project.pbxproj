@@ -470,7 +470,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Aether/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Aether;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright (c) 2024 Samara M";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright (c) 2026 Artho";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -534,7 +534,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Aether/Resources/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Aether;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright (c) 2024 Samara M";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright (c) 2026 Artho";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

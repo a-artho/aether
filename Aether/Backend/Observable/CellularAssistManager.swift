@@ -26,8 +26,9 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	private enum Command: String { case probe, off, on }
 	/// A Cellular Assist cycle deliberately gets one automatic opportunity to
 	/// change Mobile Data. Network callbacks are noisy while that happens, so a
-	/// completed or failed cycle stays consumed until the user explicitly asks
-	/// Aether to reconnect, or a later normal connection succeeds.
+	/// completed or failed cycle stays consumed until a new recovery opportunity
+	/// begins, such as an explicit Local reconnect or leaving cellular-only
+	/// networking.
 	private enum AutomaticRecoveryEpisode {
 		case armed
 		case active
@@ -207,9 +208,6 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		if isWaitingForManualRecovery {
 			state = .idle
 		}
-		if automaticRecoveryEpisode == .consumed {
-			automaticRecoveryEpisode = .armed
-		}
 	}
 
 	/// Re-arm only for an explicit Local-mode reconnect. Ordinary NWPath events
@@ -338,6 +336,10 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		operationID = nil
 		if UserDefaults.standard.bool(forKey: Self.restoreKey) {
 			automaticRecoveryEpisode = .consumed
+			if !didAttemptRestore {
+				_restoreMobileDataOnce()
+				return
+			}
 			state = .failed("Mobile Data may still be off. Turn it back on in Control Center or Settings.")
 			_showFailure("Mobile Data may still be off. Turn it back on in Control Center or Settings.")
 		} else {

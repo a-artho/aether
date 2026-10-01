@@ -173,10 +173,14 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	public func networkPathChanged(_ path: NWPath? = nil) {
 		if let path {
+			let previousNetworkState = physicalNetworkState
 			physicalNetworkState = Self.classify(path)
 			_log("Physical network is now \(String(describing: physicalNetworkState)).", category: "Cellular Assist")
 			if physicalNetworkState != .cellularOnly {
 				CellularAssistManager.shared.networkNoLongerNeedsManualRecovery()
+				if previousNetworkState == .cellularOnly {
+					CellularAssistManager.shared.rearmAutomaticRecovery()
+				}
 			}
 		}
 		Task { @MainActor [weak self] in
