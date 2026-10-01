@@ -36,7 +36,12 @@ struct SourceAppsView: View {
 	@State var isLoading = true
 	@State var hasLoadedOnce = false
 	@State private var _searchText = ""
+	@FocusState private var _isSearchFocused: Bool
 	@ObservedObject private var router = SourcesRouter.shared
+
+	private var _isSearchPresented: Bool {
+		router.searchTarget == .collection(collectionRoute)
+	}
 
 	private var _navigationTitle: String {
 		if object.count == 1 {
@@ -98,8 +103,9 @@ struct SourceAppsView: View {
 				)
 			}
 		}
-		.navigationTitle(_navigationTitle)
-		.toolbarTitleMenu {
+		.navigationTitle(_isSearchPresented ? "" : _navigationTitle)
+		.navigationBarBackButtonHidden(_isSearchPresented)
+		.toolbarTitleMenuIf(!_isSearchPresented) {
 			_sortActions()
 
 			if
@@ -139,17 +145,44 @@ struct SourceAppsView: View {
 			}
 		}
 		.toolbar {
-			// Other toolbar items if any, search is provided natively by .searchable
+			if _isSearchPresented {
+				ToolbarItem(placement: .principal) {
+					ToolbarSearchField(
+						text: $_searchText,
+						isPresented: _collectionSearchPresented,
+						focus: $_isSearchFocused,
+						prompt: .localized("Search %@", arguments: _navigationTitle)
+					)
+				}
+				ToolbarItem(placement: .topBarTrailing) {
+					Button {
+						_isSearchFocused = false
+						withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+							_collectionSearchPresented.wrappedValue = false
+							_searchText = ""
+						}
+					} label: {
+						Image(systemName: "xmark")
+					}
+					.accessibilityLabel(.localized("Cancel"))
+				}
+			} else {
+				ToolbarItem(placement: .topBarTrailing) {
+					Button {
+						withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+							_collectionSearchPresented.wrappedValue = true
+						}
+					} label: {
+						Image(systemName: "magnifyingglass")
+					}
+					.accessibilityLabel(.localized("Search"))
+				}
+			}
 		}
-		.searchable(
-			text: $_searchText,
-			isPresented: _collectionSearchPresented,
-			placement: .toolbar,
-			prompt: Text(.localized("Search"))
-		)
-		.searchToolbarBehavior(.minimize)
+		.animation(.spring(response: 0.35, dampingFraction: 0.82), value: _isSearchPresented)
 		.onChange(of: router.searchTarget) { target in
 			if target != .collection(collectionRoute) {
+				_isSearchFocused = false
 				_searchText = ""
 			}
 		}

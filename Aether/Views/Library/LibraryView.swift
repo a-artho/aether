@@ -24,6 +24,7 @@ struct LibraryView: View {
 	@State private var _editMode: EditMode = .inactive
 
 	@State private var _searchText = ""
+	@FocusState private var _isSearchFocused: Bool
 	@ObservedObject private var tabManager = AppTabManager.shared
 
 	@Namespace private var _namespace
@@ -74,7 +75,7 @@ struct LibraryView: View {
 
 	// MARK: Body
 	var body: some View {
-		NBNavigationView(.localized("Library"), displayMode: .inline) {
+		NBNavigationView(tabManager.isLibrarySearchPresented ? "" : .localized("Library"), displayMode: .inline) {
 			NBListAdaptable {
 				if !exportManager.exports.isEmpty {
 					NBSection(.localized("Exports")) {
@@ -165,8 +166,39 @@ struct LibraryView: View {
 						.disabled(_selectedAppUUIDs.isEmpty)
 						.accessibilityLabel(.localized("Delete"))
 					}
+				} else if tabManager.isLibrarySearchPresented {
+					ToolbarItem(placement: .principal) {
+						ToolbarSearchField(
+							text: $_searchText,
+							isPresented: $tabManager.isLibrarySearchPresented,
+							focus: $_isSearchFocused,
+							prompt: .localized("Search %@", arguments: String.localized("Library"))
+						)
+					}
+					ToolbarItem(placement: .topBarTrailing) {
+						Button {
+							_isSearchFocused = false
+							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+								tabManager.isLibrarySearchPresented = false
+								_searchText = ""
+							}
+						} label: {
+							Image(systemName: "xmark")
+						}
+						.accessibilityLabel(.localized("Cancel"))
+					}
 				} else {
 					ToolbarItem(placement: .topBarLeading) {
+						Button {
+							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+								tabManager.isLibrarySearchPresented = true
+							}
+						} label: {
+							Image(systemName: "magnifyingglass")
+						}
+						.accessibilityLabel(.localized("Search"))
+					}
+					ToolbarItem(placement: .topBarTrailing) {
 						Button {
 							_isImportingPresenting = true
 						} label: {
@@ -204,15 +236,10 @@ struct LibraryView: View {
 				}
 			}
 			.environment(\.editMode, $_editMode)
-			.searchable(
-				text: $_searchText,
-				isPresented: $tabManager.isLibrarySearchPresented,
-				placement: .toolbar,
-				prompt: Text(.localized("Search"))
-			)
-			.searchToolbarBehavior(.minimize)
+			.animation(.spring(response: 0.35, dampingFraction: 0.82), value: tabManager.isLibrarySearchPresented)
 			.onChange(of: tabManager.isLibrarySearchPresented) { presented in
 				if !presented {
+					_isSearchFocused = false
 					_searchText = ""
 				}
 			}

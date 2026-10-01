@@ -11,6 +11,7 @@ import NimbleViews
 struct SourcesView: View {
 	@StateObject var viewModel = SourcesViewModel.shared
 	@State private var _searchText = ""
+	@FocusState private var _isSearchFocused: Bool
 	@ObservedObject private var router = SourcesRouter.shared
 
 	private var _filteredSources: [AltSource] {
@@ -99,27 +100,55 @@ struct SourcesView: View {
 					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
 				}
 			}
-			.navigationTitle(.localized("Sources"))
+			.navigationTitle(router.searchTarget == .root ? "" : .localized("Sources"))
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
-				ToolbarItem(placement: .topBarLeading) {
-					Button {
-						router.presentAddSource()
-					} label: {
-						Image(systemName: "plus")
+				if router.searchTarget == .root {
+					ToolbarItem(placement: .principal) {
+						ToolbarSearchField(
+							text: $_searchText,
+							isPresented: _rootSearchPresented,
+							focus: $_isSearchFocused,
+							prompt: .localized("Search %@", arguments: String.localized("Sources"))
+						)
 					}
-					.accessibilityLabel(.localized("Add Source"))
+					ToolbarItem(placement: .topBarTrailing) {
+						Button {
+							_isSearchFocused = false
+							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+								_rootSearchPresented.wrappedValue = false
+								_searchText = ""
+							}
+						} label: {
+							Image(systemName: "xmark")
+						}
+						.accessibilityLabel(.localized("Cancel"))
+					}
+				} else {
+					ToolbarItem(placement: .topBarTrailing) {
+						Button {
+							router.presentAddSource()
+						} label: {
+							Image(systemName: "plus")
+						}
+						.accessibilityLabel(.localized("Add Source"))
+					}
+					ToolbarItem(placement: .topBarLeading) {
+						Button {
+							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+								_rootSearchPresented.wrappedValue = true
+							}
+						} label: {
+							Image(systemName: "magnifyingglass")
+						}
+						.accessibilityLabel(.localized("Search"))
+					}
 				}
 			}
-			.searchable(
-				text: $_searchText,
-				isPresented: _rootSearchPresented,
-				placement: .toolbar,
-				prompt: Text(.localized("Search"))
-			)
-			.searchToolbarBehavior(.minimize)
+			.animation(.spring(response: 0.35, dampingFraction: 0.82), value: router.searchTarget == .root)
 			.onChange(of: router.searchTarget) { target in
 				if target != .root {
+					_isSearchFocused = false
 					_searchText = ""
 				}
 			}
