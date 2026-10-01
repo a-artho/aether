@@ -129,7 +129,10 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		didAttemptRestore = false
 		pendingTransportFailureMessage = nil
 		state = .waitingForDataOff
-		UserDefaults.standard.set(false, forKey: Self.restoreKey)
+		// Record the restore debt before launching Shortcuts. If Aether or
+		// Shortcuts is terminated after Mobile Data changes but before the
+		// callback arrives, the next foreground can still restore it.
+		UserDefaults.standard.set(true, forKey: Self.restoreKey)
 		_startShortcut(.off)
 		return true
 	}
@@ -293,6 +296,9 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 	private func _startShortcut(_ command: Command) {
 		guard _shortcutsAvailable() else {
+			if command == .off {
+				UserDefaults.standard.set(false, forKey: Self.restoreKey)
+			}
 			_disableForMissingShortcuts()
 			return
 		}
@@ -327,6 +333,9 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		guard let url = request.url else { return }
 		UIApplication.shared.open(url, options: [:]) { [weak self] opened in
 			guard let self, !opened, self.operationID == id, self.activeCommand == command else { return }
+			if command == .off {
+				UserDefaults.standard.set(false, forKey: Self.restoreKey)
+			}
 			self._disableForMissingShortcuts()
 		}
 	}
