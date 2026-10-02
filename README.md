@@ -42,6 +42,7 @@ Get the latest IPA from the [releases page](https://github.com/a-artho/Aether/re
 ## Acknowledgements
 
 - [Feather](https://github.com/claration/feather) by Samara — the project Aether was originally forked from.
+- [Locus](https://github.com/ChrisMack32/Locus) by ChrisMack32 — the original location-spoofing app that Aether's spoofing feature is adapted from.
 - [idevice](https://github.com/jkcoxson/idevice) — device communication.
 - [Vapor](https://github.com/vapor/vapor) — local HTTP server support.
 - [Zsign](https://github.com/zhlynn/zsign) — on-device code signing support.
