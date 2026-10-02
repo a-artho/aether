@@ -15,6 +15,8 @@ Aether started as a fork of [Feather](https://github.com/claration/feather) by S
 
 **Requires iOS 26+.** Aether's navigation and controls are built around iOS 26's Liquid Glass UI. Supporting older versions would mean keeping a separate UI path and testing both whenever those screens change—not just lowering the deployment target. This started as an app for my own use, so I chose one baseline I can actually test and maintain. Also, I'm lazy. Native iPad support was dropped too; I'm focusing on iPhone for now.
 
+**Signing:** The built-in tunnel needs a paid certificate and the `packet-tunnel-provider` and `allow-vpn` entitlements.
+
 ## Screenshots
 
 <p align="center">
