@@ -8,7 +8,7 @@
 import AltSourceKit
 import CoreData
 import Foundation
-import NimbleJSON
+import OSLog
 
 struct AppUpdate: Identifiable, Equatable {
 	let id: String
@@ -26,13 +26,11 @@ struct AppUpdate: Identifiable, Equatable {
 final class UpdateManager: ObservableObject {
 	static let shared = UpdateManager()
 	
-	typealias RepositoryDataHandler = Result<ASRepository, Error>
-	
 	@Published private(set) var updates: [String: AppUpdate] = [:]
 	@Published private(set) var isChecking = false
 	@Published private(set) var lastCheckedDate: Date?
 	
-	private let _dataService = NBFetchService()
+	private let _repositoryService = SourceRepositoryService.shared
 	
 	private init() {}
 	
@@ -65,29 +63,20 @@ final class UpdateManager: ObservableObject {
 				continue
 			}
 			
-			guard let repository = await _fetchRepository(from: url) else {
-				continue
-			}
-			
-			repositories.append((source, repository))
-		}
-		
-		return repositories
-	}
-	
-	private func _fetchRepository(from url: URL) async -> ASRepository? {
-		await withCheckedContinuation { continuation in
-			_dataService.fetch(from: url) { (result: RepositoryDataHandler) in
-				switch result {
-				case .success(let repository):
-					continuation.resume(returning: repository)
-				case .failure:
-					continuation.resume(returning: nil)
+			do {
+				let snapshot = try await _repositoryService.fetch(from: url, allowEmptyCatalog: true)
+				SourcesViewModel.shared.cache(snapshot, for: source)
+				repositories.append((source, snapshot.repository))
+			} catch {
+				Logger.misc.error("Source update check failed: \(url.absoluteString): \(error.localizedDescription)")
+				if let snapshot = await _repositoryService.cached(for: url) {
+					repositories.append((source, snapshot.repository))
 				}
 			}
 		}
+		return repositories
 	}
-	
+
 	private func _findUpdates(
 		repositories: [(AltSource, ASRepository)],
 		localApps: [AppInfoPresentable]

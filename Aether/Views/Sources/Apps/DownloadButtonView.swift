@@ -22,9 +22,14 @@ struct DownloadButtonView: View {
 	var style: Style = .compact
 	@ObservedObject private var downloadManager = DownloadManager.shared
 
+	private var currentDownload: Download? {
+		guard let url = app.currentDownloadUrl else { return nil }
+		return downloadManager.getDownload(from: url, sourceProvenance: _sourceProvenance())
+	}
+
 	var body: some View {
 		ZStack {
-			if let currentDownload = downloadManager.getDownload(by: app.currentUniqueId) {
+			if let currentDownload {
 				DownloadProgressButton(download: currentDownload)
 					.compatTransition()
 			} else {
@@ -40,7 +45,13 @@ struct DownloadButtonView: View {
 					}
 				} label: {
 					switch style {
-					case .compact, .prominent:
+					case .compact:
+						Image(systemName: "icloud.and.arrow.down")
+							.font(.system(size: 18, weight: .semibold))
+							.foregroundStyle(_themeColor)
+							.frame(width: 44, height: 44)
+							.contentShape(Rectangle())
+					case .prominent:
 						Image(systemName: "icloud.and.arrow.down")
 							.font(.footnote.bold())
 							.foregroundStyle(_themeColor)
@@ -60,7 +71,7 @@ struct DownloadButtonView: View {
 				.compatTransition()
 			}
 		}
-		.animation(.easeInOut(duration: 0.3), value: downloadManager.getDownload(by: app.currentUniqueId) != nil)
+		.animation(.easeInOut(duration: 0.3), value: currentDownload != nil)
 	}
 
 	private var _themeColor: Color {

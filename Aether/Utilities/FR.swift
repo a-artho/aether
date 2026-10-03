@@ -266,9 +266,10 @@ enum FR {
 			return
 		}
 		
-		NBFetchService().fetch<ASRepository>(from: url) { (result: Result<ASRepository, Error>) in
-			switch result {
-			case .success(let data):
+		Task {
+			do {
+				let snapshot = try await SourceRepositoryService.shared.fetch(from: url)
+				let data = snapshot.repository
 				let id = data.id ?? url.absoluteString
 
 				DispatchQueue.main.async {
@@ -289,7 +290,7 @@ enum FR {
 						completion?(false)
 					}
 				}
-			case .failure(let error):
+			} catch {
 				DispatchQueue.main.async {
 					UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
 					completion?(false)

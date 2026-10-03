@@ -9,9 +9,14 @@ import SwiftUI
 import NimbleViews
 
 struct SourcesView: View {
+	@Environment(\.scenePhase) private var _scenePhase
 	@StateObject var viewModel = SourcesViewModel.shared
 	@State private var _searchText = ""
-	@FocusState private var _isSearchFocused: Bool
+	@State private var _refreshErrorMessage: String?
+	@State private var _toolbarWidth: CGFloat = 320
+	@State private var _isSearchFocused = false
+	// Keep the collection keyboard state outside the pushed destination.
+	@State private var _isCollectionSearchFocused = false
 	@ObservedObject private var router = SourcesRouter.shared
 
 	private var _filteredSources: [AltSource] {
@@ -61,7 +66,13 @@ struct SourcesView: View {
 						.listRowSeparator(.hidden)
 					}
 
-					NBSection(.localized("Repos")) {
+					NBSection(.localized("Repos"), trailing: {
+						SourceRefreshStatusView(
+							lastUpdated: viewModel.lastUpdated,
+							isRefreshing: !viewModel.isFinished,
+							hasFailures: !viewModel.refreshErrors.isEmpty
+						)
+					}) {
 						ForEach(_filteredSources) { source in
 							NavigationLink(
 								value: SourcesRouter.Route.collection(
@@ -75,7 +86,7 @@ struct SourcesView: View {
 					}
 				}
 			}
-			.scrollDismissesKeyboard(.interactively)
+			.scrollDismissesKeyboard(.immediately)
 			.overlay {
 				if _sources.isEmpty {
 					TabPlaceholderView(
@@ -100,53 +111,21 @@ struct SourcesView: View {
 					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
 				}
 			}
-			.navigationTitle(router.searchTarget == .root ? "" : .localized("Sources"))
 			.navigationBarTitleDisplayMode(.inline)
-			.toolbar {
-				if router.searchTarget == .root {
-					ToolbarItem(placement: .principal) {
-						ToolbarSearchField(
-							text: $_searchText,
-							isPresented: _rootSearchPresented,
-							focus: $_isSearchFocused,
-							prompt: .localized("Search %@", arguments: String.localized("Sources"))
-						)
-					}
-					ToolbarItem(placement: .topBarTrailing) {
-						Button {
-							_isSearchFocused = false
-							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-								_rootSearchPresented.wrappedValue = false
-								_searchText = ""
-							}
-						} label: {
-							Image(systemName: "xmark")
-						}
-						.accessibilityLabel(.localized("Cancel"))
-					}
-				} else {
-					ToolbarItem(placement: .topBarTrailing) {
-						Button {
-							router.presentAddSource()
-						} label: {
-							Image(systemName: "plus")
-						}
-						.accessibilityLabel(.localized("Add Source"))
-					}
-					ToolbarItem(placement: .topBarLeading) {
-						Button {
-							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-								_rootSearchPresented.wrappedValue = true
-							}
-						} label: {
-							Image(systemName: "magnifyingglass")
-						}
-						.accessibilityLabel(.localized("Search"))
-					}
-				}
-			}
-			.animation(.spring(response: 0.35, dampingFraction: 0.82), value: router.searchTarget == .root)
+			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _toolbarWidth = $0 }
+			.modifier(SearchToolbarModifier(
+				text: $_searchText, isPresented: _rootSearchPresented,
+				focus: $_isSearchFocused, title: .localized("Sources"), width: _toolbarWidth, hasTitleMenu: false,
+				secondaryLabel: .localized("Add Source"),
+				secondaryAction: { router.presentAddSource() }
+			) { EmptyView() })
 			.onChange(of: router.searchTarget) { target in
+				switch target {
+				case .some(.collection(_)):
+					break
+				default:
+					_isCollectionSearchFocused = false
+				}
 				if target != .root {
 					_isSearchFocused = false
 					_searchText = ""
@@ -154,6 +133,20 @@ struct SourcesView: View {
 			}
 			.refreshable {
 				await viewModel.fetchSources(_sources, refresh: true)
+				let failures = _sources.compactMap { source -> String? in
+					let key = source.objectID.uriRepresentation().absoluteString
+					guard let error = viewModel.refreshErrors[key] else { return nil }
+					return "\(source.name ?? source.sourceURL?.absoluteString ?? "Source"): \(error)"
+				}
+				_refreshErrorMessage = failures.isEmpty ? nil : failures.joined(separator: "\n\n")
+			}
+			.alert(.localized("Refresh Failed"), isPresented: Binding(
+				get: { _refreshErrorMessage != nil },
+				set: { if !$0 { _refreshErrorMessage = nil } }
+			)) {
+				Button(.localized("OK"), role: .cancel) { _refreshErrorMessage = nil }
+			} message: {
+				Text(_refreshErrorMessage ?? "")
 			}
 			.navigationDestination(for: SourcesRouter.Route.self) { route in
 				switch route {
@@ -162,7 +155,8 @@ struct SourcesView: View {
 						object: Array(_sources),
 						viewModel: viewModel,
 						isAllRepos: true,
-						collectionRoute: .allRepos
+						collectionRoute: .allRepos,
+						searchFocus: $_isCollectionSearchFocused
 					)
 				case .collection(.source(let objectURI)):
 					if let source = _source(withObjectURI: objectURI) {
@@ -170,7 +164,8 @@ struct SourcesView: View {
 							object: [source],
 							viewModel: viewModel,
 							isAllRepos: false,
-							collectionRoute: .source(objectURI: objectURI)
+							collectionRoute: .source(objectURI: objectURI),
+							searchFocus: $_isCollectionSearchFocused
 						)
 					} else {
 						_unavailableSourceView()
@@ -193,8 +188,13 @@ struct SourcesView: View {
 		.onChange(of: _sourceIdentitySnapshot) { _ in
 			_resolvePendingNavigationIntent()
 		}
-		.task(id: Array(_sources)) {
-			await viewModel.fetchSources(_sources)
+		.task(id: _sourceIdentitySnapshot) {
+			await viewModel.refreshIfNeeded(Array(_sources))
+		}
+		.task(id: _scenePhase) {
+			if _scenePhase == .active {
+				await viewModel.refreshIfNeeded(Array(_sources))
+			}
 		}
 	}
 
@@ -209,10 +209,17 @@ struct SourcesView: View {
 	) -> some View {
 		if
 			let source = _source(withObjectURI: sourceObjectURI),
-			let repository = viewModel.repository(for: source),
-			let app = _app(matching: appLocator, in: repository)
+			let repository = viewModel.repository(for: source)
 		{
-			SourceAppsDetailView(sourceURL: source.sourceURL, source: repository, app: app)
+			if let app = _app(matching: appLocator, in: repository) {
+				SourceAppsDetailView(sourceURL: source.sourceURL, source: repository, app: app)
+			} else {
+				TabPlaceholderView(
+					title: .localized("App Unavailable"),
+					description: .localized("This app is no longer available in this source."),
+					systemImage: "exclamationmark.triangle"
+				)
+			}
 		} else {
 			ProgressView()
 		}

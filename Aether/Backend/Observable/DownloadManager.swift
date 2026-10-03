@@ -5,6 +5,7 @@
 
 import Combine
 import Foundation
+import UIKit
 
 class Download: ObservableObject, Identifiable, @unchecked Sendable {
 	enum FailureAction: String, Codable, Equatable, Sendable {
@@ -86,6 +87,7 @@ class Download: ObservableObject, Identifiable, @unchecked Sendable {
 	}
 }
 
+@MainActor
 class DownloadManager: NSObject, ObservableObject {
 	static let shared = DownloadManager()
 
@@ -147,10 +149,7 @@ class DownloadManager: NSObject, ObservableObject {
 		id logicalIdentifier: String = UUID().uuidString,
 		sourceProvenance: SourceAppProvenance? = nil
 	) async -> Download {
-		let identity = _downloadIdentity(url: url, provenance: sourceProvenance)
-		if let existingDownload = downloads.first(where: {
-			_downloadIdentity(url: $0.url, provenance: $0.sourceProvenance) == identity
-		}) {
+		if let existingDownload = getDownload(from: url, sourceProvenance: sourceProvenance) {
 			return existingDownload
 		}
 
@@ -295,6 +294,15 @@ class DownloadManager: NSObject, ObservableObject {
 	/// Returns a transfer for the caller's logical source/app identifier.
 	func getDownload(by logicalIdentifier: String) -> Download? {
 		downloads.first(where: { $0.logicalIdentifier == logicalIdentifier })
+	}
+
+	/// UI lookup and transfer deduplication must use the same identity. A caller's
+	/// model UUID can change when a source is refreshed or an app is decoded again.
+	func getDownload(from url: URL, sourceProvenance: SourceAppProvenance?) -> Download? {
+		let identity = _downloadIdentity(url: url, provenance: sourceProvenance)
+		return downloads.first {
+			_downloadIdentity(url: $0.url, provenance: $0.sourceProvenance) == identity
+		}
 	}
 
 	private func _getDownload(transferIdentifier: String) -> Download? {
@@ -710,7 +718,9 @@ class DownloadManager: NSObject, ObservableObject {
 	}
 }
 
-extension DownloadManager: URLSessionDownloadDelegate {
+// This session is created with delegateQueue: .main. Keep callbacks synchronous:
+// the downloaded temporary file must be moved before its delegate method returns.
+extension DownloadManager: @preconcurrency URLSessionDownloadDelegate {
 	func urlSession(
 		_ session: URLSession,
 		downloadTask: URLSessionDownloadTask,

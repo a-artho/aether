@@ -24,7 +24,8 @@ struct LibraryView: View {
 	@State private var _editMode: EditMode = .inactive
 
 	@State private var _searchText = ""
-	@FocusState private var _isSearchFocused: Bool
+	@State private var _toolbarWidth: CGFloat = 320
+	@State private var _isSearchFocused = false
 	@ObservedObject private var tabManager = AppTabManager.shared
 
 	@Namespace private var _namespace
@@ -75,7 +76,7 @@ struct LibraryView: View {
 
 	// MARK: Body
 	var body: some View {
-		NBNavigationView(tabManager.isLibrarySearchPresented ? "" : .localized("Library"), displayMode: .inline) {
+		NBNavigationView(.localized("Library"), displayMode: .inline) {
 			NBListAdaptable {
 				if !exportManager.exports.isEmpty {
 					NBSection(.localized("Exports")) {
@@ -121,7 +122,7 @@ struct LibraryView: View {
 					}
 				}
 			}
-			.scrollDismissesKeyboard(.interactively)
+			.scrollDismissesKeyboard(.immediately)
 			.overlay {
 				if _libraryIsEmpty {
 					TabPlaceholderView(
@@ -146,6 +147,7 @@ struct LibraryView: View {
 					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
 				}
 			}
+			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _toolbarWidth = $0 }
 			.toolbar {
 				if _editMode.isEditing {
 					ToolbarItem(placement: .topBarLeading) {
@@ -166,77 +168,16 @@ struct LibraryView: View {
 						.disabled(_selectedAppUUIDs.isEmpty)
 						.accessibilityLabel(.localized("Delete"))
 					}
-				} else if tabManager.isLibrarySearchPresented {
-					ToolbarItem(placement: .principal) {
-						ToolbarSearchField(
-							text: $_searchText,
-							isPresented: $tabManager.isLibrarySearchPresented,
-							focus: $_isSearchFocused,
-							prompt: .localized("Search %@", arguments: String.localized("Library"))
-						)
-					}
-					ToolbarItem(placement: .topBarTrailing) {
-						Button {
-							_isSearchFocused = false
-							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-								tabManager.isLibrarySearchPresented = false
-								_searchText = ""
-							}
-						} label: {
-							Image(systemName: "xmark")
-						}
-						.accessibilityLabel(.localized("Cancel"))
-					}
-				} else {
-					ToolbarItem(placement: .topBarLeading) {
-						Button {
-							withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-								tabManager.isLibrarySearchPresented = true
-							}
-						} label: {
-							Image(systemName: "magnifyingglass")
-						}
-						.accessibilityLabel(.localized("Search"))
-					}
-					ToolbarItem(placement: .topBarTrailing) {
-						Button {
-							_isImportingPresenting = true
-						} label: {
-							Image(systemName: "plus")
-						}
-						.accessibilityLabel(.localized("Add"))
-					}
-
-					ToolbarTitleMenu {
-						Button {
-							withAnimation {
-								_editMode = .active
-							}
-						} label: {
-							Label {
-								Text(.localized("Select"))
-							} icon: {
-								Image(systemName: "checkmark.circle")
-							}
-						}
-
-						Divider()
-
-						Button(role: .destructive) {
-							_isDeleteAllAlertPresented = true
-						} label: {
-							Label {
-								Text(.localized("Delete All"))
-							} icon: {
-								Image(systemName: "trash")
-							}
-						}
-						.disabled(_signedApps.isEmpty && _importedApps.isEmpty)
-					}
 				}
 			}
+			.modifier(SearchToolbarModifier(
+				text: $_searchText, isPresented: $tabManager.isLibrarySearchPresented,
+				focus: $_isSearchFocused, title: .localized("Library"), width: _toolbarWidth,
+				enabled: !_editMode.isEditing,
+				secondaryAction: { _isImportingPresenting = true }
+			) { _titleMenuActions() })
+
 			.environment(\.editMode, $_editMode)
-			.animation(.spring(response: 0.35, dampingFraction: 0.82), value: tabManager.isLibrarySearchPresented)
 			.onChange(of: tabManager.isLibrarySearchPresented) { presented in
 				if !presented {
 					_isSearchFocused = false
@@ -279,6 +220,22 @@ struct LibraryView: View {
 			}
 		}
 	}
+	@ViewBuilder
+	private func _titleMenuActions() -> some View {
+		Button {
+			withAnimation { _editMode = .active }
+		} label: {
+			Label(.localized("Select"), systemImage: "checkmark.circle")
+		}
+		Divider()
+		Button(role: .destructive) {
+			_isDeleteAllAlertPresented = true
+		} label: {
+			Label(.localized("Delete All"), systemImage: "trash")
+		}
+		.disabled(_signedApps.isEmpty && _importedApps.isEmpty)
+	}
+
 }
 
 // MARK: - Extension: Bulk Delete

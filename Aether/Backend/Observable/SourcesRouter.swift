@@ -113,7 +113,6 @@ final class SourcesRouter: ObservableObject {
 		appLocator: AppLocator
 	) {
 		pendingAppRequest = nil
-		searchTarget = nil
 
 		let parentRoute = Route.collection(parent)
 		if path.last != parentRoute {
@@ -153,7 +152,8 @@ final class SourcesRouter: ObservableObject {
 				self.searchTarget = nil
 			}
 		case .collection(let collection):
-			if path.last != .collection(collection) {
+			// Keep the parent search session while its app details are on the stack.
+			if !path.contains(.collection(collection)) {
 				self.searchTarget = nil
 			}
 		}

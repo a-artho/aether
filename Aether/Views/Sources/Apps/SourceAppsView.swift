@@ -33,7 +33,7 @@ struct SourceAppsView: View {
 	@State var isLoading = true
 	@State var hasLoadedOnce = false
 	@State private var _searchText = ""
-	@FocusState private var _isSearchFocused: Bool
+	@State private var _toolbarWidth: CGFloat = 320
 	@ObservedObject private var router = SourcesRouter.shared
 
 	private var _isSearchPresented: Bool {
@@ -52,7 +52,9 @@ struct SourceAppsView: View {
 	@ObservedObject var viewModel: SourcesViewModel
 	var isAllRepos: Bool = false
 	let collectionRoute: SourcesRouter.CollectionRoute
+	var searchFocus: Binding<Bool>
 	@State private var _sourceContexts: [SourceRepositoryContext]?
+	@State private var _loadedCatalogRevision: Int?
 
 	private var _collectionSearchPresented: Binding<Bool> {
 		Binding(
@@ -73,7 +75,7 @@ struct SourceAppsView: View {
 		ZStack {
 			if
 				let _sourceContexts,
-				!_sourceContexts.isEmpty
+				_sourceContexts.contains(where: { !$0.repository.apps.isEmpty })
 			{
 				SourceAppsTableRepresentableView(
 					sourceContexts: _sourceContexts,
@@ -82,6 +84,7 @@ struct SourceAppsView: View {
 					sortAscending: _sortOption == .name,
 					showSourceBadge: isAllRepos,
 					onSelect: { selection in
+						searchFocus.wrappedValue = false
 						router.openResolvedApp(
 							parent: collectionRoute,
 							sourceObjectURI: selection.sourceObjectURI,
@@ -100,91 +103,22 @@ struct SourceAppsView: View {
 				)
 			}
 		}
-		.navigationTitle(_isSearchPresented ? "" : _navigationTitle)
-		.navigationBarBackButtonHidden(_isSearchPresented)
-		.toolbarTitleMenuIf(!_isSearchPresented) {
-			_sortActions()
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+		.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _toolbarWidth = $0 }
+		.modifier(SearchToolbarModifier(
+			text: $_searchText, isPresented: _collectionSearchPresented,
+			focus: searchFocus, title: _navigationTitle, width: _toolbarWidth,
+			searchOnLeading: false
+		) { _titleMenuActions() })
 
-			if
-				let _sourceContexts,
-				_sourceContexts.count == 1
-			{
-				Section {
-					if let url = _sourceContexts[0].repository.website {
-						Button(.localized("Visit Website"), systemImage: "globe") {
-							UIApplication.open(url)
-						}
-					}
-
-					if let url = _sourceContexts[0].repository.patreonURL {
-						Button(.localized("Visit Patreon"), systemImage: "dollarsign.circle") {
-							UIApplication.open(url)
-						}
-					}
-
-					Button(.localized("Copy"), systemImage: "doc.on.doc") {
-						guard !object.isEmpty else {
-							UIAlertController.showAlertWithOk(
-								title: .localized("Error"),
-								message: .localized("No sources to copy")
-							)
-							return
-						}
-						UIPasteboard.general.string = object.compactMap {
-							$0.sourceURL?.absoluteString
-						}.joined(separator: "\n")
-						UIAlertController.showAlertWithOk(
-							title: .localized("Success"),
-							message: .localized("Sources copied to clipboard")
-						)
-					}
-				}
-			}
-		}
-		.toolbar {
-			if _isSearchPresented {
-				ToolbarItem(placement: .principal) {
-					ToolbarSearchField(
-						text: $_searchText,
-						isPresented: _collectionSearchPresented,
-						focus: $_isSearchFocused,
-						prompt: .localized("Search %@", arguments: _navigationTitle)
-					)
-				}
-				ToolbarItem(placement: .topBarTrailing) {
-					Button {
-						_isSearchFocused = false
-						withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-							_collectionSearchPresented.wrappedValue = false
-							_searchText = ""
-						}
-					} label: {
-						Image(systemName: "xmark")
-					}
-					.accessibilityLabel(.localized("Cancel"))
-				}
-			} else {
-				ToolbarItem(placement: .topBarTrailing) {
-					Button {
-						withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
-							_collectionSearchPresented.wrappedValue = true
-						}
-					} label: {
-						Image(systemName: "magnifyingglass")
-					}
-					.accessibilityLabel(.localized("Search"))
-				}
-			}
-		}
-		.animation(.spring(response: 0.35, dampingFraction: 0.82), value: _isSearchPresented)
 		.onChange(of: router.searchTarget) { target in
 			if target != .collection(collectionRoute) {
-				_isSearchFocused = false
+				searchFocus.wrappedValue = false
 				_searchText = ""
 			}
 		}
 		.onAppear {
-			if !hasLoadedOnce, viewModel.isFinished {
+			if !hasLoadedOnce, viewModel.isFinished || object.contains(where: { viewModel.repository(for: $0) != nil }) {
 				_load()
 				hasLoadedOnce = true
 			}
@@ -192,8 +126,15 @@ struct SourceAppsView: View {
 				? .latest
 				: SortOption(rawValue: _sortOptionRawValue) ?? .latest
 		}
-		.onChange(of: viewModel.isFinished) { _ in
+		.task {
+			await viewModel.ensureSourcesLoaded(object)
 			_load()
+		}
+		.onChange(of: viewModel.isFinished) { finished in
+			if finished { _load() }
+		}
+		.onChange(of: viewModel.catalogRevision) { _ in
+			if object.contains(where: { viewModel.repository(for: $0) != nil }) { _load() }
 		}
 		.onChange(of: _sortOption) { newValue in
 			_sortOptionRawValue = newValue.rawValue
@@ -203,7 +144,34 @@ struct SourceAppsView: View {
 		}
 	}
 	
+	@ViewBuilder
+	private func _titleMenuActions() -> some View {
+			_sortActions()
+			if let _sourceContexts, _sourceContexts.count == 1 {
+				Section {
+					if let url = _sourceContexts[0].repository.website {
+						Button(.localized("Visit Website"), systemImage: "globe") { UIApplication.open(url) }
+					}
+					if let url = _sourceContexts[0].repository.patreonURL {
+						Button(.localized("Visit Patreon"), systemImage: "dollarsign.circle") { UIApplication.open(url) }
+					}
+					Button(.localized("Copy"), systemImage: "doc.on.doc") {
+						guard !object.isEmpty else {
+							UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("No sources to copy"))
+							return
+						}
+						UIPasteboard.general.string = object.compactMap { $0.sourceURL?.absoluteString }.joined(separator: "\n")
+						UIAlertController.showAlertWithOk(title: .localized("Success"), message: .localized("Sources copied to clipboard"))
+					}
+				}
+			}
+	}
+
 	private func _load() {
+		guard _loadedCatalogRevision != viewModel.catalogRevision else {
+			_consumePendingAppRequestIfPossible()
+			return
+		}
 		isLoading = true
 
 		let loadedSources = object.compactMap { source -> SourceRepositoryContext? in
@@ -211,10 +179,12 @@ struct SourceAppsView: View {
 			return SourceRepositoryContext(
 				sourceObjectURI: source.objectID.uriRepresentation().absoluteString,
 				sourceURL: source.sourceURL,
-				repository: repository
+				repository: repository,
+				revision: viewModel.revision(for: source)
 			)
 		}
 		_sourceContexts = loadedSources
+		_loadedCatalogRevision = viewModel.catalogRevision
 		withAnimation(.easeIn(duration: 0.2)) {
 			isLoading = false
 		}
@@ -252,34 +222,8 @@ struct SourceAppsView: View {
 		)
 	}
 	
-	struct SourceRepositoryContext: Equatable {
-		let sourceObjectURI: String
-		let sourceURL: URL?
-		let repository: ASRepository
-		private let appFingerprint: String
+	typealias SourceRepositoryContext = SourceAppCatalogContext
 
-		init(sourceObjectURI: String, sourceURL: URL?, repository: ASRepository) {
-			self.sourceObjectURI = sourceObjectURI
-			self.sourceURL = sourceURL
-			self.repository = repository
-			var fingerprint = ""
-			for app in repository.apps {
-				let identifier = app.currentUniqueId
-				let version = app.currentVersion ?? ""
-				fingerprint += "\(identifier.utf8.count):\(identifier)\u{1e}\(version.utf8.count):\(version)\u{1f}"
-			}
-			self.appFingerprint = fingerprint
-		}
-		
-		static func == (lhs: SourceRepositoryContext, rhs: SourceRepositoryContext) -> Bool {
-			lhs.sourceObjectURI == rhs.sourceObjectURI &&
-			lhs.sourceURL == rhs.sourceURL &&
-			lhs.repository.id == rhs.repository.id &&
-			lhs.repository.name == rhs.repository.name &&
-			lhs.appFingerprint == rhs.appFingerprint
-		}
-	}
-	
 	struct SourceAppSelection: Hashable {
 		let sourceObjectURI: String
 		let appLocator: SourcesRouter.AppLocator
@@ -321,17 +265,5 @@ extension View {
 		@ViewBuilder destination: @escaping (Item) -> Destination
 	) -> some View {
 		self.navigationDestination(item: item, destination: destination)
-	}
-
-	@ViewBuilder
-	func toolbarTitleMenuIf<Content: View>(
-		_ condition: Bool,
-		@ViewBuilder content: () -> Content
-	) -> some View {
-		if condition {
-			self.toolbarTitleMenu(content: content)
-		} else {
-			self
-		}
 	}
 }

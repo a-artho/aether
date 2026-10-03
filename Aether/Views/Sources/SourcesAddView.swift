@@ -8,16 +8,12 @@
 import SwiftUI
 import NimbleViews
 import AltSourceKit
-import NimbleJSON
 import OSLog
 import UIKit.UIImpactFeedbackGenerator
 
 // MARK: - View
 struct SourcesAddView: View {
-	typealias RepositoryDataHandler = Result<ASRepository, Error>
 	@Environment(\.dismiss) var dismiss
-
-	private let _dataService = NBFetchService()
 
 	@State private var _isImporting = false
 	@State private var _isSaving = false
@@ -194,21 +190,17 @@ struct SourcesAddView: View {
 		from urls: [URL]
 	) async -> [(url: URL, data: ASRepository)] {
 		var results: [(url: URL, data: ASRepository)] = []
-		let dataService = _dataService
+		let service = SourceRepositoryService.shared
 		
 		await withTaskGroup(of: (url: URL, data: ASRepository)?.self) { group in
 			for url in urls {
 				group.addTask {
-					await withCheckedContinuation { continuation in
-						dataService.fetch<ASRepository>(from: url) { (result: RepositoryDataHandler) in
-							switch result {
-							case .success(let repo):
-								continuation.resume(returning: (url: url, data: repo))
-							case .failure(let error):
-								Logger.misc.error("Failed to fetch \(url): \(error.localizedDescription)")
-								continuation.resume(returning: nil)
-							}
-						}
+					do {
+						let snapshot = try await service.fetch(from: url)
+						return (url: url, data: snapshot.repository)
+					} catch {
+						Logger.misc.error("Failed to fetch \(url): \(error.localizedDescription)")
+						return nil
 					}
 				}
 			}

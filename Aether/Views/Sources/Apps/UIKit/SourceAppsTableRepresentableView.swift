@@ -7,6 +7,14 @@
 
 import SwiftUI
 import AltSourceKit
+import UIKit
+
+private final class SourceAppTableCell: UITableViewCell {
+	// These rows have no responder editing actions. Their copy/download menus are
+	// supplied by the table delegate. UIKit's default implementation searches its
+	// tentative-cell map for each accessibility attribute, quadratically on large lists.
+	override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool { false }
+}
 
 // MARK: - Representable
 struct SourceAppsTableRepresentableView: UIViewRepresentable {
@@ -20,17 +28,19 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	func makeUIView(context: Context) -> UITableView {
 		let tableView = UITableView(frame: .zero, style: .plain)
 		tableView.delegate = context.coordinator
-		tableView.dataSource = context.coordinator
-		tableView.register(UITableViewCell.self, forCellReuseIdentifier: "AppCell")
+		context.coordinator.attach(to: tableView)
+		tableView.register(SourceAppTableCell.self, forCellReuseIdentifier: "AppCell")
 		tableView.register(UITableViewHeaderFooterView.self, forHeaderFooterViewReuseIdentifier: "SectionHeader")
 
+		// Explicit estimates let large catalogs lay out visible rows/headers first.
+		tableView.estimatedRowHeight = 80
+		tableView.estimatedSectionHeaderHeight = 32
+		tableView.rowHeight = UITableView.automaticDimension
+		tableView.sectionHeaderHeight = UITableView.automaticDimension
 		tableView.allowsSelection = true
+		tableView.keyboardDismissMode = .onDrag
 
 		tableView.alpha = 0
-		
-		UIView.transition(with: tableView,  duration: 0.5, options: [.transitionCrossDissolve], animations: {
-			tableView.alpha = 1
-		}, completion: nil)
 		
 		return tableView
 	}
@@ -52,7 +62,12 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		context.coordinator.updateNewsHeader(for: tableView)
 		
 		if sourcesChanged || searchChanged || sortOptionChanged || sortDirectionChanged || badgeChanged {
-			context.coordinator.invalidateCache(debouncingSearch: searchChanged && !sourcesChanged && !sortOptionChanged && !sortDirectionChanged && !badgeChanged)
+			context.coordinator.prepareList(
+				debouncingSearch: searchChanged && !sourcesChanged && !sortOptionChanged && !sortDirectionChanged && !badgeChanged,
+				preserveScroll: sourcesChanged && !searchChanged && !sortOptionChanged && !sortDirectionChanged,
+				refreshVisibleRows: badgeChanged,
+				fadeSearchResults: searchChanged
+			)
 		}
 	}
 	
@@ -69,7 +84,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 }
 
 // MARK: - Representable Extension: Coordinator
-extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITableViewDataSource, UITableViewDelegate {
+extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObject, UITableViewDelegate {
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
 	var searchText: String
 	var sortOption: SourceAppsView.SortOption
@@ -77,39 +92,27 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	var showSourceBadge: Bool
 	let onSelect: (SourceAppsView.SourceAppSelection) -> Void
 	
-	private var _groupedAppsByNameFirstLetter: [String: [SourceAppEntry]] = [:]
-	private var _groupedAppsByDate: [String: [SourceAppEntry]] = [:]
-	private var _sortedSectionTitles: [String] = []
-	private let _unknownDateSectionTitle = String.localized("Unknown Date")
-	
-	private var _cachedSortedApps: [SourceAppEntry]?
-	private var _searchReloadWorkItem: DispatchWorkItem?
+	private var _dataSource: DataSource?
+	private var _displayed: PreparedSourceAppList?
+	private var _previousDisplay: PreparedSourceAppList?
+	private var _prepareTask: Task<Void, Never>?
+	private var _generation = 0
+	private var _hasAppliedList = false
 	private var _newsHeaderController: UIHostingController<SourceNewsView>?
 	private var _newsHeaderSignature: String?
 	private var _newsHeaderWidth: CGFloat = 0
 	weak var uiTableView: UITableView?
-	
-	private var _allAppsWithSource: [SourceAppEntry] {
-			sourceContexts.flatMap { context in
-			context.repository.apps.map {
-				SourceAppEntry(
-					sourceObjectURI: context.sourceObjectURI,
-					sourceURL: context.sourceURL,
-					source: context.repository,
-					app: $0
-				)
-			}
+
+	private class DataSource: UITableViewDiffableDataSource<String, SourceAppRowID> {
+		var showsAlphabeticalIndex = false
+		override func sectionIndexTitles(for tableView: UITableView) -> [String]? {
+			showsAlphabeticalIndex ? snapshot().sectionIdentifiers : nil
+		}
+		override func tableView(_ tableView: UITableView, sectionForSectionIndexTitle title: String, at index: Int) -> Int {
+			snapshot().sectionIdentifiers.firstIndex(of: title) ?? 0
 		}
 	}
-	
-	private var _sortedApps: [SourceAppEntry] {
-		if let _cachedSortedApps {
-			return _cachedSortedApps
-		}
-		_cachedSortedApps = _calculateSortedApps()
-		return _cachedSortedApps ?? []
-	}
-	
+
 	init(
 		sourceContexts: [SourceAppsView.SourceRepositoryContext],
 		searchText: String,
@@ -126,107 +129,115 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		self.onSelect = onSelect
 		super.init()
 		
-		invalidateCache()
 	}
 	
-	private func _calculateSortedApps() -> [SourceAppEntry] {
-		let filtered = _allAppsWithSource.filter {
-			searchText.isEmpty ||
-			($0.app.id?.range(of: searchText, options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US")) != nil) ||
-				($0.app.name?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-				($0.app.description?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-				($0.app.subtitle?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-				($0.app.localizedDescription?.localizedCaseInsensitiveContains(searchText) ?? false)
+	deinit { _prepareTask?.cancel() }
+
+	func attach(to tableView: UITableView) {
+		uiTableView = tableView
+		_dataSource = DataSource(tableView: tableView) { [weak self] table, indexPath, id in
+			let cell = table.dequeueReusableCell(withIdentifier: "AppCell", for: indexPath)
+			guard let self, let row = self._displayed?.rows[id] ?? self._previousDisplay?.rows[id] else { return cell }
+			self.configureVisibleCell(cell, row: row)
+			return cell
 		}
-		
-		switch sortOption {
-		case .latest:
-			let sorted = filtered.sorted {
-				switch ($0.app.currentDate?.date, $1.app.currentDate?.date) {
-				case let (d1?, d2?):
-					return sortAscending ? d1 < d2 : d1 > d2
-				case (.some, nil):
-					return true
-				case (nil, .some):
-					return false
-				case (nil, nil):
-					return ($0.app.name ?? "") < ($1.app.name ?? "")
-				}
-			}
-			
-			let formatter = DateFormatter()
-			formatter.dateFormat = "MMMM d, yyyy"
+		prepareList()
+	}
 
-			var grouped: [String: [SourceAppEntry]] = [:]
-			var datesByTitle: [String: Date] = [:]
-			for entry in sorted {
-				guard let date = entry.app.currentDate?.date.stripTime() else {
-					grouped[_unknownDateSectionTitle, default: []].append(entry)
-					continue
-				}
-				let title = formatter.string(from: date)
-				datesByTitle[title] = date
-				grouped[title, default: []].append(entry)
-			}
-
-			var sortedTitles = datesByTitle.keys.sorted {
-				guard let left = datesByTitle[$0], let right = datesByTitle[$1] else {
-					return false
-				}
-				return sortAscending ? left < right : left > right
-			}
-			if grouped[_unknownDateSectionTitle] != nil {
-				sortedTitles.append(_unknownDateSectionTitle)
-			}
-
-			_groupedAppsByDate = grouped
-			_sortedSectionTitles = sortedTitles
-			return sorted
-		case .name:
-			let sorted = filtered.sorted {
-				let n1 = $0.app.name ?? ""
-				let n2 = $1.app.name ?? ""
-				let comparison = n1.localizedCaseInsensitiveCompare(n2)
-				if comparison == .orderedSame {
-					let id1 = $0.app.id ?? ""
-					let id2 = $1.app.id ?? ""
-					return sortAscending ? id1 < id2 : id1 > id2
-				}
-				return sortAscending
-					? comparison == .orderedAscending
-					: comparison == .orderedDescending
-			}
-			_groupedAppsByNameFirstLetter = Dictionary(grouping: sorted) {
-				let first = $0.app.name?.trimmingCharacters(in: .whitespacesAndNewlines).first?.uppercased() ?? "#"
-				return first.range(of: "[A-Z]", options: .regularExpression) != nil ? first : "#"
-			}
-			_sortedSectionTitles = _groupedAppsByNameFirstLetter.keys.sorted(by: {
-				if $0 == "#" { return false }
-				if $1 == "#" { return true }
-				return sortAscending ? $0 < $1 : $0 > $1
-			})
-			return sorted
+	private func configureVisibleCell(_ cell: UITableViewCell, row: SourceAppRow) {
+		let showBadge = showSourceBadge
+		// A cell needs repository metadata, not its entire app/news catalog.
+		var source = row.source
+		source.apps = []
+		source.news = nil
+		cell.contentConfiguration = UIHostingConfiguration {
+			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app, showSourceBadge: showBadge)
+				.tint(Color(hex: UserDefaults.standard.string(forKey: "Aether.userTintColor") ?? "#848ef9"))
 		}
 	}
-	
-	func invalidateCache(debouncingSearch: Bool = false) {
-		_cachedSortedApps = nil
-		_searchReloadWorkItem?.cancel()
 
-		let reload = { [weak self] in
-			guard let self else { return }
-			self._cachedSortedApps = self._calculateSortedApps()
-			self.uiTableView?.reloadData()
+	func prepareList(debouncingSearch: Bool = false, preserveScroll: Bool = false, refreshVisibleRows: Bool = false, fadeSearchResults: Bool = false) {
+		_prepareTask?.cancel()
+		_generation += 1
+		let generation = _generation
+		let contexts = sourceContexts
+		let query = searchText
+		let sort = sortOption.rawValue
+		let ascending = sortAscending
+		let previous = _displayed
+		_prepareTask = Task { [weak self] in
+			do {
+				if debouncingSearch { try await Task.sleep(for: .milliseconds(120)) }
+				let store = SourceAppListStore.shared
+				let list = try await store.list(contexts: contexts, sort: sort, ascending: ascending,
+					query: query, unknownDate: .localized("Unknown Date"))
+				let changed = await store.changedRows(in: list, comparedTo: previous)
+				guard !Task.isCancelled, let self, self._generation == generation else { return }
+				self.apply(list, changed: changed, preserveScroll: preserveScroll, refreshVisibleRows: refreshVisibleRows, fadeSearchResults: fadeSearchResults)
+			} catch is CancellationError {
+				// A newer query/catalog owns the next update.
+			} catch {
+				// Projection preparation only throws cancellation; leave the displayed snapshot intact.
+			}
 		}
+	}
 
-		guard debouncingSearch else {
-			reload()
-			return
+	private func apply(_ list: PreparedSourceAppList, changed: [SourceAppRowID], preserveScroll: Bool, refreshVisibleRows: Bool, fadeSearchResults: Bool) {
+		guard let table = uiTableView, let dataSource = _dataSource else { return }
+		let isFirst = !_hasAppliedList
+		let generation = _generation
+		let anchor: (SourceAppRowID, CGFloat)? = preserveScroll && !table.isDragging && !table.isDecelerating
+			? table.indexPathsForVisibleRows?.sorted().compactMap { indexPath in
+				guard let id = dataSource.itemIdentifier(for: indexPath), list.rows[id] != nil else { return nil }
+				return (id, table.rectForRow(at: indexPath).minY - table.contentOffset.y)
+			}.first : nil
+		_previousDisplay = _displayed
+		_displayed = list
+		dataSource.showsAlphabeticalIndex = sortOption == .name
+		var snapshot = NSDiffableDataSourceSnapshot<String, SourceAppRowID>()
+		for section in list.sections {
+			snapshot.appendSections([section.title])
+			snapshot.appendItems(section.rows, toSection: section.title)
 		}
+		var reconfigure = Set(changed)
+		if refreshVisibleRows {
+			for indexPath in table.indexPathsForVisibleRows ?? [] {
+				if let id = dataSource.itemIdentifier(for: indexPath), list.rows[id] != nil { reconfigure.insert(id) }
+			}
+		}
+		snapshot.reconfigureItems(Array(reconfigure))
+		_hasAppliedList = true
+		// On iOS 15+, a nonanimated diff still inserts/deletes/reconfigures individual rows.
+		// Applying consistently on main keeps UIKit cell providers and model reads synchronized.
+		let update = {
+			dataSource.apply(snapshot, animatingDifferences: false) { [weak self, weak table] in
+				guard let self, let table else { return }
+				if self._generation == generation { self._previousDisplay = nil }
+				if self._generation == generation, let (id, distance) = anchor, let indexPath = dataSource.indexPath(for: id), !table.isDragging && !table.isDecelerating {
+					table.layoutIfNeeded()
+					let minimum = -table.adjustedContentInset.top
+					let maximum = max(minimum, table.contentSize.height - table.bounds.height + table.adjustedContentInset.bottom)
+					let y = min(maximum, max(minimum, table.rectForRow(at: indexPath).minY - distance))
+					table.setContentOffset(CGPoint(x: table.contentOffset.x, y: y), animated: false)
+				}
+				if isFirst {
+					UIView.transition(with: table, duration: 0.5, options: [.transitionCrossDissolve], animations: { table.alpha = 1 })
+				}
+			}
+		}
+		if fadeSearchResults && !isFirst && !UIAccessibility.isReduceMotionEnabled {
+			// Crossfade the visible viewport; never animate thousands of row deletions.
+			UIView.transition(with: table, duration: 0.2,
+				options: [.transitionCrossDissolve, .beginFromCurrentState, .allowUserInteraction],
+				animations: { update(); table.layoutIfNeeded() })
+		} else {
+			update()
+		}
+	}
 
-		let workItem = DispatchWorkItem(block: reload)
-		_searchReloadWorkItem = workItem
-		DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+	private func row(at indexPath: IndexPath) -> SourceAppRow? {
+		guard let id = _dataSource?.itemIdentifier(for: indexPath) else { return nil }
+		return _displayed?.rows[id]
 	}
 
 	func updateNewsHeader(for tableView: UITableView) {
@@ -246,6 +257,8 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		guard width > 0 else { return }
 		let signature = news.map { "\($0.id)|\($0.title)|\($0.caption)|\(String(describing: $0.date))" }
 			.joined(separator: "\n")
+
+		if _newsHeaderSignature == signature, _newsHeaderWidth == width, _newsHeaderController != nil { return }
 
 		let headerController: UIHostingController<SourceNewsView>
 		if let _newsHeaderController {
@@ -278,47 +291,10 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	
 	// MARK: TableView
 	
-	func numberOfSections(in tableView: UITableView) -> Int {
-		switch sortOption {
-		case .name, .latest: _sortedSectionTitles.count
-		}
-	}
-	
-	func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-		switch sortOption {
-		case .name: _groupedAppsByNameFirstLetter[_sortedSectionTitles[section]]?.count ?? 0
-		case .latest: _groupedAppsByDate[_sortedSectionTitles[section]]?.count ?? 0
-		}
-	}
-	
-	func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-		let cell = tableView.dequeueReusableCell(withIdentifier: "AppCell", for: indexPath)
-		let entry: SourceAppEntry
-		switch sortOption {
-		case .name: entry = _groupedAppsByNameFirstLetter[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
-		case .latest: entry = _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
-		}
-
-		cell.contentConfiguration = UIHostingConfiguration {
-			SourceAppsCellView(
-				sourceURL: entry.sourceURL,
-				source: entry.source,
-				app: entry.app,
-				showSourceBadge: showSourceBadge
-			)
-			.tint(Color(hex: UserDefaults.standard.string(forKey: "Aether.userTintColor") ?? "#848ef9"))
-		}
-		return cell
-	}
-	
 	func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 		tableView.deselectRow(at: indexPath, animated: true)
 
-		let entry: SourceAppEntry
-		switch sortOption {
-		case .name: entry = _groupedAppsByNameFirstLetter[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
-		case .latest: entry = _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
-		}
+		guard let entry = row(at: indexPath) else { return }
 
 		onSelect(
 			SourceAppsView.SourceAppSelection(
@@ -330,12 +306,9 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 	
 	func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
 		let headerView = tableView.dequeueReusableHeaderFooterView(withIdentifier: "SectionHeader")
-		let title: String
-		
-		switch sortOption {
-		case .name, .latest: title = _sortedSectionTitles[section]
-		}
-		
+		guard let sections = _dataSource?.snapshot().sectionIdentifiers, sections.indices.contains(section) else { return nil }
+		let title = sections[section]
+
 		headerView?.contentConfiguration = UIHostingConfiguration {
 			HStack {
 				Text(verbatim: title)
@@ -348,21 +321,9 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		return headerView
 	}
 	
-	func sectionIndexTitles(for tableView: UITableView) -> [String]? {
-		sortOption == .name ? _sortedSectionTitles : nil
-	}
-	
-	func tableView(_ tableView: UITableView, sectionForSectionIndexTitle title: String, at index: Int) -> Int {
-		_sortedSectionTitles.firstIndex(of: title) ?? 0
-	}
-	
 	func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
-		let entry: SourceAppEntry
-		switch sortOption {
-		case .name: entry = _groupedAppsByNameFirstLetter[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
-		case .latest: entry = _groupedAppsByDate[_sortedSectionTitles[indexPath.section]]?[indexPath.row] ?? _sortedApps[indexPath.row]
-		}
-		
+		guard let entry = row(at: indexPath) else { return nil }
+
 		return UIContextMenuConfiguration(
 			identifier: nil,
 			previewProvider: nil
@@ -428,10 +389,3 @@ extension SourceAppsTableRepresentableView { class Coordinator: NSObject, UITabl
 		}
 	}
 }}
-
-private struct SourceAppEntry {
-	let sourceObjectURI: String
-	let sourceURL: URL?
-	let source: ASRepository
-	let app: ASRepository.App
-}

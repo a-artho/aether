@@ -6,11 +6,13 @@
 //
 
 import SwiftUI
+import Nuke
 import NukeUI
 import NimbleViews
 
 // MARK: - View
 struct FRIconCellView<Subtitle: View>: View {
+	@Environment(\.displayScale) private var displayScale
 	var title: String
 	var subtitleView: Subtitle
 	var iconUrl: URL?
@@ -49,7 +51,9 @@ struct FRIconCellView<Subtitle: View>: View {
 	var body: some View {
 		HStack(spacing: 18) {
 			if let iconURL = iconUrl {
-				LazyImage(url: iconURL) { state in
+				LazyImage(request: ImageRequest(url: iconURL, userInfo: [
+					.thumbnailKey: ImageRequest.ThumbnailOptions(maxPixelSize: Float(size * displayScale))
+				])) { state in
 					if let image = state.image {
 						image.appIconStyle(size: size, isCircle: isCircle)
 					} else {

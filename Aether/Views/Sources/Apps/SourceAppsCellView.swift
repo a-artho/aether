@@ -9,10 +9,12 @@ import SwiftUI
 import AltSourceKit
 import NimbleViews
 import Combine
+import Nuke
 import NukeUI
 
 // thats a whole pharaghraph of codes
 struct SourceAppsCellView: View {
+	@Environment(\.displayScale) private var displayScale
 	@AppStorage("Aether.storeCellAppearance") private var _storeCellAppearance: Int = 0
 	
 	let sourceURL: URL?
@@ -31,7 +33,9 @@ struct SourceAppsCellView: View {
 				}
 				.overlay(alignment: .bottomLeading) {
 					if showSourceBadge, let iconURL = source.currentIconURL {
-						LazyImage(url: iconURL) { state in
+						LazyImage(request: ImageRequest(url: iconURL, userInfo: [
+							.thumbnailKey: ImageRequest.ThumbnailOptions(maxPixelSize: Float(18 * displayScale))
+						])) { state in
 							if let image = state.image {
 								image
 									.appIconStyle(size: 18, isCircle: true, background: Color(uiColor: .secondarySystemBackground))

@@ -22,7 +22,11 @@ struct SourceAppsDetailView: View {
 	@State private var _appStoreDestination: AppStoreDestination?
 
 	var currentDownload: Download? {
-		downloadManager.getDownload(by: app.currentUniqueId)
+		guard let url = app.currentDownloadUrl else { return nil }
+		return downloadManager.getDownload(
+			from: url,
+			sourceProvenance: SourceAppProvenance(sourceURL: sourceURL, repository: source, app: app)
+		)
 	}
 
 	let sourceURL: URL?
@@ -30,6 +34,9 @@ struct SourceAppsDetailView: View {
 	let app: ASRepository.App
 
 	var body: some View {
+		let appDescription = _cleanSourceText(app.localizedDescription)
+		let releaseNotes = _cleanSourceText(app.currentAppVersion?.localizedDescription)
+
 		ScrollView {
 			VStack(alignment: .leading, spacing: 28) {
 				_metadataStrip()
@@ -41,19 +48,17 @@ struct SourceAppsDetailView: View {
 				}
 
 				if let currentVersion = app.currentVersion,
-				   !currentVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-
-					let releaseNotes = _cleanSourceText(
-						app.currentAppVersion?.localizedDescription
-					)
+				   !currentVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+				   let releaseNotes,
+				   !SourceAppBodyText.matches(releaseNotes, appDescription) {
 
 					_detailSection(.localized("What's New")) {
 						VStack(alignment: .leading, spacing: 10) {
 							AppVersionInfo(
 								version: currentVersion,
 								date: app.currentDate?.date,
-								description: releaseNotes ?? .localized("No release notes provided."),
-								isPlaceholder: releaseNotes == nil
+								description: releaseNotes,
+								textStyle: .subheadline
 							)
 
 							if let versions = app.versions, versions.count > 1 {
@@ -87,25 +92,18 @@ struct SourceAppsDetailView: View {
 					}
 				}
 
-				let appDescription = _cleanSourceText(app.localizedDescription)
-
-				if appDescription != nil || _appStoreDestination != nil {
+				if let appDescription {
 					_detailSection(
 						.localized("Description"),
 						trailing: {
 							_appStoreLink()
 						}
 					) {
-						if let appDescription {
-							ExpandableText(
-								text: appDescription,
-								lineLimit: 4
-							)
-						} else {
-							Text(.localized("No description provided."))
-								.font(.body)
-								.foregroundStyle(.secondary)
-						}
+						ExpandableText(
+							text: appDescription,
+							lineLimit: 4,
+							textStyle: .subheadline
+						)
 					}
 				}
 
@@ -119,7 +117,7 @@ struct SourceAppsDetailView: View {
 							if let entitlements = appPermissions.entitlements {
 								NBTitleWithSubtitleView(
 									title: .localized("Entitlements"),
-									subtitle: entitlements.map(\.name).joined(separator: "\n")
+									subtitle: SourceAppBodyText.replacingEmoji(in: entitlements.map(\.name).joined(separator: "\n"))
 								)
 							} else {
 								Text(.localized("No Entitlements listed."))
@@ -129,8 +127,8 @@ struct SourceAppsDetailView: View {
 							if let privacyItems = appPermissions.privacy {
 								ForEach(privacyItems, id: \.self) { item in
 									NBTitleWithSubtitleView(
-										title: item.name,
-										subtitle: item.usageDescription
+										title: SourceAppBodyText.replacingEmoji(in: item.name),
+										subtitle: SourceAppBodyText.replacingEmoji(in: item.usageDescription)
 									)
 								}
 							} else {
@@ -370,7 +368,7 @@ extension SourceAppsDetailView {
 							.foregroundStyle(.secondary)
 							.lineLimit(1)
 
-						Text(metric.value)
+						Text(SourceAppBodyText.replacingEmoji(in: metric.value))
 							.font(.subheadline.weight(.semibold))
 							.foregroundStyle(.primary)
 							.lineLimit(1)
@@ -463,7 +461,7 @@ extension SourceAppsDetailView {
 
 			Spacer(minLength: 12)
 
-			Text(value)
+			Text(SourceAppBodyText.replacingEmoji(in: value))
 				.font(.subheadline)
 				.foregroundStyle(.primary)
 				.multilineTextAlignment(.trailing)
