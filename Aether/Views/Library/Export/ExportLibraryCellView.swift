@@ -14,16 +14,13 @@ struct ExportLibraryCellView: View {
 		HStack(spacing: 18) {
 			FRAppIconView(app: export.app, size: 50)
 
-			VStack(alignment: .leading, spacing: 3) {
-				Text(export.app.name ?? .localized("Unknown"))
-					.font(.headline)
-					.lineLimit(1)
-				Text(_subtitle)
-					.font(.subheadline)
-					.foregroundStyle(_isFailed ? Color.red : Color.secondary)
-					.lineLimit(2)
-			}
-			.frame(maxWidth: .infinity, alignment: .leading)
+			LibraryRowDetails(
+				name: export.app.name ?? .localized("Unknown"),
+				version: export.app.version,
+				identifier: export.app.identifier,
+				secondaryStatus: _subtitle,
+				isFailed: _isFailed
+			)
 
 			ExportProgressButton(export: export)
 		}

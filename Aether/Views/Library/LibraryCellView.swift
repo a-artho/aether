@@ -119,44 +119,20 @@ struct LibraryCellView: View {
 		}
 	}
 	
-	private var _desc: String {
-		if let version = app.version, let id = app.identifier {
-			return "\(version) • \(id)"
-		} else {
-			return .localized("Unknown")
-		}
-	}
 }
 
 
 // MARK: - Extension: View
 extension LibraryCellView {
 	private func _appDetails(for app: AppInfoPresentable) -> some View {
-		VStack(alignment: .leading, spacing: 2) {
-			Text(app.name ?? .localized("Unknown"))
-				.font(.headline)
-				.foregroundColor(.primary)
-
-			Text(_desc)
-				.font(.subheadline)
-				.foregroundColor(.secondary)
-				.lineLimit(1)
-
-			if let status = _certificateStatus {
-				HStack(spacing: 6) {
-					Circle()
-						.fill(status.color)
-						.frame(width: 8, height: 8)
-					Text(status.label)
-						.font(.subheadline)
-						.foregroundColor(.secondary)
-				}
-				.accessibilityElement(children: .combine)
-				.accessibilityLabel(status.label)
-			}
-		}
-		.padding(.vertical, 2)
-		.frame(maxWidth: .infinity, alignment: .leading)
+		let status = _certificateStatus
+		return LibraryRowDetails(
+			name: app.name ?? .localized("Unknown"),
+			version: app.version ?? .localized("Unknown"),
+			identifier: app.identifier,
+			secondaryStatus: status?.label,
+			signedColor: status?.color
+		)
 	}
 
 	private var _certificateStatus: (label: String, color: Color)? {
@@ -171,7 +147,7 @@ extension LibraryCellView {
 			return (info.formatted, info.color)
 		}
 
-		return (_installTitle, .accentColor)
+		return (.localized("Signed"), .green)
 	}
 
 	@ViewBuilder
@@ -229,5 +205,53 @@ extension LibraryCellView {
 		}
 		.buttonStyle(.borderless)
 		.accessibilityLabel(app.isSigned ? _installTitle : .localized("Sign"))
+	}
+}
+
+/// Shared metadata hierarchy for Library apps and in-flight transfers.
+struct LibraryRowDetails: View {
+	let name: String
+	let version: String?
+	let identifier: String?
+	var secondaryStatus: String? = nil
+	var signedColor: Color? = nil
+	var isFailed = false
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 2) {
+			HStack(spacing: 6) {
+				if let signedColor {
+					Circle()
+						.fill(signedColor)
+						.frame(width: 8, height: 8)
+						.accessibilityHidden(true)
+				}
+				Text(name)
+					.font(.headline)
+					.foregroundStyle(.primary)
+					.lineLimit(1)
+			}
+
+			Text(_secondLine)
+				.font(.subheadline)
+				.foregroundStyle(isFailed ? Color.red : Color.secondary)
+				.lineLimit(isFailed ? 2 : 1)
+
+			if let identifier, !identifier.isEmpty {
+				Text(identifier)
+					.font(.footnote)
+					.foregroundStyle(.secondary)
+					.lineLimit(1)
+			}
+		}
+		.padding(.vertical, 2)
+		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	private var _secondLine: String {
+		[version, secondaryStatus]
+			.compactMap { $0 }
+			.filter { !$0.isEmpty }
+			.joined(separator: " | ")
 	}
 }

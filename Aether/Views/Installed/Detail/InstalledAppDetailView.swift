@@ -14,7 +14,6 @@ struct InstalledAppDetailView: View {
 	@State private var isUninstallPresented = false
 	@State private var isUninstalling = false
 	@State private var uninstallErrorMessage: String?
-	@State private var copiedItemText: String?
 
 	var body: some View {
 		ScrollViewReader { scrollProxy in
@@ -32,10 +31,114 @@ struct InstalledAppDetailView: View {
 							.foregroundStyle(.secondary)
 							.multilineTextAlignment(.trailing)
 					}
+					NavigationLink {
+						InstalledAppInformationView(app: app, page: .specifications)
+					} label: {
+						SettingsRowLabel(.localized("Specifications"), systemImage: "slider.horizontal.3", backgroundColor: .blue)
+					}
+					NavigationLink {
+						InstalledAppInformationView(app: app, page: .entitlements)
+					} label: {
+						SettingsRowLabel(.localized("Entitlements"), systemImage: "checklist", backgroundColor: .purple)
+					}
 				} header: {
 					Text(.localized("Information"))
 				}
+				.id("informationSection")
+			}
+			.listStyle(.insetGrouped)
+			.navigationTitle(app.displayName)
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .principal) {
+					HStack(spacing: 8) {
+						InstalledAppIconView(
+							bundleIdentifier: app.bundleIdentifier,
+							cacheVersion: app.iconCacheVersion,
+							loadsIcon: true,
+							size: 26
+						)
+						Text(app.displayName)
+							.font(.headline)
+							.lineLimit(1)
+					}
+				}
 
+				ToolbarItem(placement: .topBarTrailing) {
+					Button(role: .destructive) {
+						isUninstallPresented = true
+					} label: {
+						if isUninstalling {
+							ProgressView()
+								.controlSize(.small)
+						} else {
+							Image(systemName: "trash")
+						}
+					}
+					.tint(.red)
+					.disabled(isUninstalling)
+					.accessibilityLabel(.localized("Uninstall"))
+				}
+			}
+			.alert(.localized("Uninstall \(app.name)?"), isPresented: $isUninstallPresented) {
+				Button(.localized("Uninstall"), role: .destructive) {
+					Task { await _uninstallApp() }
+				}
+				Button(.localized("Cancel"), role: .cancel) {}
+			} message: {
+				Text(.localized("This will remove '\(app.name)' and all its stored data from your device."))
+			}
+			.alert(.localized("Couldn’t Uninstall"), isPresented: Binding(
+				get: { uninstallErrorMessage != nil },
+				set: { if !$0 { uninstallErrorMessage = nil } }
+			)) {
+				Button(.localized("OK"), role: .cancel) {}
+			} message: {
+				Text(uninstallErrorMessage ?? "")
+			}
+			#if DEBUG
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.scrollDetailToBottom"))) { _ in
+				withAnimation {
+					scrollProxy.scrollTo("informationSection", anchor: .top)
+				}
+			}
+			#endif
+		}
+	}
+
+	private func _uninstallApp() async {
+		isUninstalling = true
+		defer { isUninstalling = false }
+
+		do {
+			try await store.delete(app: app)
+			dismiss()
+		} catch {
+			uninstallErrorMessage = error.localizedDescription
+		}
+	}
+}
+
+private struct InstalledAppInformationView: View {
+	enum Page {
+		case specifications, entitlements
+
+		var title: String {
+			switch self {
+			case .specifications: .localized("Specifications")
+			case .entitlements: .localized("Entitlements")
+			}
+		}
+	}
+
+	let app: InstalledApp
+	let page: Page
+	@State private var copiedItemText: String?
+
+	var body: some View {
+		List {
+			switch page {
+			case .specifications:
 				Section(.localized("Specifications")) {
 					_detailRow(label: .localized("Bundle Identifier"), value: app.bundleIdentifier, isCopyable: true)
 					if let version = app.version {
@@ -94,8 +197,8 @@ struct InstalledAppDetailView: View {
 						.padding(.vertical, 2)
 					}
 				}
-				.id("informationSection")
 
+			case .entitlements:
 				Section(.localized("Entitlements")) {
 					if app.entitlementsList.isEmpty {
 						Text(.localized("No Entitlements"))
@@ -129,75 +232,22 @@ struct InstalledAppDetailView: View {
 					}
 				}
 			}
-			.listStyle(.insetGrouped)
-			.navigationTitle(app.displayName)
-			.navigationBarTitleDisplayMode(.inline)
-			.toolbar {
-				ToolbarItem(placement: .principal) {
-					HStack(spacing: 8) {
-						InstalledAppIconView(
-							bundleIdentifier: app.bundleIdentifier,
-							cacheVersion: app.iconCacheVersion,
-							loadsIcon: true,
-							size: 26
-						)
-						Text(app.displayName)
-							.font(.headline)
-							.lineLimit(1)
-					}
-				}
+		}
+		.listStyle(.insetGrouped)
+		.navigationTitle(page.title)
+		.navigationBarTitleDisplayMode(.inline)
 
-				ToolbarItem(placement: .topBarTrailing) {
-					Button(role: .destructive) {
-						isUninstallPresented = true
-					} label: {
-						if isUninstalling {
-							ProgressView()
-								.controlSize(.small)
-						} else {
-							Image(systemName: "trash")
-						}
-					}
-					.tint(.red)
-					.disabled(isUninstalling)
-					.accessibilityLabel(.localized("Uninstall"))
-				}
+		.overlay(alignment: .bottom) {
+			if let copiedItemText {
+				Text(.localized("Copied \(copiedItemText)"))
+					.font(.caption.weight(.semibold))
+					.foregroundStyle(.white)
+					.padding(.horizontal, 14)
+					.padding(.vertical, 8)
+					.background(.black.opacity(0.8), in: Capsule())
+					.padding(.bottom, 24)
+					.transition(.opacity.combined(with: .move(edge: .bottom)))
 			}
-			.overlay(alignment: .bottom) {
-				if let copiedItemText {
-					Text(.localized("Copied \(copiedItemText)"))
-						.font(.caption.weight(.semibold))
-						.foregroundStyle(.white)
-						.padding(.horizontal, 14)
-						.padding(.vertical, 8)
-						.background(.black.opacity(0.8), in: Capsule())
-						.padding(.bottom, 24)
-						.transition(.opacity.combined(with: .move(edge: .bottom)))
-				}
-			}
-			.alert(.localized("Uninstall \(app.name)?"), isPresented: $isUninstallPresented) {
-				Button(.localized("Uninstall"), role: .destructive) {
-					Task { await _uninstallApp() }
-				}
-				Button(.localized("Cancel"), role: .cancel) {}
-			} message: {
-				Text(.localized("This will remove '\(app.name)' and all its stored data from your device."))
-			}
-			.alert(.localized("Couldn’t Uninstall"), isPresented: Binding(
-				get: { uninstallErrorMessage != nil },
-				set: { if !$0 { uninstallErrorMessage = nil } }
-			)) {
-				Button(.localized("OK"), role: .cancel) {}
-			} message: {
-				Text(uninstallErrorMessage ?? "")
-			}
-			#if DEBUG
-			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.scrollDetailToBottom"))) { _ in
-				withAnimation {
-					scrollProxy.scrollTo("informationSection", anchor: .top)
-				}
-			}
-			#endif
 		}
 	}
 
@@ -231,18 +281,6 @@ struct InstalledAppDetailView: View {
 			}
 		}
 		.padding(.vertical, 2)
-	}
-
-	private func _uninstallApp() async {
-		isUninstalling = true
-		defer { isUninstalling = false }
-
-		do {
-			try await store.delete(app: app)
-			dismiss()
-		} catch {
-			uninstallErrorMessage = error.localizedDescription
-		}
 	}
 
 	private func _triggerCopyFeedback(label: String) {

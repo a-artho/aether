@@ -14,16 +14,13 @@ struct DownloadLibraryCellView: View {
 		HStack(spacing: 18) {
 			_icon
 
-			VStack(alignment: .leading, spacing: 3) {
-				Text(_title)
-					.font(.headline)
-					.lineLimit(1)
-				Text(_subtitle)
-					.font(.subheadline)
-					.foregroundStyle(_isFailed ? Color.red : Color.secondary)
-					.lineLimit(2)
-			}
-			.frame(maxWidth: .infinity, alignment: .leading)
+			LibraryRowDetails(
+				name: _title,
+				version: download.sourceProvenance?.sourceAppVersion,
+				identifier: download.sourceProvenance?.sourceAppIdentifier,
+				secondaryStatus: _subtitle,
+				isFailed: _isFailed
+			)
 
 			DownloadProgressButton(download: download)
 		}
