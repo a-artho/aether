@@ -36,6 +36,15 @@ struct PreparedSourceAppList: Sendable {
 	struct Section: Sendable {
 		let title: String
 		let rows: [SourceAppRowID]
+		let date: Date?
+
+		func displayTitle(today: String, yesterday: String, calendar: Calendar = .current, now: Date = Date()) -> String {
+			guard let date else { return title }
+			if calendar.isDate(date, inSameDayAs: now) { return today }
+			if let previousDay = calendar.date(byAdding: .day, value: -1, to: now),
+				calendar.isDate(date, inSameDayAs: previousDay) { return yesterday }
+			return title
+		}
 	}
 	let sections: [Section]
 	let rows: [SourceAppRowID: SourceAppRow]
@@ -61,10 +70,10 @@ actor SourceAppListStore {
 		let locale: String
 		let timeZone: String
 		let unknownDate: String
-		var formatVersion = 1
+		var formatVersion = 3
 	}
 	private struct Order: Codable {
-		struct Section: Codable { let title: String; let indices: [Int] }
+		struct Section: Codable { let title: String; let indices: [Int]; let date: Date? }
 		let key: Key
 		let sections: [Section]
 	}
@@ -98,7 +107,7 @@ actor SourceAppListStore {
 			let order = storedOrder ?? makeOrder(rows: rows, key: key)
 			try Task.checkCancellation()
 			base = PreparedSourceAppList(
-				sections: order.sections.map { .init(title: $0.title, rows: $0.indices.map { rows[$0].id }) },
+				sections: order.sections.map { .init(title: $0.title, rows: $0.indices.map { rows[$0].id }, date: $0.date) },
 				rows: Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
 			)
 			// Superseded catalog revisions must not accumulate large retained app graphs.
@@ -131,7 +140,7 @@ actor SourceAppListStore {
 					matches[id] = row
 				}
 			}
-			if !ids.isEmpty { sections.append(.init(title: section.title, rows: ids)) }
+			if !ids.isEmpty { sections.append(.init(title: section.title, rows: ids, date: section.date)) }
 		}
 		return PreparedSourceAppList(sections: sections, rows: matches)
 	}
@@ -212,7 +221,7 @@ actor SourceAppListStore {
 		let calendar = Calendar.current
 		let formatter = DateFormatter()
 		formatter.locale = Locale.current
-		formatter.dateFormat = "MMMM d, yyyy"
+		formatter.dateFormat = "MMM d, yyyy"
 		for index in indices {
 			let title: String
 			if key.sort == "latest", let date = rows[index].date {
@@ -236,7 +245,7 @@ actor SourceAppListStore {
 				return key.ascending ? $0 < $1 : $0 > $1
 			}
 		}
-		return Order(key: key, sections: titles.map { .init(title: $0, indices: grouped[$0]!) })
+		return Order(key: key, sections: titles.map { .init(title: $0, indices: grouped[$0]!, date: days[$0]) })
 	}
 
 	private func cacheFile(_ key: Key) -> URL? {

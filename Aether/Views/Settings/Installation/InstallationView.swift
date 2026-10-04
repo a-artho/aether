@@ -41,9 +41,9 @@ struct InstallationView: View {
 						iconSize: _installationMethod == 1 ? 16 : 14
 					)
 				}
-				.disabled(_installationManager.isInstalling)
+				.disabled(_installationManager.hasPendingInstalls)
 			} footer: {
-				Text(_installationManager.isInstalling
+				Text(_installationManager.hasPendingInstalls
 					? .localized("Installation type cannot change while an install is in progress.")
 					: .localized("Server (Recommended):\nUses a locally hosted server and itms-services:// to install applications.\n\nLocal:\nUses a tunnel and pairing file to install directly to your device. It does not require SSL certificates or an externally hosted server."))
 			}

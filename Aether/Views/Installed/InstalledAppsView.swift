@@ -18,7 +18,7 @@ struct InstalledAppsView: View {
 	@ObservedObject private var connection = DeviceConnectionManager.shared
 	@ObservedObject private var cellularAssist = CellularAssistManager.shared
 	@ObservedObject private var tabManager = AppTabManager.shared
-	@State private var topCardMaxY: CGFloat = 160
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@State private var isSpoofingPresented = false
 	@State private var isModeSwitchBlocked = false
 	@State private var selectedAppBundleId: String?
@@ -41,75 +41,88 @@ struct InstalledAppsView: View {
 		self.loadsIcons = loadsIcons
 	}
 
+	private enum DeviceSection: Identifiable {
+		case installation, sideloaded
+		var id: Self { self }
+	}
+
+	private struct DeviceLayout: Equatable {
+		let sections: [DeviceSection]
+		let cards: [UUID]
+		let activeCard: UUID?
+	}
+
 	var body: some View {
+		let cards = installationManager.installationCards
+		let sections: [DeviceSection] = [
+			cards.isEmpty ? nil : .installation,
+			store.apps.isEmpty ? nil : .sideloaded
+		].compactMap { $0 }
+		let layout = DeviceLayout(sections: sections, cards: cards.map(\.id), activeCard: installationManager.currentRequest?.id)
 		NBNavigationView(_installationMethodName, displayMode: .inline) {
-			ZStack(alignment: .top) {
+			VStack(spacing: 0) {
+				_deviceControlsCard
+					.padding(.horizontal, 16)
+					.padding(.vertical, 8)
+
 				ScrollViewReader { scrollProxy in
 					List {
-						Section {
-							_deviceControlsCard
-								.listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-								.listRowBackground(Color.clear)
-								.listRowSeparator(.hidden)
-								.background {
-									if installationManager.activeApp == nil {
-										GeometryReader { geo in
-											Color.clear.preference(
-												key: CardBottomPreferenceKey.self,
-												value: geo.frame(in: .named("DeviceTabRoot")).maxY
-											)
-										}
-									}
-								}
-						}
-						.listSectionSeparator(.hidden)
-
-						if let activeApp = installationManager.activeApp, let vm = installationManager.viewModel {
-							Section {
-								ActiveInstallationHeroCard(app: activeApp, viewModel: vm)
-									.listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
-									.listRowBackground(Color.clear)
-									.listRowSeparator(.hidden)
-									.background {
-										GeometryReader { geo in
-											Color.clear.preference(
-												key: CardBottomPreferenceKey.self,
-												value: geo.frame(in: .named("DeviceTabRoot")).maxY
-											)
-										}
-									}
-							}
-							.listSectionSeparator(.hidden)
-						}
-
-						if !store.apps.isEmpty {
-							NBSection(
-								.localized("Sideloaded"),
-								secondary: store.apps.count.description
-							) {
-								ForEach(store.apps) { app in
-									NavigationLink(
-										destination: InstalledAppDetailView(app: app, store: store),
-										isActive: Binding(
-											get: { selectedAppBundleId == app.bundleIdentifier },
-											set: { isActive in
-												if isActive {
-													selectedAppBundleId = app.bundleIdentifier
-												} else if selectedAppBundleId == app.bundleIdentifier {
-													selectedAppBundleId = nil
+						ForEach(sections) { section in
+							switch section {
+							case .installation:
+								NBSection(.localized("Installs"), secondary: cards.count.description) {
+									ForEach(cards) { request in
+										Group {
+											if installationManager.currentRequest?.id == request.id, let vm = installationManager.viewModel {
+												ActiveInstallationRow(app: request.app, viewModel: vm)
+											} else {
+												QueuedInstallationRow(request: request) {
+													installationManager.cancelQueuedInstall(id: request.id)
 												}
 											}
-										)
-									) {
-										InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+										}
+										.transition(.opacity)
+										.listRowBackground(Color.clear)
 									}
-									.buttonStyle(.plain)
-									.id(app.id)
+								}
+								.listSectionSeparator(.hidden)
+
+							case .sideloaded:
+								NBSection(
+									.localized("Sideloaded"),
+									secondary: store.apps.count.description
+								) {
+									ForEach(store.apps) { app in
+										NavigationLink(
+											destination: InstalledAppDetailView(app: app, store: store),
+											isActive: Binding(
+												get: { selectedAppBundleId == app.bundleIdentifier },
+												set: { isActive in
+													if isActive {
+														selectedAppBundleId = app.bundleIdentifier
+													} else if selectedAppBundleId == app.bundleIdentifier {
+														selectedAppBundleId = nil
+													}
+												}
+											)
+										) {
+											InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+										}
+										.buttonStyle(.plain)
+										.id(app.id)
+									}
 								}
 							}
 						}
 					}
 					.listStyle(.plain)
+					.overlay {
+						if cards.isEmpty && store.apps.isEmpty {
+							_placeholderContent
+								.transition(.opacity.animation(.easeInOut(duration: 0.2)))
+						}
+					}
+					.animation(reduceMotion ? nil : .snappy, value: layout)
 					.refreshable {
 						guard loadsApps else { return }
 						await store.refresh()
@@ -129,29 +142,7 @@ struct InstalledAppsView: View {
 					}
 					#endif
 				}
-
-				if store.apps.isEmpty {
-					GeometryReader { rootGeo in
-						let cardBottom = topCardMaxY
-						// Account for the floating tab bar clearance (tab bar height + safe area insets)
-						let bottomEdge = max(cardBottom, rootGeo.size.height - rootGeo.safeAreaInsets.bottom)
-						let availableHeight = bottomEdge - cardBottom
-						let centerY = cardBottom + (availableHeight / 2)
-
-						_placeholderContent
-							.frame(width: rootGeo.size.width)
-							.position(x: rootGeo.size.width / 2, y: centerY)
-							.transition(.opacity.animation(.easeInOut(duration: 0.2)))
-					}
-				}
 			}
-			.coordinateSpace(name: "DeviceTabRoot")
-			.onPreferenceChange(CardBottomPreferenceKey.self) { maxY in
-				if maxY > 0 {
-					topCardMaxY = maxY
-				}
-			}
-			.animation(.spring(response: 0.35, dampingFraction: 0.85), value: installationManager.activeApp != nil)
 			.task {
 				guard loadsApps else { return }
 				await store.load()
@@ -185,7 +176,7 @@ struct InstalledAppsView: View {
 						Image(systemName: "arrow.left.arrow.right")
 					}
 					.accessibilityLabel(.localized("Switch Installation Mode"))
-					.disabled(installationManager.isInstalling)
+					.disabled(installationManager.hasPendingInstalls)
 				}
 
 				ToolbarItem(placement: .principal) {
@@ -385,6 +376,7 @@ struct InstalledAppsView: View {
 					NBButton(.localized("Use Local"), style: .text)
 				}
 				.buttonStyle(.borderless)
+				.disabled(installationManager.hasPendingInstalls)
 			}
 		} else if store.isLoading && store.apps.isEmpty {
 			ProgressView()
@@ -629,16 +621,6 @@ private struct _HomeCardButtonStyleBody: View {
 			.onDisappear {
 				releaseTask?.cancel()
 			}
-	}
-}
-
-private struct CardBottomPreferenceKey: PreferenceKey {
-	static var defaultValue: CGFloat = 160
-	static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-		let next = nextValue()
-		if next > 0 {
-			value = next
-		}
 	}
 }
 

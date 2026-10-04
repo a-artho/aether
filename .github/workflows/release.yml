@@ -19,6 +19,16 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode_26.3.0.app
 
+      - name: Prepare native pairing library
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl -fsSL https://sh.rustup.rs -o "$RUNNER_TEMP/aether-rustup-init.sh"
+            sh "$RUNNER_TEMP/aether-rustup-init.sh" -y --profile minimal --no-modify-path
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install stable --profile minimal
+          RUSTUP_TOOLCHAIN=stable make native
+
       - name: Build
         run: | 
           agvtool new-version -all $(git rev-parse HEAD)

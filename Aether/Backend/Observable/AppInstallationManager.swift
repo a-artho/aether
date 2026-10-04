@@ -17,7 +17,30 @@ final class AppInstallationManager: ObservableObject {
 		let serverMethod: Int
 	}
 
+	struct InstallationRequest: Identifiable, Sendable {
+		let id = UUID()
+		let app: AppSnapshot
+		let method: Int
+		let serverMethod: Int
+		#if DEBUG
+		var isMock = false
+		#endif
+
+		var appKey: String { Self.appKey(for: app) }
+
+		static func appKey(for app: AppInfoPresentable) -> String {
+			let identity = app.uuid ?? app.source?.absoluteString ?? "\(app.identifier ?? "")|\(app.version ?? "")"
+			return "\(app.isSigned)|\(identity)"
+		}
+	}
+
 	static let shared = AppInstallationManager()
+	@Published private(set) var currentRequest: InstallationRequest?
+	@Published private(set) var queuedInstalls: [InstallationRequest] = []
+
+	var installationCards: [InstallationRequest] {
+		currentRequest.map { [$0] + queuedInstalls } ?? queuedInstalls
+	}
 	
 	@Published var activeApp: AppInfoPresentable?
 	@Published var viewModel: InstallerStatusViewModel?
@@ -29,6 +52,8 @@ final class AppInstallationManager: ObservableObject {
 	private var progressTask: Task<Void, Never>?
 	private var iDevicePreflightTask: Task<Void, Never>?
 	private var installTask: Task<Void, Never>?
+	private var retirementTask: Task<Void, Never>?
+	private var settlementTask: Task<Void, Never>?
 	private var installGeneration = UUID()
 	private var cancellables = Set<AnyCancellable>()
 	private var _hasLaunchedSemiLocalInstall = false
@@ -36,9 +61,10 @@ final class AppInstallationManager: ObservableObject {
 	private init() {}
 	
 	var isInstalling: Bool {
-		if iDevicePreflightTask != nil || installTask != nil {
+		if retirementTask != nil || iDevicePreflightTask != nil || installTask != nil {
 			return true
 		}
+		if !queuedInstalls.isEmpty, hasCompletedSuccessfully { return true }
 		guard activeApp != nil, let viewModel else {
 			return activeApp != nil
 		}
@@ -49,73 +75,117 @@ final class AppInstallationManager: ObservableObject {
 			return true
 		}
 	}
+
+	var hasPendingInstalls: Bool { isInstalling || !queuedInstalls.isEmpty }
+
+	func containsInstallation(for app: AppInfoPresentable) -> Bool {
+		let key = InstallationRequest.appKey(for: app)
+		return currentRequest?.appKey == key || queuedInstalls.contains { $0.appKey == key }
+	}
+
+	private var hasCompletedSuccessfully: Bool {
+		if case .completed(.success) = viewModel?.status { return true }
+		return false
+	}
 	
 	func startInstall(app: AppInfoPresentable) {
-		cancel()
-		let context = InstallationContext(
+		let request = InstallationRequest(
+			app: AppSnapshot(app),
 			method: UserDefaults.standard.integer(forKey: "Aether.installationMethod"),
 			serverMethod: UserDefaults.standard.object(forKey: "Aether.serverMethod") as? Int ?? 1
 		)
-		let appName = app.name ?? app.identifier ?? .localized("app")
-		_log("Install requested for \(appName).", category: "Install", level: .notice)
-		
-		guard app.identifier != Bundle.main.bundleIdentifier || context.method == 1 else {
+		guard app.identifier != Bundle.main.bundleIdentifier || request.method == 1 else {
 			UIAlertController.showAlertWithOk(
 				title: .localized("Install"),
 				message: .localized("You cannot update ‘%@‘ with itself, please use an alternative tool to update it.", arguments: Bundle.main.name)
 			)
 			return
 		}
+		_enqueue(request)
+	}
 
-		guard context.method == 1 else {
-			_beginInstall(app, context: context)
+	private func _enqueue(_ request: InstallationRequest) {
+		AppTabManager.shared.switchTo(.installed)
+		if currentRequest?.appKey == request.appKey, !hasCompletedSuccessfully {
+			if case .broken = viewModel?.status { retryActiveInstall() }
 			return
 		}
-
-		iDevicePreflightTask = Task { [weak self] in
-			do {
-				try await DeviceConnectionManager.shared.ensureConnected()
-			} catch {
-				guard !Task.isCancelled, let self else { return }
-				self.iDevicePreflightTask = nil
-				self._showIDevicePreflightAlert(
-					title: .localized("Device Connection Unavailable"),
-					message: error.localizedDescription
-				)
-				self._log("Device install preflight failed: \(error.localizedDescription)", category: "Device", level: .error)
-				return
-			}
-
-			guard !Task.isCancelled, let self else { return }
-			self.iDevicePreflightTask = nil
-			self._beginInstall(app, context: context)
+		guard !queuedInstalls.contains(where: { $0.appKey == request.appKey }) else { return }
+		queuedInstalls.append(request)
+		_log("Install queued for \(request.app.name ?? request.app.identifier ?? .localized("app")).", category: "Install", level: .notice)
+		if hasCompletedSuccessfully {
+			_finishCompletedInstall(generation: installGeneration)
+		} else {
+			_startNextIfPossible()
 		}
 	}
 
-	private func _beginInstall(_ app: AppInfoPresentable, context: InstallationContext) {
-		let appSnapshot = AppSnapshot(app)
+	func cancelQueuedInstall(id: UUID) {
+		queuedInstalls.removeAll { $0.id == id }
+	}
+
+	func retryActiveInstall() {
+		guard let request = currentRequest, case .broken = viewModel?.status else { return }
+		queuedInstalls.insert(request, at: 0)
+		cancel()
+	}
+
+	private func _startNextIfPossible() {
+		guard currentRequest == nil, retirementTask == nil, !queuedInstalls.isEmpty else { return }
+		let request = queuedInstalls.removeFirst()
 		let generation = UUID()
 		installGeneration = generation
-		AppTabManager.shared.switchTo(.installed)
-		
-		self.activeApp = app
-		self.lastErrorMessage = nil
-		self._hasLaunchedSemiLocalInstall = false
-		_log(
-			"Preparing \(context.method == 1 ? "device" : "server") install for \(app.name ?? app.identifier ?? .localized("app")).",
-			category: "Install"
-		)
-		
-		let statusVM = InstallerStatusViewModel(isIdevice: context.method == 1)
-		self.viewModel = statusVM
-		
+		let context = InstallationContext(method: request.method, serverMethod: request.serverMethod)
+		let statusVM = InstallerStatusViewModel(isIdevice: request.method == 1)
+		viewModel = statusVM
+		activeApp = request.app
+		currentRequest = request
+		lastErrorMessage = nil
+		_hasLaunchedSemiLocalInstall = false
 		statusVM.$status
 			.receive(on: DispatchQueue.main)
-			.sink { [weak self] newStatus in
-				self?._handleStatusChange(newStatus, context: context)
+			.sink { [weak self] status in
+				self?._handleStatusChange(status, context: context, generation: generation)
 			}
 			.store(in: &cancellables)
-		
+
+		#if DEBUG
+		if request.isMock {
+			statusVM.installProgress = 0.62
+			statusVM.status = .installing
+			return
+		}
+		#endif
+
+		guard request.method == 1 else {
+			_beginInstall(request.app, context: context, statusVM: statusVM, generation: generation)
+			return
+		}
+		iDevicePreflightTask = Task { [weak self] in
+			do {
+				try await DeviceConnectionManager.shared.ensureConnected()
+				try Task.checkCancellation()
+				guard let self, self.installGeneration == generation else { return }
+				self.iDevicePreflightTask = nil
+				self._beginInstall(request.app, context: context, statusVM: statusVM, generation: generation)
+			} catch {
+				guard !Task.isCancelled, let self, self.installGeneration == generation else { return }
+				self.iDevicePreflightTask = nil
+				self.lastErrorMessage = error.localizedDescription
+				statusVM.status = .broken(error)
+				self._showIDevicePreflightAlert(title: .localized("Device Connection Unavailable"), message: error.localizedDescription)
+			}
+		}
+	}
+
+	private func _beginInstall(
+		_ appSnapshot: AppSnapshot,
+		context: InstallationContext,
+		statusVM: InstallerStatusViewModel,
+		generation: UUID
+	) {
+		_log("Preparing \(context.method == 1 ? "device" : "server") install for \(appSnapshot.name ?? appSnapshot.identifier ?? .localized("app")).", category: "Install")
+
 		#if !targetEnvironment(macCatalyst)
 		if context.method == 0 {
 			BackgroundAudioManager.shared.start("installation")
@@ -200,15 +270,12 @@ final class AppInstallationManager: ObservableObject {
 	private func _installWorkerDidFinish(generation: UUID) {
 		guard installGeneration == generation else { return }
 		installTask = nil
+		_releaseBackgroundConnectionIfIdle()
+	}
 
-		guard UIApplication.shared.applicationState == .background,
-		      let status = viewModel?.status else { return }
-		switch status {
-		case .completed, .broken:
-			DeviceConnectionManager.shared.handleAppBackground()
-		default:
-			break
-		}
+	private func _releaseBackgroundConnectionIfIdle() {
+		guard UIApplication.shared.applicationState == .background, !isInstalling else { return }
+		DeviceConnectionManager.shared.handleAppBackground()
 	}
 
 	private func _showIDevicePreflightAlert(title: String, message: String) {
@@ -217,9 +284,19 @@ final class AppInstallationManager: ObservableObject {
 	
 	private func _handleStatusChange(
 		_ newStatus: InstallerStatusViewModel.InstallerStatus,
-		context: InstallationContext
+		context: InstallationContext,
+		generation: UUID
 	) {
-		guard let app = activeApp, let statusVM = viewModel else { return }
+		guard installGeneration == generation, let app = activeApp, let statusVM = viewModel else { return }
+		if case .completed(.failure(let error)) = newStatus {
+			statusVM.status = .broken(error)
+			return
+		}
+		#if DEBUG
+		let isMock = currentRequest?.isMock == true
+		#else
+		let isMock = false
+		#endif
 		
 		if context.method == 0 {
 			if case .ready = newStatus, let installer = self.installer {
@@ -241,58 +318,56 @@ final class AppInstallationManager: ObservableObject {
 				self.isWebviewPresenting = false
 			}
 			
-			if case .installing = newStatus, let bundleIdentifier = app.identifier {
+			if case .installing = newStatus, !isMock, let bundleIdentifier = app.identifier {
 				if progressTask == nil {
 					progressTask = startInstallProgressPolling(bundleID: bundleIdentifier, viewModel: statusVM)
 				}
 			}
 			
-			switch newStatus {
-			case .completed:
-				_log("Install completed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .notice)
-				progressTask?.cancel()
-				progressTask = nil
-				_cleanupInstallResources()
-				NotificationCenter.default.post(name: Notification.Name("Aether.installedAppsRefresh"), object: nil)
-				Task { [weak self] in
-					try? await Task.sleep(nanoseconds: 3_000_000_000)
-					await MainActor.run {
-						if self?.viewModel?.isCompleted == true {
-							self?.dismiss()
-						}
-					}
-				}
-			case .broken:
-				_log("Install failed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .error)
-				progressTask?.cancel()
-				progressTask = nil
-				_cleanupInstallResources()
-			default:
-				break
+		}
+
+		switch newStatus {
+		case .completed:
+			_log("Install completed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .notice)
+			progressTask?.cancel()
+			progressTask = nil
+			NotificationCenter.default.post(name: Notification.Name("Aether.installedAppsRefresh"), object: nil)
+			_finishCompletedInstall(generation: generation)
+		case .broken:
+			_log("Install failed for \(app.name ?? app.identifier ?? .localized("app")). Queue paused.", category: "Install", level: .error)
+			progressTask?.cancel()
+			progressTask = nil
+			settlementTask?.cancel()
+			let worker = installTask
+			settlementTask = Task { [weak self] in
+				await worker?.value
+				guard !Task.isCancelled, let self, self.installGeneration == generation else { return }
+				self._cleanupInstallResources()
+				self.settlementTask = nil
+				self._releaseBackgroundConnectionIfIdle()
 			}
-		} else {
-			switch newStatus {
-			case .completed:
-				_log("Device install completed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .notice)
-				_cleanupInstallResources()
-				NotificationCenter.default.post(name: Notification.Name("Aether.installedAppsRefresh"), object: nil)
-				Task { [weak self] in
-					try? await Task.sleep(nanoseconds: 3_000_000_000)
-					await MainActor.run {
-						if self?.viewModel?.isCompleted == true {
-							self?.dismiss()
-						}
-					}
-				}
-			case .broken:
-				_log("Device install failed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .error)
-				_cleanupInstallResources()
-			default:
-				break
-			}
+		default:
+			break
 		}
 	}
-	
+
+	private func _finishCompletedInstall(generation: UUID) {
+		settlementTask?.cancel()
+		let worker = installTask
+		settlementTask = Task { [weak self] in
+			await worker?.value
+			guard !Task.isCancelled, let self, self.installGeneration == generation else { return }
+			self._cleanupInstallResources()
+			// Keep the final success card briefly; a waiting app advances immediately.
+			if self.queuedInstalls.isEmpty {
+				do { try await Task.sleep(nanoseconds: 3_000_000_000) } catch { return }
+			}
+			guard !Task.isCancelled, self.installGeneration == generation else { return }
+			self.settlementTask = nil
+			self.cancel()
+		}
+	}
+
 	private func startInstallProgressPolling(
 		bundleID: String,
 		viewModel: InstallerStatusViewModel
@@ -341,23 +416,45 @@ final class AppInstallationManager: ObservableObject {
 	}
 	
 	func cancel() {
+		guard currentRequest != nil || activeApp != nil || installTask != nil || iDevicePreflightTask != nil else { return }
 		installGeneration = UUID()
-		installTask?.cancel()
+		settlementTask?.cancel()
+		settlementTask = nil
+		let worker = installTask
+		let preflight = iDevicePreflightTask
+		worker?.cancel()
+		preflight?.cancel()
 		installTask = nil
-		iDevicePreflightTask?.cancel()
 		iDevicePreflightTask = nil
 		progressTask?.cancel()
 		progressTask = nil
 		cancellables.removeAll()
-		_cleanupInstallResources()
-		withAnimation(.easeInOut(duration: 0.25)) {
-		self.activeApp = nil
-		self.viewModel = nil
-		self.lastErrorMessage = nil
-		self._hasLaunchedSemiLocalInstall = false
+		isWebviewPresenting = false
+		activeApp = nil
+		viewModel = nil
+		currentRequest = nil
+		lastErrorMessage = nil
+		_hasLaunchedSemiLocalInstall = false
+
+		guard worker != nil || preflight != nil else {
+			_cleanupInstallResources()
+			_startNextIfPossible()
+			_releaseBackgroundConnectionIfIdle()
+			return
+		}
+		// Cancellation can be cooperative: retain resources and wait for the old
+		// worker to exit before allowing another archive or device install to start.
+		retirementTask = Task { [weak self] in
+			await preflight?.value
+			await worker?.value
+			guard let self else { return }
+			self._cleanupInstallResources()
+			self.retirementTask = nil
+			self._startNextIfPossible()
+			self._releaseBackgroundConnectionIfIdle()
 		}
 	}
-	
+
 	func dismiss() {
 		cancel()
 	}
@@ -366,6 +463,7 @@ final class AppInstallationManager: ObservableObject {
 		archiveHandler?.clean()
 		archiveHandler = nil
 		installer = nil
+		isWebviewPresenting = false
 		#if !targetEnvironment(macCatalyst)
 		BackgroundAudioManager.shared.stop("installation")
 		#endif
@@ -394,12 +492,21 @@ struct MockAppPresentable: AppInfoPresentable {
 
 extension AppInstallationManager {
 	func startMockInstall(progress: Double = 0.45, status: InstallerStatusViewModel.InstallerStatus = .installing) {
+		queuedInstalls.removeAll()
 		cancel()
-		let mock = MockAppPresentable()
-		self.activeApp = mock
-		let vm = InstallerStatusViewModel(status: status, isIdevice: false)
-		vm.installProgress = progress
-		self.viewModel = vm
+		enqueueMockInstall(name: "Delta", identifier: "com.rileytestut.Delta")
+		viewModel?.installProgress = progress
+		viewModel?.status = status
+	}
+
+	func enqueueMockInstall(name: String, identifier: String) {
+		var app = MockAppPresentable()
+		app.name = name
+		app.identifier = identifier
+		app.uuid = identifier
+		var request = InstallationRequest(app: AppSnapshot(app), method: 0, serverMethod: 1)
+		request.isMock = true
+		_enqueue(request)
 	}
 }
 #endif

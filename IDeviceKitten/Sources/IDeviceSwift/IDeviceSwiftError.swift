@@ -11,6 +11,7 @@ import IDevice
 public struct IDeviceSwiftError: LocalizedError {
 	public let message: String
 	public let code: Int32
+	public let subCode: Int32
 
 	public init(_ error: UnsafeMutablePointer<IdeviceFfiError>?) {
 		if let cMessage = error?.pointee.message {
@@ -19,6 +20,7 @@ public struct IDeviceSwiftError: LocalizedError {
 			self.message = "Unknown device error"
 		}
 		self.code = error?.pointee.code ?? 0
+		self.subCode = error?.pointee.sub_code ?? 0
 
 		if let error {
 			idevice_error_free(error)
@@ -27,10 +29,12 @@ public struct IDeviceSwiftError: LocalizedError {
 
 	public init(
 		_ code: Int32 = -7001, // our custom error hehe
-		message: String
+		message: String,
+		subCode: Int32 = 0
 	) {
 		self.message = message
 		self.code = code
+		self.subCode = subCode
 	}
 
 	public var errorDescription: String? {

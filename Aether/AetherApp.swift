@@ -162,6 +162,21 @@ struct AetherApp: App {
 				AppTabManager.shared.switchTo(.installed)
 				return
 			}
+			if url.host == "mock-install-queue" {
+				let manager = AppInstallationManager.shared
+				manager.startMockInstall(progress: 0.62)
+				manager.enqueueMockInstall(name: "Apollo", identifier: "com.christianselig.Apollo")
+				manager.enqueueMockInstall(name: "RetroArch", identifier: "com.libretro.RetroArch")
+				return
+			}
+			if url.host == "mock-install-complete-current" {
+				AppInstallationManager.shared.viewModel?.status = .completed(.success(()))
+				return
+			}
+			if url.host == "mock-install-fail-current" {
+				AppInstallationManager.shared.viewModel?.status = .broken(NSError(domain: "QueueVerification", code: 1, userInfo: [NSLocalizedDescriptionKey: "Test installation failure"]))
+				return
+			}
 			if url.host == "mock-install-done" {
 				AppInstallationManager.shared.startMockInstall(progress: 1.0, status: .completed(.success(())))
 				AppTabManager.shared.switchTo(.installed)

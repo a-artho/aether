@@ -14,7 +14,7 @@ extension HeartbeatManager {
 	/// Unlike a raw TCP probe, this validates the active transport and pairing flow.
 	public func checkDeviceConnection(
 		timeoutInSeconds: Double = 2.0
-	) -> (isConnected: Bool, error: String?, errorCode: Int32?) {
+	) -> DeviceConnectionCheck {
 		if isRsd {
 			// The packet tunnel can be usable to the native Remote Pairing client
 			// before a generic POSIX TCP probe to its virtual address succeeds.
@@ -25,23 +25,23 @@ extension HeartbeatManager {
 
 		let socketConnection = checkSocketConnection(timeoutInSeconds: timeoutInSeconds)
 		guard socketConnection.isConnected else {
-			return (false, socketConnection.error, nil)
+			return .init(isConnected: false, error: socketConnection.error)
 		}
 
 		guard let provider else {
-			return (false, "Heartbeat provider unavailable", nil)
+			return .init(isConnected: false, error: "Heartbeat provider unavailable")
 		}
 
 		var client: OpaquePointer?
 		defer { installation_proxy_client_free(client) }
 		if let error = installation_proxy_connect(provider, &client) {
 			let swiftError = IDeviceSwiftError(error)
-			return (false, swiftError.localizedDescription, swiftError.code)
+			return .init(isConnected: false, error: swiftError.localizedDescription, errorCode: swiftError.code, errorSubCode: swiftError.subCode)
 		}
-		return (client != nil, client == nil ? "Installation Proxy unavailable" : nil, nil)
+		return .init(isConnected: client != nil, error: client == nil ? "Installation Proxy unavailable" : nil)
 	}
 
-	private func _checkRSDDeviceConnection(timeoutInSeconds: Double) -> (isConnected: Bool, error: String?, errorCode: Int32?) {
+	private func _checkRSDDeviceConnection(timeoutInSeconds: Double) -> DeviceConnectionCheck {
 		var client: OpaquePointer?
 		defer { installation_proxy_client_free(client) }
 
@@ -49,11 +49,11 @@ extension HeartbeatManager {
 			try withRSDServiceConnection(discoveryTimeout: timeoutInSeconds) { adapter, handshake in
 				installation_proxy_connect_rsd(adapter, handshake, &client)
 			}
-			return (client != nil, client == nil ? "Installation Proxy unavailable" : nil, nil)
+			return .init(isConnected: client != nil, error: client == nil ? "Installation Proxy unavailable" : nil)
 		} catch let error as IDeviceSwiftError {
-			return (false, error.localizedDescription, error.code)
+			return .init(isConnected: false, error: error.localizedDescription, errorCode: error.code, errorSubCode: error.subCode)
 		} catch {
-			return (false, error.localizedDescription, nil)
+			return .init(isConnected: false, error: error.localizedDescription)
 		}
 	}
 

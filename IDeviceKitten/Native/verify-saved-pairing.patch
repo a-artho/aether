@@ -1,0 +1,183 @@
+--- a/idevice/src/remote_pairing/mod.rs
++++ b/idevice/src/remote_pairing/mod.rs
+@@ -122,6 +122,15 @@
+         Ok(())
+     }
+ 
++    /// Authenticate an existing record without silently starting pair-setup.
++    pub async fn verify_saved_pairing(
++        &mut self,
++        pairing_file: &mut RpPairingFile,
++    ) -> Result<(), IdeviceError> {
++        self.attempt_pair_verify().await?;
++        self.validate_pairing(pairing_file).await
++    }
++
+     /// Returns peer device info captured during this client's successful `pair()` flow.
+     pub fn paired_peer_device(&self) -> Result<&PeerDevice, IdeviceError> {
+         self.paired_peer_device
+@@ -170,12 +179,13 @@
+ 
+         let data = tlv::deserialize_tlv8(&data)?;
+ 
+-        if data
++        if let Some(rejection) = data
+             .iter()
+-            .any(|x| x.tlv_type == tlv::PairingDataComponentType::ErrorResponse)
++            .find(|x| x.tlv_type == tlv::PairingDataComponentType::ErrorResponse)
+         {
+-            self.send_pair_verified_failed().await?;
+-            return Err(RemotePairingError::PairVerifyFailed.into());
++            // Preserve the authentication rejection even if the peer closes during cleanup.
++            let _ = self.send_pair_verified_failed().await;
++            return Err(saved_pairing_rejection(&rejection.data));
+         }
+ 
+         let device_public_key = match data
+@@ -279,16 +289,17 @@
+         debug!("Verify TLV: {data:#?}");
+ 
+         // Check if the device responded with an error (which is expected for a new pairing)
+-        if data
++        if let Some(rejection) = data
+             .iter()
+-            .any(|x| x.tlv_type == tlv::PairingDataComponentType::ErrorResponse)
++            .find(|x| x.tlv_type == tlv::PairingDataComponentType::ErrorResponse)
+         {
+             debug!(
+                 "Verification failed, device reported an error. This is expected for a new pairing."
+             );
+-            self.send_pair_verified_failed().await?;
++            // Preserve the authentication rejection even if the peer closes during cleanup.
++            let _ = self.send_pair_verified_failed().await;
+             // Return a specific error to the caller.
+-            return Err(RemotePairingError::PairVerifyFailed.into());
++            return Err(saved_pairing_rejection(&rejection.data));
+         }
+ 
+         // Re-derive main encryption ciphers from the X25519 shared secret
+@@ -927,5 +938,86 @@
+             .field("sequence_number", &self.sequence_number)
+             .field("sending_host", &self.sending_host)
+             .finish()
++    }
++}
++
++// Authentication is the only TLV failure that proves an existing record invalid.
++fn saved_pairing_rejection(data: &[u8]) -> IdeviceError {
++    if data == [0x02] { // kTLVError_Authentication
++        RemotePairingError::PairVerifyFailed.into()
++    } else {
++        IdeviceError::UnexpectedResponse(format!("Pair verification could not complete: TLV error {data:?}"))
++    }
++}
++
++#[cfg(test)]
++mod saved_pairing_tests {
++    use super::*;
++
++    #[test]
++    fn only_authentication_invalidates_a_record() {
++        let error = saved_pairing_rejection(&[2]);
++        assert_eq!((error.code(), error.sub_code()), (103, 5));
++        for value in [1, 3, 4, 5, 6, 7, 0] {
++            let error = saved_pairing_rejection(&[value]);
++            assert_ne!((error.code(), error.sub_code()), (103, 5));
++        }
++        assert_ne!(saved_pairing_rejection(&[]).code(), 103);
++    }
++}
++
++#[cfg(test)]
++mod verification_only_wire_tests {
++    use super::*;
++    use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
++
++    async fn read_frame(peer: &mut DuplexStream) -> Vec<u8> {
++        // Use the protocol's actual header length, without depending on its value.
++        let mut prefix = vec![0; RPPAIRING_MAGIC.len()];
++        peer.read_exact(&mut prefix).await.unwrap();
++        assert_eq!(prefix, RPPAIRING_MAGIC);
++        let mut len = [0; 2];
++        peer.read_exact(&mut len).await.unwrap();
++        let mut data = vec![0; u16::from_be_bytes(len) as usize];
++        peer.read_exact(&mut data).await.unwrap();
++        data
+     }
++
++    async fn send_frame(peer: &mut DuplexStream, body: serde_json::Value) {
++        let body = serde_json::to_vec(&body).unwrap();
++        peer.write_all(RPPAIRING_MAGIC).await.unwrap();
++        peer.write_all(&(body.len() as u16).to_be_bytes()).await.unwrap();
++        peer.write_all(&body).await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn explicit_rejection_survives_peer_close_without_pair_setup() {
++        let (stream, mut peer) = tokio::io::duplex(4096);
++        let server = tokio::spawn(async move {
++            let first = read_frame(&mut peer).await;
++            assert!(String::from_utf8(first).unwrap().contains("attemptPairVerify"));
++            send_frame(&mut peer, serde_json::json!({"message":{"plain":{"_0":{"response":{"_1":{"handshake":{"_0":{}}}}}}}})).await;
++            let second = read_frame(&mut peer).await;
++            assert!(String::from_utf8(second).unwrap().contains("verifyManualPairing"));
++            // ErrorResponse=authentication (2); close before the client's cleanup write.
++            send_frame(&mut peer, serde_json::json!({"message":{"plain":{"_0":{"event":{"_0":{"pairingData":{"_0":{"data":"BwEC"}}}}}}}})).await;
++        });
++        let mut client = RemotePairingClient::new(RpPairingSocket::new(stream), "AetherTest");
++        let mut record = RpPairingFile::generate("AetherTest");
++        let error = client.verify_saved_pairing(&mut record).await.unwrap_err();
++        server.await.unwrap();
++        assert_eq!((error.code(), error.sub_code()), (103, 5));
++    }
++
++    #[tokio::test]
++    async fn closed_transport_is_not_authentication_rejection() {
++        let (stream, mut peer) = tokio::io::duplex(4096);
++        let server = tokio::spawn(async move { let _ = read_frame(&mut peer).await; });
++        let mut client = RemotePairingClient::new(RpPairingSocket::new(stream), "AetherTest");
++        let mut record = RpPairingFile::generate("AetherTest");
++        let error = client.verify_saved_pairing(&mut record).await.unwrap_err();
++        server.await.unwrap();
++        assert_eq!(error.code(), 1);
++        assert_ne!((error.code(), error.sub_code()), (103, 5));
++    }
+ }
+--- a/ffi/src/tunnel_provider.rs
++++ b/ffi/src/tunnel_provider.rs
+@@ -282,11 +282,10 @@
+ /// Use this when connecting to a device discovered via `_remotepairing._tcp`.
+ /// The connection goes: direct TCP → RPPairing (JSON) → tunnel.
+ ///
+-/// `pairing_file` is used for pair-verify. If verification fails (typically
+-/// because the device has never been paired with this host) a full pair-setup
+-/// runs on the same connection and `pairing_file` is updated in place, so the
+-/// caller should persist it afterwards regardless of whether it was freshly
+-/// generated.
++/// Verifies `pairing_file` without falling back to pair-setup. Authentication
++/// rejection is returned to the caller so it can discard the stale record.
++/// `pin_callback` and `pin_context` are retained for ABI compatibility but unused.
++/// Explicit pairing is available through the separate pairing APIs.
+ ///
+ ///
+ /// # Safety
+@@ -321,7 +320,9 @@
+         Err(_) => return ffi_err!(IdeviceError::FfiInvalidString),
+     };
+     let rpf = unsafe { &mut (*pairing_file).0 };
+-    let ctx = PinCtx(pin_context);
++    // Tunnel connections only verify the existing record. Explicit pairing
++    // remains available through the pairing APIs.
++    let _ = (pin_callback, pin_context);
+ 
+     let res = run_sync_local(async {
+         // Connect directly and use raw RPPairing protocol
+@@ -331,7 +332,7 @@
+         let conn = RpPairingSocket::new(stream);
+ 
+         let mut rpc = RemotePairingClient::new(conn, &host);
+-        rpc.connect(rpf, async || get_pin(pin_callback, &ctx))
++        rpc.verify_saved_pairing(rpf)
+             .await?;
+ 
+         finish_tunnel(&mut rpc, socket_addr).await

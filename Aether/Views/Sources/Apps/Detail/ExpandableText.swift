@@ -10,21 +10,72 @@ import SwiftUI
 
 enum SourceAppBodyText {
 	static func replacingEmoji(in text: String) -> String {
-		text.map { character in
+		var result = ""
+		result.reserveCapacity(text.utf8.count)
+		var whitespace = ""
+		for character in text {
+			if character.isWhitespace {
+				if character.isNewline {
+					if whitespace.last == " " { whitespace.removeLast() }
+					whitespace.append("\n")
+				} else if whitespace.last != " " && whitespace.last != "\n" {
+					whitespace.append(" ")
+				}
+				continue
+			}
 			let scalars = character.unicodeScalars
-			// Work on complete characters so flags, skin tones and joined emoji
-			// become one dot. Plain digits and text symbols stay intact.
-			let isEmoji = scalars.contains { $0.properties.isEmojiPresentation }
-				|| (scalars.contains { $0.properties.isEmoji }
-					&& scalars.contains { $0.value == 0xFE0F || $0.value == 0x20E3 })
-			return isEmoji ? "·" : String(character)
-		}.joined()
+			let explicitEmoji = scalars.contains { $0.value == 0xFE0F || $0.value == 0x20E3 }
+			let explicitText = scalars.contains { $0.value == 0xFE0E }
+			// Complete characters cover flags, skin tones, keycaps and joined families.
+			// Plain digits/#/* and copyright/trademark text are not emoji sequences.
+			let isEmoji = !explicitText && scalars.contains {
+				$0.properties.isEmoji && (explicitEmoji || ($0.value > 0x7F
+					&& ![0x00A9, 0x00AE, 0x2122].contains($0.value)))
+			}
+			if isEmoji || character == "·" || character == "•" {
+				if result.last == "·" || result.last == "•" {
+					// Whitespace between adjacent emoji belongs to the same separator run.
+					whitespace.removeAll(keepingCapacity: true)
+					continue
+				}
+				if whitespace.contains("\n") { result.append(whitespace) }
+				else if !result.isEmpty && result.last != "\n" { result.append(" ") }
+				whitespace.removeAll(keepingCapacity: true)
+				result.append(isEmoji ? "·" : character)
+			} else {
+				if !whitespace.isEmpty {
+					if !result.isEmpty { result.append(whitespace) }
+					whitespace.removeAll(keepingCapacity: true)
+				} else if result.last == "·" || result.last == "•" {
+					result.append(" ")
+				}
+				result.append(character)
+			}
+		}
+		return result.trimmingCharacters(in: .whitespacesAndNewlines)
+	}
+
+	static func body(in text: String?) -> String? {
+		guard let text else { return nil }
+		let cleaned = replacingEmoji(in: text)
+		guard cleaned.contains(where: { !$0.isWhitespace && $0 != "·" && $0 != "•" }) else { return nil }
+		return cleaned
+	}
+
+	static func subtitle(in text: String?, followingVersion: Bool) -> String? {
+		guard let cleaned = body(in: text) else { return nil }
+		var line = cleaned.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+		// The row already supplies a separator after its version.
+		if followingVersion && (line.hasPrefix("· ") || line.hasPrefix("• ")) {
+			line.removeFirst(2)
+		}
+		return line
 	}
 
 	static func matches(_ first: String, _ second: String?) -> Bool {
 		guard let second else { return false }
 		func normalized(_ text: String) -> String {
-			text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+			replacingEmoji(in: text).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
 		}
 		return normalized(first) == normalized(second)
 	}

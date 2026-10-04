@@ -27,6 +27,10 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	
 	func makeUIView(context: Context) -> UITableView {
 		let tableView = UITableView(frame: .zero, style: .plain)
+		// Native plain-table headers remain pinned until the next section replaces them.
+		tableView.backgroundColor = .systemBackground
+		tableView.sectionFooterHeight = .leastNormalMagnitude
+		tableView.estimatedSectionFooterHeight = .leastNormalMagnitude
 		tableView.delegate = context.coordinator
 		context.coordinator.attach(to: tableView)
 		tableView.register(SourceAppTableCell.self, forCellReuseIdentifier: "AppCell")
@@ -85,6 +89,10 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 
 // MARK: - Representable Extension: Coordinator
 extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObject, UITableViewDelegate {
+	func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+		// The search field lives in the navigation bar, outside this scroll view's controller.
+		scrollView.window?.endEditing(true)
+	}
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
 	var searchText: String
 	var sortOption: SourceAppsView.SortOption
@@ -101,6 +109,8 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	private var _newsHeaderController: UIHostingController<SourceNewsView>?
 	private var _newsHeaderSignature: String?
 	private var _newsHeaderWidth: CGFloat = 0
+	private var _dateObservers: [NSObjectProtocol] = []
+	private var _dateContextSignature = Locale.current.identifier + "|" + TimeZone.current.identifier
 	weak var uiTableView: UITableView?
 
 	private class DataSource: UITableViewDiffableDataSource<String, SourceAppRowID> {
@@ -131,7 +141,10 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		
 	}
 	
-	deinit { _prepareTask?.cancel() }
+	deinit {
+		_prepareTask?.cancel()
+		for observer in _dateObservers { NotificationCenter.default.removeObserver(observer) }
+	}
 
 	func attach(to tableView: UITableView) {
 		uiTableView = tableView
@@ -140,6 +153,13 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 			guard let self, let row = self._displayed?.rows[id] ?? self._previousDisplay?.rows[id] else { return cell }
 			self.configureVisibleCell(cell, row: row)
 			return cell
+		}
+		// Relative labels update on midnight/foreground without a repeating timer.
+		for name in [UIApplication.significantTimeChangeNotification, UIApplication.willEnterForegroundNotification,
+			NSLocale.currentLocaleDidChangeNotification] {
+			_dateObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+				MainActor.assumeIsolated { self?.updateDateContext() }
+			})
 		}
 		prepareList()
 	}
@@ -150,6 +170,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		var source = row.source
 		source.apps = []
 		source.news = nil
+		cell.backgroundConfiguration = .listPlainCell()
 		cell.contentConfiguration = UIHostingConfiguration {
 			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app, showSourceBadge: showBadge)
 				.tint(Color(hex: UserDefaults.standard.string(forKey: "Aether.userTintColor") ?? "#848ef9"))
@@ -212,7 +233,10 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		let update = {
 			dataSource.apply(snapshot, animatingDifferences: false) { [weak self, weak table] in
 				guard let self, let table else { return }
-				if self._generation == generation { self._previousDisplay = nil }
+				if self._generation == generation {
+					self._previousDisplay = nil
+					self.refreshVisibleHeaders()
+				}
 				if self._generation == generation, let (id, distance) = anchor, let indexPath = dataSource.indexPath(for: id), !table.isDragging && !table.isDecelerating {
 					table.layoutIfNeeded()
 					let minimum = -table.adjustedContentInset.top
@@ -305,22 +329,61 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	}
 	
 	func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
-		let headerView = tableView.dequeueReusableHeaderFooterView(withIdentifier: "SectionHeader")
-		guard let sections = _dataSource?.snapshot().sectionIdentifiers, sections.indices.contains(section) else { return nil }
-		let title = sections[section]
-
-		headerView?.contentConfiguration = UIHostingConfiguration {
-			HStack {
-				Text(verbatim: title)
-				Spacer()
-			}
-			.font(.headline)
-			.padding(.vertical, 2)
-		}
-		
-		return headerView
+		guard let header = tableView.dequeueReusableHeaderFooterView(withIdentifier: "SectionHeader") else { return nil }
+		configureHeader(header, section: section)
+		return header
 	}
-	
+
+	private func updateDateContext() {
+		let signature = Locale.current.identifier + "|" + TimeZone.current.identifier
+		if signature != _dateContextSignature {
+			_dateContextSignature = signature
+			prepareList(preserveScroll: true)
+		} else {
+			refreshVisibleHeaders()
+		}
+	}
+
+	private func refreshVisibleHeaders() {
+		guard let table = uiTableView else { return }
+		for section in Set((table.indexPathsForVisibleRows ?? []).map(\.section)) {
+			if let header = table.headerView(forSection: section) { configureHeader(header, section: section) }
+		}
+	}
+
+	private func configureHeader(_ header: UITableViewHeaderFooterView, section: Int) {
+		guard let sections = _displayed?.sections, sections.indices.contains(section) else { return }
+		let title = sections[section].displayTitle(today: .localized("Today"), yesterday: .localized("Yesterday"))
+		header.backgroundConfiguration = .clear()
+		header.contentConfiguration = UIHostingConfiguration {
+			if sortOption == .latest {
+				HStack {
+					Spacer(minLength: 0)
+					Text(verbatim: title)
+						.font(.caption.weight(.medium))
+						.foregroundStyle(.primary)
+						.lineLimit(1)
+						.padding(.horizontal, 10)
+						.padding(.vertical, 4)
+						.glassEffect(.regular, in: .capsule)
+					Spacer(minLength: 0)
+				}
+			} else {
+				HStack {
+					Text(verbatim: title)
+					Spacer()
+				}
+				.font(.headline)
+				.padding(.vertical, 2)
+			}
+		}
+		.margins(.vertical, 4)
+	}
+
+	func tableView(_ tableView: UITableView, heightForFooterInSection section: Int) -> CGFloat {
+		.leastNormalMagnitude
+	}
+
 	func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath, point: CGPoint) -> UIContextMenuConfiguration? {
 		guard let entry = row(at: indexPath) else { return nil }
 

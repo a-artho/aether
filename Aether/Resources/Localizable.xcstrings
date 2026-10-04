@@ -1,6 +1,50 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "On-device pairing verified" : {
+      "comment" : "Pairing record verification status; saved does not imply accepted by iOS.",
+      "extractionState" : "manual"
+    },
+    "Imported pairing verified" : {
+      "comment" : "Pairing record verification status; saved does not imply accepted by iOS.",
+      "extractionState" : "manual"
+    },
+    "Checking pairing…" : {
+      "comment" : "Pairing record verification status; saved does not imply accepted by iOS.",
+      "extractionState" : "manual"
+    },
+    "Pairing saved — unable to verify" : {
+      "comment" : "Pairing record verification status; saved does not imply accepted by iOS.",
+      "extractionState" : "manual"
+    },
+    "On-device pairing saved — unverified" : {
+      "comment" : "Pairing record verification status; saved does not imply accepted by iOS.",
+      "extractionState" : "manual"
+    },
+    "Imported pairing saved — unverified" : {
+      "comment" : "Pairing record verification status; saved does not imply accepted by iOS.",
+      "extractionState" : "manual"
+    },
+    "Installs" : {
+      "comment" : "Device tab section containing the active and queued installation cards.",
+      "extractionState" : "manual"
+    },
+    "Cancel Queued Installation" : {
+      "comment" : "Accessibility label for removing a waiting app from the installation queue.",
+      "extractionState" : "manual"
+    },
+    "Queued" : {
+      "comment" : "Status shown on an app card waiting for its turn to install.",
+      "extractionState" : "manual"
+    },
+    "Today" : {
+      "comment" : "App list section for updates dated today",
+      "extractionState" : "manual"
+    },
+    "Yesterday" : {
+      "comment" : "App list section for updates dated yesterday",
+      "extractionState" : "manual"
+    },
     "%@%%" : {
 
     },

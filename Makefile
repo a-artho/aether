@@ -7,9 +7,12 @@ export DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
 TMP := $(TMPDIR)/$(NAME)
 CERT_JSON_URL := https://backloop.dev/pack.json
 
-.PHONY: all clean deps $(PLATFORMS)
+.PHONY: all clean deps native $(PLATFORMS)
 
 all: $(PLATFORMS)
+
+native:
+	./IDeviceKitten/Native/build.sh
 
 clean:
 	rm -rf $(TMP)
@@ -27,6 +30,7 @@ deps:
 
 
 $(PLATFORMS): deps
+	@test -d IDeviceKitten/Native/IDevice.xcframework || $(MAKE) native
 	@if [ "$@" = "iphoneos" ]; then \
 		DEST="generic/platform=iOS"; \
 	else \

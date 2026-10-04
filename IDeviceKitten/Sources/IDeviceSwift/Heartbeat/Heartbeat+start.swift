@@ -166,7 +166,7 @@ extension HeartbeatManager {
 			if let errorPointer = connect(adapter, handshake) {
 				let error = IDeviceSwiftError(errorPointer)
 				_invalidateRSDTunnelLocked()
-				if attempt < 2 {
+				if !DeviceConnectionCheck(isConnected: false, errorCode: error.code, errorSubCode: error.subCode).rejectsPairingRecord, attempt < 2 {
 					// The tunnel can be reachable before every CoreDevice service has
 					// appeared in its RSD handshake. Give that registry a moment before
 					// rebuilding the connection instead of surfacing a transient
@@ -228,6 +228,11 @@ extension HeartbeatManager {
 					if let newHandshake { rsd_handshake_free(newHandshake) }
 					if let newAdapter { adapter_free(newAdapter) }
 					let error = IDeviceSwiftError(result)
+					// Preserve explicit authentication rejection instead of wrapping it
+					// in a generic endpoint error or retrying another port.
+					if DeviceConnectionCheck(isConnected: false, errorCode: error.code, errorSubCode: error.subCode).rejectsPairingRecord {
+						throw error
+					}
 					failures.append("\(ipAddress):\(port) — \(error.localizedDescription)")
 					continue
 				}

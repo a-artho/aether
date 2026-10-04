@@ -20,8 +20,7 @@ let package = Package(
 	targets: [
 		.binaryTarget(
 			name: "IDevice",
-			url: "https://github.com/jkcoxson/idevice/releases/download/v0.1.68/idevice-xcframework-v0.1.68.zip",
-			checksum: "c9eccdd1942de756d746a2569d93302774ab0eff1cff314ec8118f768b3d8dc7"
+			path: "Native/IDevice.xcframework"
 		),
 		.target(
 			name: "IDeviceSwift",

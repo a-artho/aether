@@ -17,6 +17,10 @@ Aether started as a fork of [Feather](https://github.com/claration/feather) by S
 
 **Signing:** The built-in tunnel needs a paid certificate and the `packet-tunnel-provider` and `allow-vpn` entitlements.
 
+## Building
+
+Before opening the Xcode project for the first build, install Rust from [rustup.rs](https://rustup.rs) and run `make native`. This builds Aether's pinned, patched device library. See [native build details](IDeviceKitten/Native/README.md). Generated native binaries stay outside Git.
+
 ## Screenshots
 
 <p align="center">

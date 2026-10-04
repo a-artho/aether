@@ -17,8 +17,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	var secondaryAction: (() -> Void)?
 	@ViewBuilder var titleMenu: () -> MenuContent
 	@StateObject private var transition = SearchToolbarTransition()
-	@Namespace private var searchGeometry
-	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@State private var searchButtonFrame: CGRect = .zero
 
 	func body(content: Content) -> some View {
 		content
@@ -28,67 +27,89 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			.toolbar {
 				if enabled {
 					ToolbarItem(placement: .principal) {
-						ZStack {
-							Text(title)
-								.font(.headline).lineLimit(1)
-								.opacity(transition.expanded ? 0 : 1)
-								.scaleEffect(transition.expanded ? 0.9 : 1)
-								.animation(reduceMotion ? nil : .easeInOut(duration: transition.animationDuration), value: transition.expanded)
+						Group {
+							if hasTitleMenu {
+								Menu { titleMenu() } label: {
+									HStack(spacing: 8) {
+										Text(title).font(.headline).lineLimit(1)
+										Image(systemName: "chevron.down")
+											.font(.system(size: 10, weight: .semibold))
+											.foregroundStyle(.secondary)
+											.frame(width: 18, height: 18)
+											.glassEffect(.regular.interactive(), in: .circle)
+									}
+									.accessibilityHidden(transition.expanded)
+								}
+								.buttonStyle(.plain)
+								.menuIndicator(.hidden)
+								.accessibilityLabel(title)
 								.accessibilityHidden(transition.expanded)
-							HStack(spacing: 8) {
-								Image(systemName: "magnifyingglass")
-									.font(.system(size: 16)).foregroundStyle(.secondary)
-								KeyboardSearchField(text: $text, focus: focus,
-									prompt: .localized("Search %@", arguments: title),
-									transition: transition)
-									.tint(.primary)
+							} else {
+								Text(title).font(.headline).lineLimit(1)
 							}
-							.padding(.horizontal, 12)
-							.frame(width: transition.expanded ? max(44, min(600, width - 84)) : 40, height: 40)
-							.clipped()
-							.glassEffect(.regular.interactive(), in: .capsule)
-							.matchedGeometryEffect(id: "search", in: searchGeometry, isSource: transition.expanded)
-							.opacity(transition.expanded ? 1 : 0)
-							.allowsHitTesting(transition.expanded)
-							.accessibilityHidden(!transition.expanded)
 						}
-						.frame(width: transition.expanded ? max(44, min(600, width - 84)) : nil, height: 44)
+						// Preserve the complete title label's width throughout search.
+						// The menu indicator must share the title's visibility and timing.
+						.opacity(transition.expanded ? 0 : 1)
+						.scaleEffect(transition.expanded ? 0.9 : 1)
+						.animation(transition.animation, value: transition.expanded)
+						.allowsHitTesting(!transition.expanded)
+						.accessibilityHidden(transition.expanded)
 					}
-					.sharedBackgroundVisibility(transition.expanded ? .hidden : .automatic)
-					if hasTitleMenu && !transition.expanded {
-						ToolbarTitleMenu { titleMenu() }
+					.sharedBackgroundVisibility(.hidden)
+					ToolbarItem(id: "search-action", placement: searchOnLeading ? .topBarLeading : .topBarTrailing) {
+						Button {
+							if transition.expanded && !searchOnLeading { closeSearch() }
+							else { openSearch() }
+						} label: {
+							Image(systemName: transition.expanded && !searchOnLeading ? "xmark" : "magnifyingglass")
+						}
+						.opacity(searchOnLeading && transition.expanded ? 0 : 1)
+						.allowsHitTesting(!searchOnLeading || !transition.expanded)
+						.accessibilityHidden(searchOnLeading && transition.expanded)
+						.accessibilityLabel(transition.expanded && !searchOnLeading ? .localized("Cancel") : .localized("Search"))
+						.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+							searchButtonFrame = frame
+						}
+					}
+					.sharedBackgroundVisibility(searchOnLeading && transition.expanded ? .hidden : .automatic)
+					if searchOnLeading {
+						ToolbarItem(id: "search-secondary", placement: .topBarTrailing) {
+							Button {
+								if transition.expanded { closeSearch() }
+								else { secondaryAction?() }
+							} label: { Image(systemName: transition.expanded ? "xmark" : secondarySymbol) }
+								.accessibilityLabel(transition.expanded ? .localized("Cancel") : secondaryLabel)
+								.opacity(secondaryAction != nil || transition.expanded ? 1 : 0)
+								.allowsHitTesting(secondaryAction != nil || transition.expanded)
+						}
 					}
 				}
-				if enabled && !transition.expanded {
-					ToolbarItem(placement: searchOnLeading ? .topBarLeading : .topBarTrailing) {
-						Button {
-							focus.wrappedValue = true
-							transition.setPresented(true)
-							isPresented = true
-						} label: { Image(systemName: "magnifyingglass") }
-						.matchedGeometryEffect(id: "search", in: searchGeometry, isSource: !transition.expanded)
-						.accessibilityLabel(.localized("Search"))
-					}
-					if let secondaryAction {
-						ToolbarItem(placement: .topBarTrailing) {
-							Button(action: secondaryAction) { Image(systemName: secondarySymbol) }
-								.accessibilityLabel(secondaryLabel)
-						}
-					}
-				} else if enabled {
-					ToolbarItem(placement: .topBarTrailing) {
-						Button {
-							transition.setPresented(false, keyboardExpected: focus.wrappedValue)
-							focus.wrappedValue = false
-							isPresented = false
-						} label: { Image(systemName: "xmark") }
-							.accessibilityLabel(.localized("Cancel"))
-					}
+			}
+			.background {
+				if enabled {
+					SearchHeaderOverlay(text: $text, focus: focus, title: title,
+						transition: transition, sourceFrame: searchButtonFrame, searchOnLeading: searchOnLeading)
 				}
 			}
 			.onAppear { transition.restore(isPresented: isPresented) }
 			.onChange(of: isPresented) { transition.setPresented($0, keyboardExpected: focus.wrappedValue) }
+			.onScrollPhaseChange { _, phase in
+				if phase == .interacting { focus.wrappedValue = false }
+			}
 	}
+	private func openSearch() {
+		focus.wrappedValue = true
+		transition.setPresented(true)
+		isPresented = true
+	}
+
+	private func closeSearch() {
+		transition.setPresented(false, keyboardExpected: focus.wrappedValue)
+		focus.wrappedValue = false
+		isPresented = false
+	}
+
 }
 
 @MainActor
@@ -96,6 +117,7 @@ final class SearchToolbarTransition: ObservableObject {
 	@Published private(set) var expanded = false
 	private(set) var requested = false
 	private(set) var animationDuration = 0.25
+	private(set) var animation: Animation? = .easeInOut(duration: 0.25)
 	private var waitingForKeyboard = false
 	private var generation = 0
 
@@ -149,13 +171,14 @@ final class SearchToolbarTransition: ObservableObject {
 		case 7: animation = .interpolatingSpring(duration: duration, bounce: 0)
 		default: animation = .easeInOut(duration: duration)
 		}
-		withAnimation(UIAccessibility.isReduceMotionEnabled ? nil : animation) {
+		self.animation = UIAccessibility.isReduceMotionEnabled ? nil : animation
+		withAnimation(self.animation) {
 			expanded = requested
 		}
 	}
 }
 
-private struct KeyboardSearchField: UIViewRepresentable {
+struct KeyboardSearchField: UIViewRepresentable {
 	@Binding var text: String
 	var focus: Binding<Bool>
 	let prompt: String
@@ -197,7 +220,7 @@ private struct KeyboardSearchField: UIViewRepresentable {
 	}
 }
 
-private final class SearchTextField: UITextField, UITextFieldDelegate {
+final class SearchTextField: UITextField, UITextFieldDelegate {
 	var wantsFocus = false
 	var textChanged: ((String) -> Void)?
 	var focusChanged: ((Bool) -> Void)?

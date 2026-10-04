@@ -82,6 +82,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	@Published public private(set) var state: DeviceConnectionState = .disconnected
 	@Published public private(set) var diagnostic: DeviceDiagnosticStatus = .tunnelUnavailable
 	@Published public private(set) var hasPairingFile: Bool = false
+	@Published public private(set) var pairingVerification = PairingVerificationState()
 	@Published public private(set) var tunnelMethod: DeviceTunnelMethod
 	@Published public private(set) var isAutoTunnelLifecycleEnabled: Bool
 	@Published public private(set) var physicalNetworkState: PhysicalNetworkState = .unknown
@@ -115,6 +116,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		) ?? .inApp
 		isAutoTunnelLifecycleEnabled = UserDefaults.standard.bool(forKey: Self.autoTunnelLifecycleKey)
 		HeartbeatManager.shared.ipAddress = EmbeddedTunnelManager.shared.peerIPOnly
+		_syncPairingRecord()
 		_log(
 			"Device connection initialized with \(tunnelMethod.displayName); pairing file \(hasPairingFile ? "available" : "missing")."
 		)
@@ -219,7 +221,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	/// developer tunnel to remain available.
 	@discardableResult
 	public func setInstallationMode(_ method: Int) -> Bool {
-		guard !AppInstallationManager.shared.isInstalling else {
+		guard !AppInstallationManager.shared.hasPendingInstalls else {
 			_log(
 				"Ignored installation mode change while an install is active.",
 				category: "Install",
@@ -273,7 +275,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	/// Automatic reconciliation deliberately never calls this path.
 	public func setUpInAppTunnel() {
 		guard isIDeviceInstallationMode, tunnelMethod == .inApp, !isUpdating else { return }
-		hasPairingFile = HeartbeatManager.hasPairingFile()
+		_syncPairingRecord()
 		guard hasPairingFile else {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
 			return
@@ -348,7 +350,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	private func _connectForIDeviceMode() {
 		Task { [weak self] in
 			guard let self else { return }
-			self.hasPairingFile = HeartbeatManager.hasPairingFile()
+			self._syncPairingRecord()
 			guard self.hasPairingFile else {
 				self._finishTransition(to: .disconnected, diagnostic: .pairingMissing)
 				return
@@ -400,7 +402,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	@discardableResult
 	public func ensureConnected() async throws -> Bool {
-		hasPairingFile = HeartbeatManager.hasPairingFile()
+		_syncPairingRecord()
 		guard hasPairingFile else {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
 			_log("Device action blocked because the pairing file is missing.", level: .warning)
@@ -448,10 +450,26 @@ public final class DeviceConnectionManager: ObservableObject {
 			}
 		}
 
+		let checkedRecord = _syncPairingRecord()
+		if let checkedRecord { pairingVerification.beginChecking(checkedRecord) }
 		let checkResult = await Task.detached(priority: .userInitiated) {
 			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
 		}.value
 
+		guard _recordStillMatches(checkedRecord) else {
+			throw DeviceConnectionError.serviceUnavailable("Pairing record changed during verification. Retry the connection.")
+		}
+		if let checkedRecord {
+			pairingVerification.finishChecking(checkedRecord, succeeded: checkResult.isConnected)
+		}
+		switch await _discardRejectedRecord(checkResult, record: checkedRecord) {
+		case .discarded, .failed:
+			throw DeviceConnectionError.invalidPairing
+		case .replaced:
+			throw DeviceConnectionError.serviceUnavailable("Pairing record changed during verification. Retry the connection.")
+		case .notRejected:
+			break
+		}
 		if checkResult.isConnected {
 			_finishTransition(to: .connected, diagnostic: .ready)
 			CellularAssistManager.shared.connectionDidSucceed()
@@ -459,7 +477,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			return true
 		} else {
 			await _resetRSDTunnel()
-			if checkResult.errorCode == -9 {
+			if checkResult.rejectsPairingRecord {
 				_finishTransition(to: .disconnected, diagnostic: .invalidPairing)
 				_log("Device rejected the pairing record.", level: .error)
 				throw DeviceConnectionError.invalidPairing
@@ -509,7 +527,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		guard !CellularAssistManager.shared.isAutomaticRecoveryInProgress || cellularAssistTransaction else {
 			return
 		}
-		hasPairingFile = HeartbeatManager.hasPairingFile()
+		_syncPairingRecord()
 		guard hasPairingFile else {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
 			return
@@ -575,6 +593,8 @@ public final class DeviceConnectionManager: ObservableObject {
 		}
 
 		// Step 2: Full Installation Proxy check (validates pairing + transport)
+		let checkedRecord = _syncPairingRecord()
+		if let checkedRecord { pairingVerification.beginChecking(checkedRecord) }
 		let checkResult = await Task.detached(priority: .userInitiated) {
 			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
 		}.value
@@ -589,6 +609,12 @@ public final class DeviceConnectionManager: ObservableObject {
 			return
 		}
 
+		guard _recordStillMatches(checkedRecord) else { return }
+		if let checkedRecord {
+			pairingVerification.finishChecking(checkedRecord, succeeded: checkResult.isConnected)
+		}
+		if await _discardRejectedRecord(checkResult, record: checkedRecord) != .notRejected { return }
+
 		if checkResult.isConnected {
 			if expectedState == false && !force && !isExpired {
 				// LocalDevVPN can remain reachable briefly after a disconnect request.
@@ -601,9 +627,9 @@ public final class DeviceConnectionManager: ObservableObject {
 			if expectedState == true && !force && !isExpired {
 				return
 			}
-			if checkResult.errorCode != -9, _beginCellularAssistIfEligible() { return }
+			if !checkResult.rejectsPairingRecord, _beginCellularAssistIfEligible() { return }
 			await _resetRSDTunnel()
-			if checkResult.errorCode == -9 {
+			if checkResult.rejectsPairingRecord {
 				_finishTransition(to: .disconnected, diagnostic: .invalidPairing)
 			} else {
 				let message = checkResult.error ?? "Device connection failed"
@@ -613,6 +639,48 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	// MARK: - Private Helpers
+
+	/// Refresh stored-file status without launching a VPN or adding another probe.
+	public func refreshStoredPairingState() {
+		_syncPairingRecord()
+	}
+
+	@discardableResult
+	private func _syncPairingRecord() -> PairingRecordIdentity? {
+		hasPairingFile = HeartbeatManager.hasPairingFile()
+		let record = hasPairingFile ? PairingRecordIdentity(fileURL: URL(fileURLWithPath: HeartbeatManager.activePairingFile())) : nil
+		if pairingVerification.record != record { pairingVerification.select(record) }
+		return record
+	}
+
+	private func _recordStillMatches(_ record: PairingRecordIdentity?) -> Bool {
+		_syncPairingRecord() == record
+	}
+
+	private enum PairingRejectionResult { case notRejected, discarded, replaced, failed }
+
+	/// A socket failure is inconclusive. Only a structured authentication
+	/// rejection allows us to discard the exact file used by this attempt.
+	private func _discardRejectedRecord(_ result: DeviceConnectionCheck, record: PairingRecordIdentity?) async -> PairingRejectionResult {
+		guard result.rejectsPairingRecord, let record else { return .notRejected }
+		_log("Device rejected the saved pairing identity (code \(result.errorCode ?? 0), subcode \(result.errorSubCode ?? 0)).", category: "Pairing", level: .error)
+		do {
+			guard try HeartbeatManager.discardRejectedPairingRecord(record) else {
+				_syncPairingRecord()
+				_log("Rejected pairing record was replaced; kept the current record.", category: "Pairing", level: .notice)
+				return .replaced
+			}
+			_syncPairingRecord()
+			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
+			_log("Discarded the rejected pairing record. Pairing is required again.", category: "Pairing", level: .notice)
+			await _resetRSDTunnel()
+			return .discarded
+		} catch {
+			_finishTransition(to: .disconnected, diagnostic: .invalidPairing)
+			_log("Could not discard the rejected pairing record: \(error.localizedDescription)", category: "Pairing", level: .error)
+			return .failed
+		}
+	}
 
 	private func _resetRSDTunnel() async {
 		await Task.detached(priority: .utility) {

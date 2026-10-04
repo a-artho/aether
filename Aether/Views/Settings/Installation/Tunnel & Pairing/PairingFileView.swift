@@ -10,6 +10,7 @@ import IDeviceSwift
 struct PairingFileView: View {
 	@State private var _isImportingPairingPresenting = false
 	@State private var _isOnDevicePairingPresenting = false
+	@ObservedObject private var _connection = DeviceConnectionManager.shared
 	@ObservedObject private var _onDevicePairing = OnDevicePairingManager.shared
 
 	@State private var _activePairingRecordSource: HeartbeatManager.PairingRecordSource?
@@ -20,7 +21,7 @@ struct PairingFileView: View {
 				HStack(spacing: 12) {
 					SettingsIconBadge(
 						systemImage: _activePairingRecordSource == nil ? "key.slash" : "key.fill",
-						backgroundColor: _activePairingRecordSource == nil ? .gray : .green
+						backgroundColor: _connection.isConnected && _connection.pairingVerification.status == .verified ? .green : .gray
 					)
 
 					VStack(alignment: .leading, spacing: 2) {
@@ -111,6 +112,9 @@ struct PairingFileView: View {
 		.onAppear {
 			_refreshPairingState()
 		}
+		.onChange(of: _connection.pairingVerification) { _ in
+			_refreshPairingState()
+		}
 		.onChange(of: _onDevicePairing.state) { state in
 			if case .completed = state {
 				_refreshPairingState()
@@ -121,11 +125,24 @@ struct PairingFileView: View {
 	private var _pairingStatus: String {
 		switch _activePairingRecordSource {
 		case .onDevice:
-			return .localized("On-device pairing is active")
+			return _verificationStatus(onDevice: true)
 		case .imported:
-			return .localized("Imported pairing file is active")
+			return _verificationStatus(onDevice: false)
 		case .none:
 			return .localized("No pairing file")
+		}
+	}
+
+	private func _verificationStatus(onDevice: Bool) -> String {
+		switch _connection.pairingVerification.status {
+		case .verified where _connection.isConnected:
+			return onDevice ? .localized("On-device pairing verified") : .localized("Imported pairing verified")
+		case .checking:
+			return .localized("Checking pairing…")
+		case .unableToVerify:
+			return .localized("Pairing saved — unable to verify")
+		default:
+			return onDevice ? .localized("On-device pairing saved — unverified") : .localized("Imported pairing saved — unverified")
 		}
 	}
 
@@ -157,6 +174,7 @@ struct PairingFileView: View {
 	}
 
 	private func _refreshPairingState() {
+		_connection.refreshStoredPairingState()
 		_activePairingRecordSource = HeartbeatManager.activePairingRecordSource()
 	}
 }

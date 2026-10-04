@@ -49,7 +49,7 @@ struct SourceAppsCellView: View {
 			
 			if
 				_storeCellAppearance != 0,
-				let desc = app.localizedDescription
+				let desc = SourceAppBodyText.body(in: app.localizedDescription)
 			{
 				Text(desc)
 					.frame(maxWidth: .infinity, alignment: .leading)
@@ -76,9 +76,9 @@ struct SourceAppsCellView: View {
 					.layoutPriority(1)
 				}
 
-				let rawSubtitle = app.currentDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
+				let rawSubtitle = SourceAppBodyText.subtitle(in: app.currentDescription, followingVersion: hasVersion)
 				if let rawSubtitle, !rawSubtitle.isEmpty {
-					let cleanSubtitle = rawSubtitle.replacingOccurrences(of: "\n", with: " ")
+					let cleanSubtitle = rawSubtitle
 					if hasVersion {
 						Text("•")
 							.font(.caption2)

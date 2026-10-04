@@ -13,10 +13,7 @@ import IDevice
 // MARK: - Class
 // ـ♡ﮩ٨ـ heartbeat ♪₊˚
 public class HeartbeatManager {
-	public enum PairingRecordSource: String {
-		case onDevice
-		case imported
-	}
+	public typealias PairingRecordSource = SavedPairingRecordSource
 
 	static public let shared = HeartbeatManager()
 	private static let pairingRecordSourceKey = "aether.activePairingRecordSource"
@@ -53,8 +50,7 @@ public class HeartbeatManager {
 
 	public var cancellable: AnyCancellable? // Combine
 
-	// One important note is that if a user gets `InvalidHostID -9` from heartbeat
-	// we need to ask them to reimport a fresh pairingfile,
+	// InvalidHostID means the saved pairing identity is no longer accepted.
 	public init() {
 		#if DEBUG
 		idevice_init_logger(IdeviceLogLevel.init(3), Disabled, nil)
@@ -112,22 +108,11 @@ public class HeartbeatManager {
 	/// Returns the selected pairing record, falling back to the only available
 	/// record when the previously selected one is no longer on disk.
 	static public func activePairingRecordSource() -> PairingRecordSource? {
-		let preferredSource = UserDefaults.standard.string(forKey: pairingRecordSourceKey)
-			.flatMap(PairingRecordSource.init(rawValue:))
-
-		if preferredSource == .onDevice, hasOnDevicePairingFile() {
-			return .onDevice
-		}
-		if preferredSource == .imported, hasImportedPairingFile() {
-			return .imported
-		}
-		if hasOnDevicePairingFile() {
-			return .onDevice
-		}
-		if hasImportedPairingFile() {
-			return .imported
-		}
-		return nil
+		PairingRecordSelection.resolve(
+			preference: UserDefaults.standard.string(forKey: pairingRecordSourceKey),
+			onDeviceExists: hasOnDevicePairingFile(),
+			importedExists: hasImportedPairingFile()
+		)
 	}
 
 	/// The pairing record used by the iDevice transport.
@@ -155,6 +140,18 @@ public class HeartbeatManager {
 	static public func useImportedPairingFile() {
 		guard hasImportedPairingFile() else { return }
 		UserDefaults.standard.set(PairingRecordSource.imported.rawValue, forKey: pairingRecordSourceKey)
+	}
+
+	/// Discard only the record whose authentication was rejected. Calls are made
+	/// on the main actor, alongside record import/selection, to avoid replacement races.
+	@MainActor
+	@discardableResult
+	static public func discardRejectedPairingRecord(_ record: PairingRecordIdentity) throws -> Bool {
+		guard activePairingRecordSource() != nil,
+			PairingRecordIdentity(fileURL: URL(fileURLWithPath: activePairingFile())) == record else { return false }
+		guard try record.discardIfUnchanged() else { return false }
+		UserDefaults.standard.set(PairingRecordSelection.invalidatedPreference, forKey: pairingRecordSourceKey)
+		return true
 	}
 
 	static public func removeOnDevicePairingFile() throws {

@@ -257,10 +257,10 @@ extension SourceAppsDetailView {
 			text = String(text.dropFirst(Self._genericSourcePlaceholder.count))
 				.trimmingCharacters(in: .whitespacesAndNewlines)
 
-			return text.isEmpty ? nil : text
+			return SourceAppBodyText.body(in: text)
 		}
 
-		return text
+		return SourceAppBodyText.body(in: text)
 	}
 
 	// MARK: Section helpers (local to this screen — do not use NBSection here)

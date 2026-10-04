@@ -14,6 +14,7 @@ import UIKit
 struct LibraryCellView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@Environment(\.editMode) private var editMode
+	@ObservedObject private var installationManager = AppInstallationManager.shared
 
 	private var _certificate: CertificatePair? {
 		guard app.isSigned else { return nil }
@@ -33,6 +34,22 @@ struct LibraryCellView: View {
 	@Binding var selectedSigningAppPresenting: AnyApp?
 	@Binding var selectedAppUUIDs: Set<String>
 	
+	private var _isQueued: Bool {
+		installationManager.containsInstallation(for: app)
+	}
+
+	private var _installTitle: String {
+		_isQueued ? .localized("Queued") : .localized("Install")
+	}
+
+	private func _installOrShowQueue(for app: AppInfoPresentable) {
+		if installationManager.containsInstallation(for: app) {
+			AppTabManager.shared.switchTo(.installed)
+		} else {
+			installationManager.startInstall(app: app)
+		}
+	}
+
 	// MARK: Selections
 	private var _isSelected: Bool {
 		guard let uuid = app.uuid else { return false }
@@ -154,7 +171,7 @@ extension LibraryCellView {
 			return (info.formatted, info.color)
 		}
 
-		return (.localized("Install"), .accentColor)
+		return (_installTitle, .accentColor)
 	}
 
 	@ViewBuilder
@@ -179,8 +196,8 @@ extension LibraryCellView {
 					UIApplication.openApp(with: id)
 				}
 			}
-			Button(.localized("Install"), systemImage: "square.and.arrow.down") {
-				AppInstallationManager.shared.startInstall(app: app)
+			Button(_installTitle, systemImage: "square.and.arrow.down") {
+				_installOrShowQueue(for: app)
 			}
 			Button(.localized("Re-sign"), systemImage: "signature") {
 				selectedSigningAppPresenting = AnyApp(base: app)
@@ -189,8 +206,8 @@ extension LibraryCellView {
 				ExportManager.shared.startExport(app: app)
 			}
 		} else {
-			Button(.localized("Install"), systemImage: "square.and.arrow.down") {
-				AppInstallationManager.shared.startInstall(app: app)
+			Button(_installTitle, systemImage: "square.and.arrow.down") {
+				_installOrShowQueue(for: app)
 			}
 			Button(.localized("Sign"), systemImage: "signature") {
 				selectedSigningAppPresenting = AnyApp(base: app)
@@ -202,15 +219,15 @@ extension LibraryCellView {
 	private func _buttonActions(for app: AppInfoPresentable) -> some View {
 		Button {
 			if app.isSigned {
-				AppInstallationManager.shared.startInstall(app: app)
+				_installOrShowQueue(for: app)
 				HapticManager.shared.selection()
 			} else {
 				selectedSigningAppPresenting = AnyApp(base: app)
 			}
 		} label: {
-			NBButton(app.isSigned ? .localized("Install") : .localized("Sign"), style: .text)
+			NBButton(app.isSigned ? _installTitle : .localized("Sign"), style: .text)
 		}
 		.buttonStyle(.borderless)
-		.accessibilityLabel(app.isSigned ? .localized("Install") : .localized("Sign"))
+		.accessibilityLabel(app.isSigned ? _installTitle : .localized("Sign"))
 	}
 }

@@ -28,6 +28,13 @@ struct LibraryView: View {
 	@State private var _isSearchFocused = false
 	@ObservedObject private var tabManager = AppTabManager.shared
 
+	@Environment(\.accessibilityReduceMotion) private var _reduceMotion
+
+	private enum LibrarySection: String, Identifiable {
+		case exports, downloads, signed, imported
+		var id: Self { self }
+	}
+
 	@Namespace private var _namespace
 
 	// horror
@@ -76,52 +83,63 @@ struct LibraryView: View {
 
 	// MARK: Body
 	var body: some View {
+		let signedApps = _filteredSignedApps
+		let importedApps = _filteredImportedApps
+		let sections: [LibrarySection] = [
+			exportManager.exports.isEmpty ? nil : .exports,
+			downloadManager.downloads.isEmpty ? nil : .downloads,
+			signedApps.isEmpty ? nil : .signed,
+			importedApps.isEmpty ? nil : .imported
+		].compactMap { $0 }
+
 		NBNavigationView(.localized("Library"), displayMode: .inline) {
 			NBListAdaptable {
-				if !exportManager.exports.isEmpty {
-					NBSection(.localized("Exports")) {
-						ForEach(exportManager.exports) { export in
-							ExportLibraryCellView(export: export)
+				ForEach(sections) { section in
+					switch section {
+					case .exports:
+						NBSection(.localized("Exports")) {
+							ForEach(exportManager.exports) { export in
+								ExportLibraryCellView(export: export)
+							}
 						}
-					}
-				}
 
-				if !downloadManager.downloads.isEmpty {
-					NBSection(.localized("Downloads")) {
-						ForEach(downloadManager.downloads) { download in
-							DownloadLibraryCellView(download: download)
+					case .downloads:
+						NBSection(.localized("Downloads")) {
+							ForEach(downloadManager.downloads) { download in
+								DownloadLibraryCellView(download: download)
+							}
 						}
-					}
-				}
 
-				if !_filteredSignedApps.isEmpty {
-					NBSection(.localized("Signed")) {
-						ForEach(_filteredSignedApps, id: \.uuid) { app in
-							LibraryCellView(
-								app: app,
-								selectedInfoAppPresenting: $_selectedInfoAppPresenting,
-								selectedSigningAppPresenting: $_selectedSigningAppPresenting,
-								selectedAppUUIDs: $_selectedAppUUIDs
-							)
-							.compatMatchedTransitionSource(id: app.uuid ?? "", ns: _namespace)
+					case .signed:
+						NBSection(.localized("Signed")) {
+							ForEach(signedApps, id: \.uuid) { app in
+								LibraryCellView(
+									app: app,
+									selectedInfoAppPresenting: $_selectedInfoAppPresenting,
+									selectedSigningAppPresenting: $_selectedSigningAppPresenting,
+									selectedAppUUIDs: $_selectedAppUUIDs
+								)
+								.compatMatchedTransitionSource(id: app.uuid ?? "", ns: _namespace)
+							}
 						}
-					}
-				}
 
-				if !_filteredImportedApps.isEmpty {
-					NBSection(.localized("Imported")) {
-						ForEach(_filteredImportedApps, id: \.uuid) { app in
-							LibraryCellView(
-								app: app,
-								selectedInfoAppPresenting: $_selectedInfoAppPresenting,
-								selectedSigningAppPresenting: $_selectedSigningAppPresenting,
-								selectedAppUUIDs: $_selectedAppUUIDs
-							)
-							.compatMatchedTransitionSource(id: app.uuid ?? "", ns: _namespace)
+					case .imported:
+						NBSection(.localized("Imported")) {
+							ForEach(importedApps, id: \.uuid) { app in
+								LibraryCellView(
+									app: app,
+									selectedInfoAppPresenting: $_selectedInfoAppPresenting,
+									selectedSigningAppPresenting: $_selectedSigningAppPresenting,
+									selectedAppUUIDs: $_selectedAppUUIDs
+								)
+								.compatMatchedTransitionSource(id: app.uuid ?? "", ns: _namespace)
+							}
 						}
 					}
 				}
 			}
+			// Only section membership changes animate the list, never transfer progress.
+			.animation(_reduceMotion ? nil : .snappy, value: sections)
 			.scrollDismissesKeyboard(.immediately)
 			.overlay {
 				if _libraryIsEmpty {
