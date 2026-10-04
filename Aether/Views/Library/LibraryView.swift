@@ -264,9 +264,7 @@ extension LibraryView {
 			return _selectedAppUUIDs.contains(uuid)
 		}
 
-		for app in selectedApps {
-			Storage.shared.deleteApp(for: app)
-		}
+		_deleteAvailableApps(selectedApps)
 
 		_selectedAppUUIDs.removeAll()
 
@@ -277,12 +275,18 @@ extension LibraryView {
 		var apps: [AppInfoPresentable] = Array(_signedApps)
 		apps.append(contentsOf: Array(_importedApps))
 
-		for app in apps {
-			Storage.shared.deleteApp(for: app)
-		}
+		_deleteAvailableApps(apps)
 
 		_selectedAppUUIDs.removeAll()
 		_editMode = .inactive
+	}
+
+	private func _deleteAvailableApps(_ apps: [AppInfoPresentable]) {
+		var retained = false
+		for app in apps { if !Storage.shared.deleteApp(for: app) { retained = true } }
+		if retained {
+			UIAlertController.showAlertWithOk(title: .localized("Apps In Use"), message: .localized("Apps required by an installation or update were kept. Cancel those operations before deleting them."))
+		}
 	}
 
 	private func _getAllApps() -> [AppInfoPresentable] {

@@ -47,15 +47,18 @@ final class AppInstallationManager: ObservableObject {
 	@Published var installer: ServerInstaller?
 	@Published var archiveHandler: ArchiveHandler?
 	@Published var isWebviewPresenting: Bool = false
+	@Published private(set) var isFinishingInstallation = false
 	@Published var lastErrorMessage: String?
 	
 	private var progressTask: Task<Void, Never>?
 	private var iDevicePreflightTask: Task<Void, Never>?
 	private var installTask: Task<Void, Never>?
 	private var retirementTask: Task<Void, Never>?
+	private var retiringAppKey: String?
 	private var settlementTask: Task<Void, Never>?
 	private var installGeneration = UUID()
 	private var cancellables = Set<AnyCancellable>()
+	private var _previousInstalledState: ServerInstallMonitor.InstalledState?
 	private var _hasLaunchedSemiLocalInstall = false
 	private var _backgroundTaskToken: String?
 	private var _backgroundBaseProgress = 0.0
@@ -137,7 +140,7 @@ final class AppInstallationManager: ObservableObject {
 
 	func containsInstallation(for app: AppInfoPresentable) -> Bool {
 		let key = InstallationRequest.appKey(for: app)
-		return currentRequest?.appKey == key || queuedInstalls.contains { $0.appKey == key }
+		return currentRequest?.appKey == key || retiringAppKey == key || queuedInstalls.contains { $0.appKey == key }
 	}
 
 	private var hasCompletedSuccessfully: Bool {
@@ -202,6 +205,9 @@ final class AppInstallationManager: ObservableObject {
 		let generation = UUID()
 		installGeneration = generation
 		let context = InstallationContext(method: request.method, serverMethod: request.serverMethod)
+		_previousInstalledState = (request.method == 1 ? nil : request.app.identifier.flatMap { UIApplication.installedApplicationState(for: $0) }).map {
+			ServerInstallMonitor.InstalledState(installed: $0.installed, version: $0.version, registeredAt: $0.registeredAt)
+		}
 		let statusVM = InstallerStatusViewModel(isIdevice: request.method == 1)
 		viewModel = statusVM
 		activeApp = request.app
@@ -299,7 +305,7 @@ final class AppInstallationManager: ObservableObject {
 				
 				if context.method == 0 {
 					let serverInstaller = try await MainActor.run {
-						try ServerInstaller(app: appSnapshot, viewModel: statusVM)
+						try ServerInstaller(app: appSnapshot, viewModel: statusVM, serverMethod: context.serverMethod)
 					}
 					guard await MainActor.run(body: {
 						self?.installGeneration == generation && !Task.isCancelled
@@ -399,7 +405,7 @@ final class AppInstallationManager: ObservableObject {
 			
 			if case .installing = newStatus, !isMock, let bundleIdentifier = app.identifier {
 				if progressTask == nil {
-					progressTask = startInstallProgressPolling(bundleID: bundleIdentifier, viewModel: statusVM)
+					progressTask = startInstallProgressPolling(bundleID: bundleIdentifier, version: app.version ?? "1", viewModel: statusVM, generation: generation)
 				}
 			}
 			
@@ -408,6 +414,7 @@ final class AppInstallationManager: ObservableObject {
 		_updateInstallationExecution(statusVM)
 		switch newStatus {
 		case .completed:
+			isFinishingInstallation = false
 			if let request = currentRequest { _completedBackgroundInstalls.insert(request.id) }
 			_updateInstallationExecution(statusVM)
 			_persistInstallQueue()
@@ -417,6 +424,7 @@ final class AppInstallationManager: ObservableObject {
 			NotificationCenter.default.post(name: Notification.Name("Aether.installedAppsRefresh"), object: nil)
 			_finishCompletedInstall(generation: generation)
 		case .broken:
+			isFinishingInstallation = false
 			_endInstallationExecution(success: false)
 			_log("Install failed for \(app.name ?? app.identifier ?? .localized("app")). Queue paused.", category: "Install", level: .error)
 			progressTask?.cancel()
@@ -453,53 +461,54 @@ final class AppInstallationManager: ObservableObject {
 	}
 
 	private func startInstallProgressPolling(
-		bundleID: String,
-		viewModel: InstallerStatusViewModel
+		bundleID: String, version: String?, viewModel: InstallerStatusViewModel, generation: UUID
 	) -> Task<Void, Never> {
-		Task.detached(priority: .background) { [weak self] in
-			var hasStarted = false
+		let previous = _previousInstalledState
+		return Task { [weak self, weak viewModel] in
+			var monitor = ServerInstallMonitor(expectedVersion: version, previous: previous, startedAt: ProcessInfo.processInfo.systemUptime)
 			var lastPublishedProgress = -1.0
-			
 			while !Task.isCancelled {
-				let rawProgress = await UIApplication.installProgress(for: bundleID) ?? 0.0
-				
-				if rawProgress > 0 {
-					hasStarted = true
+				guard let self, let viewModel, self.installGeneration == generation else { return }
+				let raw = UIApplication.installProgress(for: bundleID, makeSynchronous: false)
+				let evidence = UIApplication.installedApplicationState(for: bundleID).map {
+					ServerInstallMonitor.InstalledState(installed: $0.installed, version: $0.version, registeredAt: $0.registeredAt)
 				}
-				
-				let progress = await hasStarted
-					? (self?._normalizeInstallProgress(rawProgress) ?? 0.0)
-					: 0.0
-				
-				if abs(progress - lastPublishedProgress) >= 0.005 {
-					lastPublishedProgress = progress
-					await MainActor.run {
+				let outcome = monitor.observe(progress: raw, installed: evidence, now: ProcessInfo.processInfo.systemUptime)
+				if let raw, raw.isFinite {
+					let progress = self._normalizeInstallProgress(raw)
+					if abs(progress - lastPublishedProgress) >= 0.005 {
+						lastPublishedProgress = progress
 						viewModel.installProgress = progress
 					}
 				}
-				
-				if hasStarted && rawProgress == 0 {
-					await MainActor.run {
-						viewModel.installProgress = 1.0
-						viewModel.status = .completed(.success(()))
-					}
-					break
+				switch outcome {
+				case .success:
+					viewModel.installProgress = 1
+					viewModel.status = .completed(.success(()))
+					return
+				case .failed(let message):
+					viewModel.status = .broken(NSError(domain: "Aether.Install", code: 1, userInfo: [NSLocalizedDescriptionKey: message]))
+					return
+				case .waiting: break
 				}
-				
-				do {
-					try await Task.sleep(nanoseconds: 300_000_000)
-				} catch {
-					break
-				}
+				do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
 			}
 		}
 	}
-	
+
 	private func _normalizeInstallProgress(_ rawProgress: Double) -> Double {
 		min(1.0, max(0.0, (rawProgress - 0.6) / 0.3))
 	}
 	
 	func cancel() {
+		// Once the native install call has begun, its side effects cannot be
+		// rolled back by cancelling a Swift task. Keep the real operation visible.
+		if currentRequest?.method == 1, case .installing = viewModel?.status, installTask != nil {
+			isFinishingInstallation = true
+			_log("Cancel requested after iOS accepted installation; waiting for its result.", category: "Install", level: .notice)
+			return
+		}
+		isFinishingInstallation = false
 		if !(hasCompletedSuccessfully && !queuedInstalls.isEmpty) {
 			_endInstallationExecution(success: hasCompletedSuccessfully)
 		}
@@ -509,6 +518,7 @@ final class AppInstallationManager: ObservableObject {
 		settlementTask = nil
 		let worker = installTask
 		let preflight = iDevicePreflightTask
+		if worker != nil || preflight != nil { retiringAppKey = currentRequest?.appKey }
 		worker?.cancel()
 		preflight?.cancel()
 		installTask = nil
@@ -537,6 +547,7 @@ final class AppInstallationManager: ObservableObject {
 			await worker?.value
 			guard let self else { return }
 			self._cleanupInstallResources()
+			self.retiringAppKey = nil
 			self.retirementTask = nil
 			self._startNextIfPossible()
 			self._releaseBackgroundConnectionIfIdle()

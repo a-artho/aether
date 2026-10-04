@@ -6,6 +6,7 @@
 //
 
 import UIKit.UIApplication
+import ObjectiveC
 
 extension UIApplication {
 	/// Opens an app with an identifier
@@ -58,11 +59,12 @@ extension UIApplication {
 			let workspace = workspaceClass.perform(NSSelectorFromString(defaultSelector))?.takeUnretainedValue()
 		else { return nil }
 
-		let result = workspace.perform(
-			NSSelectorFromString(progressSelector),
-			with: identifier,
-			with: synchronous
-		)?.takeUnretainedValue()
+		// perform(with:with:) passes objects, not the BOOL this method expects.
+		let selector = NSSelectorFromString(progressSelector)
+		guard let method = class_getInstanceMethod(type(of: workspace), selector) else { return nil }
+		typealias ProgressFunction = @convention(c) (AnyObject, Selector, NSString, Bool) -> Unmanaged<AnyObject>?
+		let function = unsafeBitCast(method_getImplementation(method), to: ProgressFunction.self)
+		let result = function(workspace, selector, identifier as NSString, synchronous)?.takeUnretainedValue()
 
 		if let number = result as? Progress {
 			return number.fractionCompleted

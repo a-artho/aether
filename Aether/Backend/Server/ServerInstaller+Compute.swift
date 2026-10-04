@@ -27,11 +27,11 @@ extension ServerInstaller {
 		let identifier = app.identifier ?? Bundle.main.bundleIdentifier ?? "unknown.app"
 		let name = app.name ?? identifier
 		let version = app.version ?? "1"
-		let baseUrl = "https://api.palera.in/genPlist?bundleid=\(identifier)&name=\(name)&version=\(version)&fetchurl=\(self.payloadEndpoint.absoluteString)"
-		let encodedBaseUrl = baseUrl.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? baseUrl
-		let finalEncodedUrl = encodedBaseUrl.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? encodedBaseUrl
-		
-		return finalEncodedUrl
+		var url = URLComponents(string: "https://api.palera.in/genPlist")!
+		url.queryItems = [URLQueryItem(name: "bundleid", value: identifier), URLQueryItem(name: "name", value: name),
+			URLQueryItem(name: "version", value: version), URLQueryItem(name: "fetchurl", value: payloadEndpoint.absoluteString)]
+		url.percentEncodedQuery = url.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+		return url.url?.absoluteString ?? ""
 	}
 
 	var iTunesLink: String {
@@ -58,7 +58,12 @@ extension ServerInstaller {
 	}
 	
 	private func _iTunesLink(with url: String) -> String {
-		return "itms-services://?action=download-manifest&url=\(url)"
+		var link = URLComponents()
+		link.scheme = "itms-services"
+		link.host = ""
+		link.queryItems = [URLQueryItem(name: "action", value: "download-manifest"), URLQueryItem(name: "url", value: url)]
+		link.percentEncodedQuery = link.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+		return link.url?.absoluteString ?? ""
 	}
 
 	var displayImageSmallEndpoint: URL {

@@ -19,35 +19,42 @@ public enum AppLifecycleService {
 		// contract, unlike the private Objective-C workspace selector.
 		let heartbeat = HeartbeatManager.shared
 		if heartbeat.isRsd && HeartbeatManager.hasPairingFile() {
-			let launched = try await Task.detached(priority: .userInitiated) { () -> Bool in
-				var appService: AppServiceHandle?
-				try heartbeat.withRSDServiceConnection { adapter, handshake in
-					app_service_connect_rsd(adapter, handshake, &appService)
-				}
-				guard let appService else {
-					throw IDeviceConnectionError.appServiceConnectionFailed("Could not connect to AppService.")
-				}
-				defer { app_service_free(appService) }
+			do {
+				let launched = try await Task.detached(priority: .userInitiated) { () -> Bool in
+					var appService: AppServiceHandle?
+					try heartbeat.withRSDServiceConnection { adapter, handshake in
+						app_service_connect_rsd(adapter, handshake, &appService)
+					}
+					guard let appService else {
+						throw IDeviceConnectionError.appServiceConnectionFailed("Could not connect to AppService.")
+					}
+					defer { app_service_free(appService) }
 
-				var response: UnsafeMutablePointer<LaunchResponseC>?
-				let launchErr = bundleIdentifier.withCString { cBundleId in
-					app_service_launch_app(appService, cBundleId, nil, 0, 0, 0, nil, &response)
+					var response: UnsafeMutablePointer<LaunchResponseC>?
+					let launchErr = bundleIdentifier.withCString { cBundleId in
+						app_service_launch_app(appService, cBundleId, nil, 0, 0, 0, nil, &response)
+					}
+					if let launchErr {
+						throw IDeviceSwiftError(launchErr)
+					}
+					if let response {
+						app_service_free_launch_response(response)
+					}
+					return true
+				}.value
+				if launched {
+					return true
 				}
-				if let launchErr {
-					throw IDeviceSwiftError(launchErr)
-				}
-				if let response {
-					app_service_free_launch_response(response)
-				}
-				return true
-			}.value
-			if launched {
-				return true
+			} catch is CancellationError {
+				throw CancellationError()
+			} catch {
+				// A failed service transport still permits the documented scheme fallback.
 			}
 		}
 
 		// Fall back to registered URL schemes when the device service is unavailable.
 		for scheme in urlSchemes {
+			try Task.checkCancellation()
 			let clean = scheme.trimmingCharacters(in: .whitespacesAndNewlines)
 			guard !clean.isEmpty, let url = URL(string: "\(clean)://") else { continue }
 			let opened = await withCheckedContinuation { continuation in

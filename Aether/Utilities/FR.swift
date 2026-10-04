@@ -116,6 +116,7 @@ enum FR {
 		icon: UIImage?,
 		certificate: CertificatePair?,
 		backgroundTaskToken: String? = nil,
+		transactionIdentifier: String? = nil,
 		completion: @escaping (Result<String, Error>) -> Void
 	) -> Task<Void, Never> {
 		let appSnapshot = AppSnapshot(app)
@@ -143,7 +144,7 @@ enum FR {
 		}
 		#endif
 		worker = Task.detached {
-			let handler = SigningHandler(app: appSnapshot, options: options)
+			let handler = SigningHandler(app: appSnapshot, options: options, transactionIdentifier: transactionIdentifier)
 			handler.appCertificate = certificateSnapshot
 			handler.appIconData = iconData
 			
@@ -172,7 +173,11 @@ enum FR {
 				try? await handler.clean()
 				await MainActor.run {
 					if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
-					if let signed = Storage.shared.signedApp(uuid: handler.signedUUID) { Storage.shared.deleteApp(for: signed) }
+					if let signed = Storage.shared.signedApp(uuid: handler.signedUUID) {
+						Storage.shared.deleteApp(for: signed, ownedSigningTransaction: true)
+					} else {
+						try? FileManager.default.removeFileIfNeeded(at: FileManager.default.signed(handler.signedUUID))
+					}
 					#if !targetEnvironment(macCatalyst)
 					if backgroundTaskToken == nil { BackgroundTaskManager.shared.stopTask(for: token, success: false) }
 					#endif

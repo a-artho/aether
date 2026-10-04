@@ -371,53 +371,44 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 	}
 
 	private func _addDefaultCertificates() {
-		guard
-			UserDefaults.standard.bool(forKey: "aether.didImportDefaultCertificates") == false,
-			let signingAssetsURL = Bundle.main.url(forResource: "signing-assets", withExtension: nil)
-		else {
-			return
-		}
-
-		do {
-			let folderContents = try FileManager.default.contentsOfDirectory(
-				at: signingAssetsURL,
-				includingPropertiesForKeys: nil,
-				options: .skipsHiddenFiles
-			)
-
-			for folderURL in folderContents {
-				guard folderURL.hasDirectoryPath else { continue }
-
-				let certName = folderURL.lastPathComponent
-
-				let p12Url = folderURL.appendingPathComponent("cert.p12")
-				let provisionUrl = folderURL.appendingPathComponent("cert.mobileprovision")
-				let passwordUrl = folderURL.appendingPathComponent("cert.txt")
-
-				guard
-					FileManager.default.fileExists(atPath: p12Url.path),
-					FileManager.default.fileExists(atPath: provisionUrl.path),
-					FileManager.default.fileExists(atPath: passwordUrl.path)
-				else {
-					Logger.misc.warning("Skipping \(certName): missing required files")
-					continue
+		guard !UserDefaults.standard.bool(forKey: "aether.didImportDefaultCertificates.v2"),
+			let assets = Bundle.main.url(forResource: "signing-assets", withExtension: nil) else { return }
+		Task { @MainActor in
+			do {
+				let folders = try FileManager.default.contentsOfDirectory(at: assets, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+				var allSucceeded = true
+				for folder in folders where folder.hasDirectoryPath {
+					do {
+						let key = folder.appendingPathComponent("cert.p12")
+						let provision = folder.appendingPathComponent("cert.mobileprovision")
+						let password = try String(contentsOf: folder.appendingPathComponent("cert.txt"), encoding: .utf8)
+						let keyData = try Data(contentsOf: key)
+						let provisionData = try Data(contentsOf: provision)
+						// Idempotent after an earlier partial migration or a crash after
+						// the certificate commit but before the migration flag commit.
+						let exists = Storage.shared.getAllCertificates().contains { cert in
+							guard cert.isDefault, cert.password == password,
+								let storedKey = Storage.shared.getFile(.certificate, from: cert),
+								let storedProvision = Storage.shared.getFile(.provision, from: cert) else { return false }
+							return (try? Data(contentsOf: storedKey)) == keyData && (try? Data(contentsOf: storedProvision)) == provisionData
+						}
+						if exists { continue }
+						let _: Void = try await withCheckedThrowingContinuation { continuation in
+							FR.handleCertificateFiles(p12URL: key, provisionURL: provision, p12Password: password,
+								certificateName: folder.lastPathComponent, isDefault: true) { error in
+								if let error { continuation.resume(throwing: error) }
+								else { continuation.resume() }
+							}
+						}
+					} catch {
+						allSucceeded = false
+						DebugLogManager.shared.log("Default certificate import failed: \(error.localizedDescription)", category: "Certificate", level: .error)
+					}
 				}
-
-				let password = try String(contentsOf: passwordUrl, encoding: .utf8)
-
-				FR.handleCertificateFiles(
-					p12URL: p12Url,
-					provisionURL: provisionUrl,
-					p12Password: password,
-					certificateName: certName,
-					isDefault: true
-				) { _ in
-
-				}
+				if allSucceeded { UserDefaults.standard.set(true, forKey: "aether.didImportDefaultCertificates.v2") }
+			} catch {
+				DebugLogManager.shared.log("Default certificate migration failed: \(error.localizedDescription)", category: "Certificate", level: .error)
 			}
-			UserDefaults.standard.set(true, forKey: "aether.didImportDefaultCertificates")
-		} catch {
-			Logger.misc.error("Failed to list signing-assets: \(error)")
 		}
 	}
 

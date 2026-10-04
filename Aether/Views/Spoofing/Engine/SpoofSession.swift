@@ -123,7 +123,6 @@ final class SpoofSession: ObservableObject {
 
 	func teleport(to coordinate: CLLocationCoordinate2D) async {
 		guard !isBusy else { return }
-		guard await _ensureDeviceReady() else { return }
         routeGeneration &+= 1
         routeTask?.cancel()
         routeTask = nil
@@ -134,7 +133,6 @@ final class SpoofSession: ObservableObject {
 
 	func stop() async {
 		guard status != .stopping else { return }
-		guard await _ensureDeviceReady() else { return }
         operationGeneration &+= 1
         let generation = operationGeneration
         routeGeneration &+= 1
@@ -146,6 +144,12 @@ final class SpoofSession: ObservableObject {
         connectionDetail = nil
         let verifyRemotely = simulated != nil || status.isDropped
         status = .stopping
+		// Reserve Stop before preflight can suspend. Every older Set becomes stale.
+		guard await _ensureDeviceReady(generation: generation) else {
+			if operationGeneration == generation { isBusy = false }
+			return
+		}
+		guard operationGeneration == generation else { return }
 		let result = await LocationEngine.clear(
 			pairingPath: HeartbeatManager.activePairingFile(),
 			deviceIP: HeartbeatManager.shared.ipAddress,
@@ -183,7 +187,6 @@ final class SpoofSession: ObservableObject {
 
 	func startJoystick() async {
 		guard !isBusy else { return }
-		guard await _ensureDeviceReady() else { return }
         let start = simulated ?? pin ?? locationKeeper.lastKnownCoordinate
         guard let start else {
             lastError = "Drop a pin or teleport somewhere before using the joystick."
@@ -192,9 +195,7 @@ final class SpoofSession: ObservableObject {
         routeGeneration &+= 1
         routeTask?.cancel()
         routeTask = nil
-        if simulated == nil {
-			guard await apply(start, markRecent: false) else { return }
-        }
+		guard await apply(start, markRecent: false) else { return }
         joystickActive = true
         joystickTimer?.invalidate()
         joystickTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -218,13 +219,16 @@ final class SpoofSession: ObservableObject {
     /// Revalidate on return because in-process timers do not run while iOS suspends the app.
 	func refreshAfterForeground() async {
 		guard !isBusy, let simulated else { return }
-		guard await _ensureDeviceReady() else {
+		let generation = operationGeneration
+		guard await _ensureDeviceReady(generation: generation) else {
+			guard operationGeneration == generation else { return }
             routeGeneration &+= 1
             routeTask?.cancel()
             routeTask = nil
             markTunnelUnavailable()
             return
         }
+		guard operationGeneration == generation, !isBusy else { return }
         if routeTask != nil && stopStaleRouteIfNeeded() { return }
         guard routeTask == nil, !joystickActive else { return }
 		_ = await apply(simulated, markRecent: false)
@@ -348,8 +352,7 @@ final class SpoofSession: ObservableObject {
 
     @discardableResult
 	private func apply(_ coordinate: CLLocationCoordinate2D, markRecent: Bool) async -> Bool {
-		guard !isBusy else { return false }
-		guard await _ensureDeviceReady() else { return false }
+		guard !isBusy, !Task.isCancelled else { return false }
         let hadUnconfirmedLocation = status.isDropped
         if status == .idle {
             status = .connecting
@@ -360,6 +363,12 @@ final class SpoofSession: ObservableObject {
         let generation = operationGeneration
         isBusy = true
         connectionDetail = nil
+		guard await _ensureDeviceReady(generation: generation) else {
+			if operationGeneration == generation { isBusy = false }
+			return false
+		}
+		guard operationGeneration == generation else { return false }
+		guard !Task.isCancelled else { isBusy = false; return false }
         // Persist before the remote call: it can take effect even if the app exits
         // before receiving a reply. Only a confirmed clear removes this marker.
         UserDefaults.standard.set(true, forKey: Self.unresolvedSimulationKey)
@@ -527,11 +536,12 @@ final class SpoofSession: ObservableObject {
         return CLLocationCoordinate2D(latitude: coordinate.latitude + dLat, longitude: coordinate.longitude + dLon)
 	}
 
-	private func _ensureDeviceReady() async -> Bool {
+	private func _ensureDeviceReady(generation: Int? = nil) async -> Bool {
 		do {
 			try await DeviceConnectionManager.shared.ensureConnected()
 			return true
 		} catch {
+			if let generation, operationGeneration != generation { return false }
 			let message = error.localizedDescription
 			lastError = message
 			status = .dropped(message)

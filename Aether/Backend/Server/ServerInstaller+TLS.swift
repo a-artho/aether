@@ -24,12 +24,15 @@ extension ServerInstaller {
 	
 	func setupApp(port: Int) throws -> Application {
 		let app = Application(Self.env)
+		var configured = false
+		defer { if !configured { app.shutdown() } }
 		app.threadPool = .init(numberOfThreads: 1)
 		
 		if getServerMethod() != 1 {
-			if let tls = try tls() {
-				app.http.server.configuration.tlsConfiguration = tls
+			guard let tls = try tls(), let commonName = readCommonName(), !commonName.isEmpty else {
+				throw NSError(domain: "Aether.Server", code: 1, userInfo: [NSLocalizedDescriptionKey: String.localized("Fully Local installation requires valid SSL certificates and a common name. Set them up in Server settings.")])
 			}
+			app.http.server.configuration.tlsConfiguration = tls
 		}
 		
 		app.http.server.configuration.hostname = sni()
@@ -39,6 +42,7 @@ extension ServerInstaller {
 		app.routes.defaultMaxBodySize = "128mb"
 		app.routes.caseInsensitive = false
 		
+		configured = true
 		return app
 	}
 	

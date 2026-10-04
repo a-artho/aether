@@ -33,16 +33,23 @@ class ServerInstaller: Identifiable, ObservableObject {
 	
 	var packageUrl: URL?
 	var app: AppInfoPresentable
+	private let serverMethod: Int
 	@ObservedObject var viewModel: InstallerStatusViewModel
 	private var _server: Application?
 
-	init(app: AppInfoPresentable, viewModel: InstallerStatusViewModel) throws {
+	init(app: AppInfoPresentable, viewModel: InstallerStatusViewModel, serverMethod: Int) throws {
 		self.app = app
+		self.serverMethod = serverMethod
 		self.viewModel = viewModel
-		try _setup()
-		try _configureRoutes()
-		try _server?.server.start()
-		_needsShutdown = true
+		do {
+			try _setup()
+			_needsShutdown = true
+			try _configureRoutes()
+			try _server?.server.start()
+		} catch {
+			_shutdownServer()
+			throw error
+		}
 	}
 	
 	deinit {
@@ -117,7 +124,7 @@ class ServerInstaller: Identifiable, ObservableObject {
 	}
 		
 	func getServerMethod() -> Int {
-		UserDefaults.standard.object(forKey: "Aether.serverMethod") as? Int ?? 1
+		serverMethod
 	}
 	
 	func getIPFix() -> Bool {

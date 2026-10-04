@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FEA900000000000000000003 = {isa = PBXBuildFile; productRef = FEA900000000000000000002; };
 		FEA700000000000000000001 /* AetherTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FEA700000000000000000003 /* AetherTunnel.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FEA700000000000000000002 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FEA700000000000000000004 /* NetworkExtension.framework */; };
 		3305BBAC2DB8944200660D45 /* Vapor in Frameworks */ = {isa = PBXBuildFile; productRef = 3305BBAB2DB8944200660D45 /* Vapor */; };
@@ -108,6 +109,7 @@
 				33CF13392DB5ACFB0021D4C5 /* SWCompression in Frameworks */,
 				33693A082DC8BF5B00730215 /* AltSourceKit in Frameworks */,
 				3371F7322DA9ECDD00281AC6 /* Zip in Frameworks */,
+				FEA900000000000000000003,
 				330F69032DC03DF500D8C35D /* NimbleViews in Frameworks */,
 				3305BBAC2DB8944200660D45 /* Vapor in Frameworks */,
 				3346F83B2DC6C6D100C7D508 /* NukeUI in Frameworks */,
@@ -180,6 +182,7 @@
 			name = Aether;
 			packageProductDependencies = (
 				3371F7312DA9ECDD00281AC6 /* Zip */,
+				FEA900000000000000000002,
 				33CF13382DB5ACFB0021D4C5 /* SWCompression */,
 				3305BBAB2DB8944200660D45 /* Vapor */,
 				330F68FB2DBF7C8600D8C35D /* NimbleExtensions */,
@@ -321,6 +324,7 @@
 			packageReferences = (
 				3371F5152DA91FDC00281AC6 /* XCLocalSwiftPackageReference "Zsign" */,
 				3371F6F52DA9EBA500281AC6 /* XCRemoteSwiftPackageReference "Zip" */,
+				FEA900000000000000000001,
 				33CF13372DB5ACFB0021D4C5 /* XCRemoteSwiftPackageReference "SWCompression" */,
 				3305BBAA2DB8944200660D45 /* XCRemoteSwiftPackageReference "vapor" */,
 				330F68FF2DC03DF400D8C35D /* XCLocalSwiftPackageReference "NimbleKit" */,
@@ -748,6 +752,7 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		FEA900000000000000000001 = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/weichsel/ZIPFoundation"; requirement = {kind = exactVersion; version = 0.9.20; }; };
 		3305BBAA2DB8944200660D45 /* XCRemoteSwiftPackageReference "vapor" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/vapor/vapor";
@@ -783,6 +788,7 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		FEA900000000000000000002 = {isa = XCSwiftPackageProductDependency; package = FEA900000000000000000001; productName = ZIPFoundation; };
 		3305BBAB2DB8944200660D45 /* Vapor */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 3305BBAA2DB8944200660D45 /* XCRemoteSwiftPackageReference "vapor" */;

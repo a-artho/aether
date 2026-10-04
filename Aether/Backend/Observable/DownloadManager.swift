@@ -321,10 +321,11 @@ class DownloadManager: NSObject, ObservableObject {
 		#if !targetEnvironment(macCatalyst)
 		DownloadActivityManager.shared.finish(download, status: .cancelled)
 		#endif
-		_processingTasks.removeValue(forKey: download.id)?.cancel()
+		let processing = _processingTasks.removeValue(forKey: download.id)
+		processing?.cancel()
 		download.task?.cancel()
 		download.task = nil
-		_stopContinuedTask(for: download, success: false)
+		if !download.backgroundTaskTransferred { _stopContinuedTask(for: download, success: false) }
 
 		if let index = downloads.firstIndex(where: { $0.id == download.id }) {
 			downloads.remove(at: index)
@@ -335,9 +336,19 @@ class DownloadManager: NSObject, ObservableObject {
 
 		let importIdentifier = download.importIdentifier
 		Task.detached(priority: .utility) {
+			await processing?.value
 			await AppFileHandler.removeImportTransaction(
 				transactionIdentifier: importIdentifier
 			)
+		}
+	}
+
+	func usesLibraryArtifact(_ app: AppInfoPresentable) -> Bool {
+		guard let uuid = app.uuid else { return false }
+		return downloads.contains { download in
+			guard let intent = download.automaticUpdate else { return false }
+			return app.isSigned ? (intent.signedUUID == uuid || intent.signingTransactionUUID == uuid)
+				: (download.importIdentifier == uuid && download.isActive)
 		}
 	}
 
@@ -1075,6 +1086,7 @@ struct AutomaticUpdateIntent: Codable {
 	let teamIdentifier: String?
 	var options: Options
 	var signedUUID: String?
+	var signingTransactionUUID: String?
 	var installationEnqueued: Bool?
 }
 
@@ -1150,9 +1162,10 @@ extension DownloadManager {
 		download.state = .processing
 		download.isSigningUpdate = true
 		_persistDownloads()
-		Task {
+		_processingTasks[download.id] = Task {
 			await _updateSigningGate.acquire()
 			do {
+				try Task.checkCancellation()
 				guard _isCurrent(download), !download.waitingForForeground, var intent = download.automaticUpdate else {
 					throw CancellationError()
 				}
@@ -1161,7 +1174,25 @@ extension DownloadManager {
 					throw AutomaticUpdateError(message: .localized("The signing certificate was removed. Import it again before retrying."))
 				}
 				try _validateUpdateCertificate(certificate, team: intent.teamIdentifier)
+				// A committed signing transaction can survive process termination before
+				// its completion callback saves the update intent.
+				if intent.signedUUID == nil, let uuid = intent.signingTransactionUUID,
+					let signed = Storage.shared.signedApp(uuid: uuid), signed.identifier == intent.bundleIdentifier,
+					InstalledAppUpdateCatalog.isNewer(signed.version, than: intent.installedVersion) {
+					intent.signedUUID = uuid
+					download.automaticUpdate = intent
+					guard await _persistBeforeResuming(download) else { throw CancellationError() }
+				}
 				if intent.signedUUID == nil {
+					let transaction = intent.signingTransactionUUID ?? UUID().uuidString
+					intent.signingTransactionUUID = transaction
+					download.automaticUpdate = intent
+					guard await _persistBeforeResuming(download) else { throw CancellationError() }
+					try Task.checkCancellation()
+					// An interrupted move without a database commit is not reusable.
+					if Storage.shared.signedApp(uuid: transaction) == nil {
+						try FileManager.default.removeFileIfNeeded(at: FileManager.default.signed(transaction))
+					}
 					let request: NSFetchRequest<Imported> = Imported.fetchRequest()
 					request.fetchLimit = 1
 					request.predicate = NSPredicate(format: "uuid == %@", download.importIdentifier)
@@ -1171,11 +1202,18 @@ extension DownloadManager {
 						throw AutomaticUpdateError(message: .localized("The downloaded app’s identifier or version does not match this update."))
 					}
 					DebugLogManager.shared.log("Signing update for \(intent.bundleIdentifier).", category: "Update", level: .notice)
-					let signedUUID: String = try await withCheckedThrowingContinuation { continuation in
-						FR.signPackageFile(imported, using: intent.options, icon: nil, certificate: certificate, backgroundTaskToken: download.id) {
-							continuation.resume(with: $0)
+					let relay = TaskCancellationRelay()
+					let signedUUID: String = try await withTaskCancellationHandler {
+						try Task.checkCancellation()
+						return try await withCheckedThrowingContinuation { continuation in
+							let worker = FR.signPackageFile(imported, using: intent.options, icon: nil, certificate: certificate,
+								backgroundTaskToken: download.id, transactionIdentifier: transaction) {
+								continuation.resume(with: $0)
+							}
+							relay.attach(worker)
 						}
-					}
+					} onCancel: { relay.cancel() }
+
 					guard _isCurrent(download) else {
 						if let signed = Storage.shared.signedApp(uuid: signedUUID) { Storage.shared.deleteApp(for: signed) }
 						throw CancellationError()
@@ -1193,6 +1231,7 @@ extension DownloadManager {
 					throw AutomaticUpdateError(message: .localized("The signed update is no longer available."))
 				}
 				DebugLogManager.shared.log("Sending update to the install queue for \(intent.bundleIdentifier).", category: "Update", level: .notice)
+				try Task.checkCancellation()
 				guard !download.waitingForForeground else { throw CancellationError() }
 				download.backgroundTaskTransferred = AppInstallationManager.shared.startInstall(app: signed, backgroundTaskToken: download.id, retryExisting: false)
 				guard AppInstallationManager.shared.containsInstallation(for: signed) else {
@@ -1201,13 +1240,13 @@ extension DownloadManager {
 				intent.installationEnqueued = true
 				download.automaticUpdate = intent
 				_ = await _persistBeforeResuming(download)
+				_finishDownload(download)
 				if intent.options.post_deleteAppAfterSigned {
 					let request: NSFetchRequest<Imported> = Imported.fetchRequest()
 					request.fetchLimit = 1
 					request.predicate = NSPredicate(format: "uuid == %@", download.importIdentifier)
 					if let imported = try? Storage.shared.context.fetch(request).first { Storage.shared.deleteApp(for: imported) }
 				}
-				_finishDownload(download)
 			} catch is CancellationError {
 				// Removal cancels automatic installation, including during signing.
 			} catch {
@@ -1217,6 +1256,7 @@ extension DownloadManager {
 					UIAlertController.showAlertWithOk(title: .localized("Update Failed"), message: error.localizedDescription)
 				}
 			}
+			_processingTasks.removeValue(forKey: download.id)
 			download.isSigningUpdate = false
 			_signingUpdates.remove(download.id)
 			await _updateSigningGate.release()

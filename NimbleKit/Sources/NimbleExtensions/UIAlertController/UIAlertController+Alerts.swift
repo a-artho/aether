@@ -15,7 +15,7 @@ extension UIAlertController {
 	///   - message: Alert message
 	///   - actions: Alert actions
 	static public func showAlertWithCancel(
-		_ presenter: UIViewController = UIApplication.topViewController()!,
+		_ presenter: UIViewController? = nil,
 		_ popoverFromView: UIView? = nil,
 		title: String?,
 		message: String?,
@@ -45,7 +45,7 @@ extension UIAlertController {
 	///   - isCancel: If true, sets action style to cancel and no handler
 	///   - action: Closure to run when OK is tapped (ignored if isCancel is true)
 	static public func showAlertWithOk(
-		_ presenter: UIViewController = UIApplication.topViewController()!,
+		_ presenter: UIViewController? = nil,
 		_ popoverFromView: UIView? = nil,
 		title: String?,
 		message: String?,
@@ -82,7 +82,7 @@ extension UIAlertController {
 	///   - title: Alert title
 	///   - message: Alert message
 	static public func showAlertWithRestart(
-		_ presenter: UIViewController = UIApplication.topViewController()!,
+		_ presenter: UIViewController? = nil,
 		_ popoverFromView: UIView? = nil,
 		title: String?,
 		message: String?,
@@ -114,13 +114,26 @@ extension UIAlertController {
 	///   - message: Alert message
 	///   - actions: Alert actions
 	static public func showAlert(
-		_ presenter: UIViewController = UIApplication.topViewController()!,
+		_ presenter: UIViewController? = nil,
 		_ popoverFromView: UIView? = nil,
 		title: String?,
 		message: String?,
 		style: UIAlertController.Style = .alert,
 		actions: [UIAlertAction]
 	) {
+		guard Thread.isMainThread else {
+			DispatchQueue.main.async {
+				showAlert(presenter, popoverFromView, title: title, message: message, style: style, actions: actions)
+			}
+			return
+		}
+		guard UIApplication.shared.applicationState != .background,
+			let presenter = presenter ?? UIApplication.topViewController(), presenter.viewIfLoaded?.window != nil else {
+			// Background failures are retained by their operation's state and logs;
+			// presenting UIKit UI must never be required to report an error safely.
+			NSLog("Alert could not be presented: %@ — %@", title ?? "", message ?? "")
+			return
+		}
 		let alert = Self(title: title, message: message, preferredStyle: style)
 		actions.forEach { alert.addAction($0) }
 		

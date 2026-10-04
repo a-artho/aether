@@ -10,7 +10,7 @@ struct ActiveInstallationRow: View {
 	var body: some View {
 		InstallationRowContent(
 			app: app,
-			statusLabel: viewModel.statusLabel,
+			statusLabel: installationManager.isFinishingInstallation ? .localized("Finishing Installation") : viewModel.statusLabel,
 			statusColor: _statusColor,
 			errorMessage: _errorMessage
 		) {
@@ -32,7 +32,7 @@ struct ActiveInstallationRow: View {
 				.accessibilityValue(Text(_progress, format: .percent.precision(.fractionLength(0))))
 			}
 		}
-		.modifier(InstallationCancellationActions { installationManager.cancel() })
+		.modifier(InstallationCancellationActions(enabled: !installationManager.isFinishingInstallation) { installationManager.cancel() })
 		.contextMenu {
 			if _errorMessage != nil {
 				Button(.localized("Retry"), systemImage: "arrow.clockwise") {
@@ -41,7 +41,7 @@ struct ActiveInstallationRow: View {
 			}
 			Button(.localized("Cancel"), systemImage: "xmark", role: .destructive) {
 				installationManager.cancel()
-			}
+			}.disabled(installationManager.isFinishingInstallation)
 		}
 		.sheet(isPresented: $installationManager.isWebviewPresenting) {
 			if let installer = installationManager.installer {
@@ -148,13 +148,14 @@ private struct InstallationProgressRing: View {
 }
 
 private struct InstallationCancellationActions: ViewModifier {
+	var enabled = true
 	let cancel: () -> Void
 
 	func body(content: Content) -> some View {
 		content
 			.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-				Button(.localized("Cancel"), systemImage: "xmark", role: .destructive, action: cancel)
+				if enabled { Button(.localized("Cancel"), systemImage: "xmark", role: .destructive, action: cancel) }
 			}
-			.accessibilityAction(named: Text(.localized("Cancel")), cancel)
+			.accessibilityAction(named: Text(.localized("Cancel"))) { if enabled { cancel() } }
 	}
 }

@@ -10,6 +10,11 @@ import Foundation
 import Zsign
 import OSLog
 
+private struct InjectionFailure: LocalizedError {
+	let file: String
+	var errorDescription: String? { "Could not inject \(file). The app was not signed." }
+}
+
 class TweakHandler {
 	private let _fileManager = FileManager.default
 	private var _urlsToInject: [URL] = []
@@ -99,7 +104,7 @@ class TweakHandler {
 
 		// inject into all extensions if enabled
 		if _options.injectIntoExtensions && !_injectedDylibNames.isEmpty {
-			_injectIntoAllExtensions(dylibNames: _injectedDylibNames)
+			try _injectIntoAllExtensions(dylibNames: _injectedDylibNames)
 		}
 	}
 	
@@ -144,10 +149,11 @@ class TweakHandler {
 		destinationURL = destinationURL.appendingPathComponent(url.lastPathComponent)
 		
 		
-		try _fileManager.moveFileIfNeeded(from: url, to: destinationURL)
+		try _fileManager.removeFileIfNeeded(at: destinationURL)
+		try _fileManager.copyItemPreferClone(at: url, to: destinationURL)
 		
 		guard let appexe = Bundle(url: _app)?.executableURL else {
-			return
+			throw InjectionFailure(file: url.lastPathComponent)
 		}
 		
 		// change paths because some tweaks hardlink, which is not ideal.
@@ -160,10 +166,10 @@ class TweakHandler {
 			with: "@rpath/CydiaSubstrate.framework/CydiaSubstrate"
 		)
 		// inject if there's a valid app main executable
-		_ = Zsign.injectDyLib(
+		guard Zsign.injectDyLib(
 			appExecutable: appexe.path,
 			with: "\(_options.injectPath.rawValue)\(injectFolder.rawValue)\(destinationURL.lastPathComponent)"
-		)
+		) else { throw InjectionFailure(file: url.lastPathComponent) }
 
 		_injectedDylibNames.append(destinationURL.lastPathComponent)
 	}
@@ -174,7 +180,7 @@ class TweakHandler {
 			let fexe = Bundle(url: framework)?.executableURL,
 			let appexe = Bundle(url: _app)?.executableURL
 		else {
-			return
+			throw InjectionFailure(file: framework.lastPathComponent)
 		}
 		
 		// change paths because some tweaks hardlink, which is not ideal.
@@ -187,10 +193,10 @@ class TweakHandler {
 			with: "@rpath/CydiaSubstrate.framework/CydiaSubstrate"
 		)
 		// inject if there's a valid app main executable
-		_ = Zsign.injectDyLib(
+		guard Zsign.injectDyLib(
 			appExecutable: appexe.path,
 			with: "@executable_path/Frameworks/\(framework.lastPathComponent)/\(fexe.lastPathComponent)"
-		)
+		) else { throw InjectionFailure(file: framework.lastPathComponent) }
 	}
 	
 	// Extracy imported deb file
@@ -290,7 +296,7 @@ class TweakHandler {
 	}
 
 	// Injects a dylib into an extension's executable
-	private func _injectIntoExtension(extensionURL: URL, dylibName: String) {
+	private func _injectIntoExtension(extensionURL: URL, dylibName: String) throws {
 		guard 
 			let extensionBundle = Bundle(url: extensionURL),
 			let extensionExecutable = extensionBundle.executableURL 
@@ -323,12 +329,12 @@ class TweakHandler {
 		if success {
 			Logger.misc.info("Injected \(dylibName) into extension: \(extensionURL.lastPathComponent)")
 		} else {
-			Logger.misc.warning("Failed to inject into extension: \(extensionURL.lastPathComponent)")
+			throw InjectionFailure(file: "\(dylibName) → \(extensionURL.lastPathComponent)")
 		}
 	}
 
 	// Injects all dylibs into all discovered extensions
-	private func _injectIntoAllExtensions(dylibNames: [String]) {
+	private func _injectIntoAllExtensions(dylibNames: [String]) throws {
 		let extensions = _discoverAppExtensions()
 
 		guard !extensions.isEmpty else {
@@ -340,7 +346,7 @@ class TweakHandler {
 
 		for extensionURL in extensions {
 			for dylibName in dylibNames {
-				_injectIntoExtension(extensionURL: extensionURL, dylibName: dylibName)
+				try _injectIntoExtension(extensionURL: extensionURL, dylibName: dylibName)
 			}
 		}
 	}

@@ -12,7 +12,7 @@ import OSLog
 
 final class SigningHandler: NSObject {
 	private let _fileManager = FileManager.default
-	private let _uuid = UUID().uuidString
+	private let _uuid: String
 	private var _movedAppPath: URL?
 	// using uuid string is the best way to find the
 	// app we want to sign, it does not matter what
@@ -29,7 +29,8 @@ final class SigningHandler: NSObject {
 	var appIconData: Data?
 	var appCertificate: SigningCertificateSnapshot?
 	
-	init(app: AppSnapshot, options: Options = OptionsManager.shared.options) {
+	init(app: AppSnapshot, options: Options = OptionsManager.shared.options, transactionIdentifier: String? = nil) {
+		self._uuid = transactionIdentifier ?? UUID().uuidString
 		self._app = app
 		self._options = options
 		self._uniqueWorkDir = _fileManager.temporaryDirectory
@@ -50,6 +51,7 @@ final class SigningHandler: NSObject {
 			throw SigningFileHandlerError.appNotFound
 		}
 
+		try _fileManager.removeFileIfNeeded(at: _uniqueWorkDir)
 		try _fileManager.createDirectoryIfNeeded(at: _uniqueWorkDir)
 		
 		let movedAppURL = _uniqueWorkDir.appendingPathComponent(appUrl.lastPathComponent)
@@ -60,6 +62,7 @@ final class SigningHandler: NSObject {
 	}
 	
 	func modify() async throws {
+		try Task.checkCancellation()
 		guard let movedAppPath = _movedAppPath else {
 			throw SigningFileHandlerError.appNotFound
 		}
@@ -114,9 +117,12 @@ final class SigningHandler: NSObject {
 			}
 		}
 		
+		// Injection can add binaries after the original index was built.
+		let hasInjection = _options.experiment_replaceSubstrateWithEllekit || !_options.injectionFiles.isEmpty
+		let machoFiles = hasInjection ? _makeFileIndex(at: movedAppPath).machoFiles : fileIndex.machoFiles
 		// iOS "26" (19) needs special treatment
 		try await _locateMachosAndFixupArm64eSlice(
-			machoFiles: fileIndex.machoFiles
+			machoFiles: machoFiles
 		)
 		
 		if _options.mergeEntitlements && _options.appEntitlementsFile == nil {
@@ -124,6 +130,7 @@ final class SigningHandler: NSObject {
 		}
 		
 		let handler = ZsignHandler(appUrl: movedAppPath, options: _options, cert: appCertificate)
+		try Task.checkCancellation()
 		try await handler.disinject()
 		
 		if
@@ -139,7 +146,10 @@ final class SigningHandler: NSObject {
 			throw SigningFileHandlerError.missingCertifcate
 		}
 		
+		try Task.checkCancellation()
+		if let error = handler.hadError { throw error }
 		try await self.move()
+		try Task.checkCancellation()
 		try await self.addToDatabase()
 		
 		if let error = handler.hadError {
@@ -148,6 +158,7 @@ final class SigningHandler: NSObject {
 	}
 	
 	func move() async throws {
+		try Task.checkCancellation()
 		guard let movedAppPath = _movedAppPath else {
 			throw SigningFileHandlerError.appNotFound
 		}
@@ -165,6 +176,7 @@ final class SigningHandler: NSObject {
 	}
 	
 	func addToDatabase() async throws {
+		try Task.checkCancellation()
 		let app = try await _directory()
 		
 		guard let appUrl = _fileManager.getPath(in: app, for: "app") else {

@@ -153,7 +153,9 @@ extension LibraryCellView {
 	@ViewBuilder
 	private func _actions(for app: AppInfoPresentable) -> some View {
 		Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
-			Storage.shared.deleteApp(for: app)
+			if !Storage.shared.deleteApp(for: app) {
+				UIAlertController.showAlertWithOk(title: .localized("App In Use"), message: .localized("Cancel its installation or update before deleting this app."))
+			}
 		}
 	}
 	

@@ -81,6 +81,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	private var helperSetupPhase: HelperSetupPhase = .idle
 	private var documentController: UIDocumentInteractionController?
 	private var retryTask: Task<Void, Never>?
+	private var callbackRecoveryTask: Task<Void, Never>?
 	private var didAttemptRestore = false
 	private var didPresentTerminalPrompt = false
 	private var pendingTransportFailureMessage: String?
@@ -222,6 +223,21 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			helperSetupPhase = .probing(.postInstall)
 			state = .checkingSetup
 			_startShortcut(.probe)
+			return
+		}
+		// URL callbacks can arrive just after activation. Give the normal callback
+		// a chance to finish, then recover a lost callback in this same process.
+		if UserDefaults.standard.bool(forKey: Self.restoreKey),
+			(state == .waitingForDataOff || state == .restoringData), let pending = operationID {
+			callbackRecoveryTask?.cancel()
+			callbackRecoveryTask = Task { [weak self] in
+				do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
+				guard let self, self.operationID == pending,
+					UserDefaults.standard.bool(forKey: Self.restoreKey) else { return }
+				self._log("Shortcut callback was lost; restoring Mobile Data on return.", level: .warning)
+				self._clearActiveOperation()
+				self._restoreMobileDataOnce(force: true)
+			}
 			return
 		}
 		guard isEnabled, UserDefaults.standard.bool(forKey: Self.restoreKey), !isBusy, !didAttemptRestore else { return }
@@ -507,6 +523,8 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	}
 
 	private func _clearActiveOperation() {
+		callbackRecoveryTask?.cancel()
+		callbackRecoveryTask = nil
 		operationID = nil
 		activeCommand = nil
 	}

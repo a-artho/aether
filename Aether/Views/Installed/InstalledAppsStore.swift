@@ -122,6 +122,7 @@ struct InstalledApp: Identifiable, Equatable, Hashable {
 
 @MainActor
 final class InstalledAppsStore: NSObject, ObservableObject {
+	private var refreshGeneration = UUID()
 	@Published private(set) var apps: [InstalledApp]
 	@Published private(set) var isLoading: Bool
 	@Published private(set) var errorMessage: String?
@@ -195,6 +196,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 	}
 
 	func clear() {
+		refreshGeneration = UUID()
 		self.apps = []
 		self.errorMessage = nil
 		self.isLoading = false
@@ -209,6 +211,8 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 
 	func refresh() async {
 		guard DeviceConnectionManager.shared.isConnected else {
+			refreshGeneration = UUID()
+			isLoading = false
 			#if DEBUG
 			if !self.apps.isEmpty {
 				return
@@ -219,14 +223,17 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			return
 		}
 		guard !isLoading else { return }
+		let generation = UUID()
+		refreshGeneration = generation
 		isLoading = true
 		errorMessage = nil
-		defer { isLoading = false }
+		defer { if refreshGeneration == generation { isLoading = false } }
 
 		let proxy = InstallationAppProxy()
 
 		do {
 			let installedApps = try await proxy.fetchApps(applicationType: "User")
+			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
 			let profiles: [ProvisioningProfileInfo]
 			do {
 				profiles = try await proxy.provisioningProfiles()
@@ -242,6 +249,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 					level: .error
 				)
 			}
+			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
 			updateApplications(with: installedApps, profiles: profiles)
 			DebugLogManager.shared.log(
 				"Loaded \(apps.count) sideloaded app\(apps.count == 1 ? "" : "s") from the device.",
@@ -250,6 +258,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		} catch is CancellationError {
 			return
 		} catch {
+			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
 			errorMessage = error.localizedDescription
 			DebugLogManager.shared.log(
 				"Could not load sideloaded apps: \(error.localizedDescription)",
