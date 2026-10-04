@@ -5,11 +5,17 @@
 
 import SwiftUI
 import IDeviceSwift
+import NimbleViews
 
 struct InstalledAppDetailView: View {
 	@Environment(\.dismiss) private var dismiss
 	let app: InstalledApp
 	@ObservedObject var store: InstalledAppsStore
+	@ObservedObject private var sourcesViewModel = SourcesViewModel.shared
+	@FetchRequest(sortDescriptors: []) private var sources: FetchedResults<AltSource>
+	@State private var updates: [InstalledAppUpdateCandidate] = []
+	@State private var selectedUpdate: InstalledAppUpdateCandidate?
+	@State private var hasCheckedUpdates = false
 
 	@State private var isUninstallPresented = false
 	@State private var isUninstalling = false
@@ -18,37 +24,35 @@ struct InstalledAppDetailView: View {
 	var body: some View {
 		ScrollViewReader { scrollProxy in
 			List {
-				Section {
-					HStack {
-						SettingsRowLabel(
-							.localized("Signer"),
-							systemImage: "signature",
-							backgroundColor: .orange
-						)
-						Spacer(minLength: 8)
-						Text(app.signerIdentity ?? .localized("Unavailable"))
-							.font(.subheadline)
-							.foregroundStyle(.secondary)
-							.multilineTextAlignment(.trailing)
-					}
-					NavigationLink {
-						InstalledAppInformationView(app: app, page: .specifications)
-					} label: {
-						SettingsRowLabel(.localized("Specifications"), systemImage: "slider.horizontal.3", backgroundColor: .blue)
-					}
-					NavigationLink {
-						InstalledAppInformationView(app: app, page: .entitlements)
-					} label: {
-						SettingsRowLabel(.localized("Entitlements"), systemImage: "checklist", backgroundColor: .purple)
-					}
-				} header: {
-					Text(.localized("Information"))
-				}
-				.id("informationSection")
+				informationSection
+				updatesSection
 			}
-			.listStyle(.insetGrouped)
+			.listStyle(.plain)
 			.navigationTitle(app.displayName)
 			.navigationBarTitleDisplayMode(.inline)
+			.navigationDestination(isPresented: Binding(
+				get: { selectedUpdate != nil },
+				set: { if !$0 { selectedUpdate = nil } }
+			)) {
+				if let update = selectedUpdate {
+					SourceAppsDetailView(sourceURL: update.sourceURL, source: update.repository, app: update.app)
+				}
+			}
+			.task(id: updateRequest) {
+				await sourcesViewModel.ensureSourcesLoaded(Array(sources))
+				do {
+					let matches = try await InstalledAppUpdateCatalog.shared.updates(
+						for: app.bundleIdentifier, installedVersion: installedVersion, contexts: sourceContexts)
+					try Task.checkCancellation()
+					updates = matches
+					hasCheckedUpdates = true
+				} catch is CancellationError {
+					// A newer catalog or installed version superseded this lookup.
+				} catch {
+					updates = []
+					hasCheckedUpdates = true
+				}
+			}
 			.toolbar {
 				ToolbarItem(placement: .principal) {
 					HStack(spacing: 8) {
@@ -103,6 +107,93 @@ struct InstalledAppDetailView: View {
 				}
 			}
 			#endif
+		}
+	}
+
+	private var updatesSection: some View {
+		NBSection(.localized("Updates")) {
+			if !hasCheckedUpdates {
+				HStack(spacing: 10) {
+					ProgressView()
+					Text(.localized("Checking for Updates…"))
+						.font(.subheadline)
+						.foregroundStyle(.secondary)
+				}
+				.frame(maxWidth: .infinity, minHeight: 60)
+				.listRowSeparator(.hidden)
+			} else if updates.isEmpty {
+				TabPlaceholderView(
+					title: hasUnavailableCatalogs ? .localized("Updates Unavailable") : .localized("No Updates Available"),
+					description: updatePlaceholderDescription,
+					systemImage: hasUnavailableCatalogs ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.triangle.2.circlepath"
+				)
+				.listRowSeparator(.hidden)
+			} else {
+				ForEach(updates) { update in
+					SourceAppsCellView(sourceURL: update.sourceURL, source: update.repository, app: update.app,
+						showSourceBadge: true, downloadButtonStyle: .update, updateTarget: app, onSelect: { selectedUpdate = update })
+						.accessibilityHint(update.repository.name ?? update.sourceURL.host ?? "")
+				}
+			}
+		}
+	}
+
+	private var informationSection: some View {
+		NBSection(.localized("Information")) {
+			HStack {
+				Text(.localized("Signer"))
+				Spacer(minLength: 8)
+				Text(app.signerIdentity ?? .localized("Unavailable"))
+					.font(.subheadline)
+					.foregroundStyle(.secondary)
+					.multilineTextAlignment(.trailing)
+			}
+			NavigationLink {
+				InstalledAppInformationView(app: app, page: .specifications)
+			} label: {
+				Text(.localized("Specifications"))
+			}
+			NavigationLink {
+				InstalledAppInformationView(app: app, page: .entitlements)
+			} label: {
+				Text(.localized("Entitlements"))
+			}
+		}
+		.id("informationSection")
+	}
+
+	private var hasUnavailableCatalogs: Bool {
+		sources.contains { sourcesViewModel.repository(for: $0) == nil }
+	}
+
+	private var updatePlaceholderDescription: String {
+		if hasUnavailableCatalogs {
+			return .localized("Some sources couldn’t be loaded. Refresh Sources to check again.")
+		}
+		if sources.isEmpty {
+			return .localized("Add sources to check for newer versions of this app.")
+		}
+		if installedVersion?.isEmpty != false {
+			return .localized("This app’s version is unavailable, so updates couldn’t be compared.")
+		}
+		return .localized("No newer versions were found in your added sources.")
+	}
+
+	private var installedVersion: String? {
+		store.apps.first(where: { $0.bundleIdentifier == app.bundleIdentifier })?.version ?? app.version
+	}
+
+	private var sourceContexts: [SourceAppCatalogContext] {
+		sources.compactMap { source in
+			guard let repository = sourcesViewModel.repository(for: source) else { return nil }
+			return SourceAppCatalogContext(sourceObjectURI: source.objectID.uriRepresentation().absoluteString,
+				sourceURL: source.sourceURL, repository: repository, revision: sourcesViewModel.revision(for: source))
+		}
+	}
+
+	private var updateRequest: [String] {
+		[app.bundleIdentifier, installedVersion ?? "", String(sourcesViewModel.catalogRevision)] + sources.flatMap {
+			[$0.objectID.uriRepresentation().absoluteString, $0.sourceURL?.absoluteString ?? ""]
 		}
 	}
 

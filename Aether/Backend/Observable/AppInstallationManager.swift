@@ -57,8 +57,65 @@ final class AppInstallationManager: ObservableObject {
 	private var installGeneration = UUID()
 	private var cancellables = Set<AnyCancellable>()
 	private var _hasLaunchedSemiLocalInstall = false
+	private var _backgroundTaskToken: String?
+	private var _backgroundBaseProgress = 0.0
+	private var _completedBackgroundInstalls = Set<UUID>()
+	private var _backgroundQueueTotal = 1
+	private var _backgroundObserver: NSObjectProtocol?
 	
-	private init() {}
+	private struct StoredInstallation: Codable {
+		let app: AppSnapshot
+		let method: Int
+		let serverMethod: Int
+	}
+	private static let queueStorageKey = "Aether.pendingInstallations"
+
+	private init() {
+		_backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+			object: nil, queue: .main) { [weak self] _ in
+			Task { @MainActor in
+				guard let self, self.isInstalling else { return }
+				#if !targetEnvironment(macCatalyst)
+				if self._backgroundTaskToken.map({ BackgroundTaskManager.shared.hasExecution(for: $0) }) != true {
+					self._interruptInstallation(generation: self.installGeneration)
+				}
+				#endif
+			}
+		}
+		guard let data = UserDefaults.standard.data(forKey: Self.queueStorageKey),
+			let records = try? JSONDecoder().decode([StoredInstallation].self, from: data) else { return }
+		let requests = records.compactMap { record -> InstallationRequest? in
+			guard Storage.shared.getAppDirectory(for: record.app) != nil else { return nil }
+			return InstallationRequest(app: record.app, method: record.method, serverMethod: record.serverMethod)
+		}
+		guard let first = requests.first else {
+			UserDefaults.standard.removeObject(forKey: Self.queueStorageKey)
+			return
+		}
+		// The device may have completed installation while Aether was terminated.
+		// Preserve the request, but require Retry/Cancel instead of installing twice.
+		currentRequest = first
+		activeApp = first.app
+		queuedInstalls = Array(requests.dropFirst())
+		let model = InstallerStatusViewModel(isIdevice: first.method == 1)
+		model.status = .broken(InstallationBackgroundError())
+		viewModel = model
+		lastErrorMessage = InstallationBackgroundError().localizedDescription
+		_log("Restored interrupted install queue; waiting for Retry/Cancel.", category: "Background", level: .notice)
+	}
+
+	private func _persistInstallQueue() {
+		let requests = (currentRequest.map { [$0] } ?? []) + queuedInstalls
+		let records = requests.compactMap { request -> StoredInstallation? in
+			#if DEBUG
+			if request.isMock { return nil }
+			#endif
+			if request.id == currentRequest?.id, hasCompletedSuccessfully { return nil }
+			return StoredInstallation(app: request.app, method: request.method, serverMethod: request.serverMethod)
+		}
+		if records.isEmpty { UserDefaults.standard.removeObject(forKey: Self.queueStorageKey) }
+		else if let data = try? JSONEncoder().encode(records) { UserDefaults.standard.set(data, forKey: Self.queueStorageKey) }
+	}
 	
 	var isInstalling: Bool {
 		if retirementTask != nil || iDevicePreflightTask != nil || installTask != nil {
@@ -88,7 +145,8 @@ final class AppInstallationManager: ObservableObject {
 		return false
 	}
 	
-	func startInstall(app: AppInfoPresentable) {
+	@discardableResult
+	func startInstall(app: AppInfoPresentable, backgroundTaskToken: String? = nil, retryExisting: Bool = true) -> Bool {
 		let request = InstallationRequest(
 			app: AppSnapshot(app),
 			method: UserDefaults.standard.integer(forKey: "Aether.installationMethod"),
@@ -99,19 +157,26 @@ final class AppInstallationManager: ObservableObject {
 				title: .localized("Install"),
 				message: .localized("You cannot update ‘%@‘ with itself, please use an alternative tool to update it.", arguments: Bundle.main.name)
 			)
-			return
+			return false
 		}
-		_enqueue(request)
+		let adopted = currentRequest == nil && queuedInstalls.isEmpty && _backgroundTaskToken == nil && backgroundTaskToken != nil
+		if adopted {
+			_backgroundTaskToken = backgroundTaskToken
+			_backgroundBaseProgress = 0.6
+		}
+		_enqueue(request, retryExisting: retryExisting)
+		return adopted
 	}
 
-	private func _enqueue(_ request: InstallationRequest) {
+	private func _enqueue(_ request: InstallationRequest, retryExisting: Bool = true) {
 		AppTabManager.shared.switchTo(.installed)
 		if currentRequest?.appKey == request.appKey, !hasCompletedSuccessfully {
-			if case .broken = viewModel?.status { retryActiveInstall() }
+			if retryExisting, case .broken = viewModel?.status { retryActiveInstall() }
 			return
 		}
 		guard !queuedInstalls.contains(where: { $0.appKey == request.appKey }) else { return }
 		queuedInstalls.append(request)
+		_persistInstallQueue()
 		_log("Install queued for \(request.app.name ?? request.app.identifier ?? .localized("app")).", category: "Install", level: .notice)
 		if hasCompletedSuccessfully {
 			_finishCompletedInstall(generation: installGeneration)
@@ -122,6 +187,7 @@ final class AppInstallationManager: ObservableObject {
 
 	func cancelQueuedInstall(id: UUID) {
 		queuedInstalls.removeAll { $0.id == id }
+		_persistInstallQueue()
 	}
 
 	func retryActiveInstall() {
@@ -140,6 +206,7 @@ final class AppInstallationManager: ObservableObject {
 		viewModel = statusVM
 		activeApp = request.app
 		currentRequest = request
+		_persistInstallQueue()
 		lastErrorMessage = nil
 		_hasLaunchedSemiLocalInstall = false
 		statusVM.$status
@@ -156,6 +223,18 @@ final class AppInstallationManager: ObservableObject {
 			return
 		}
 		#endif
+
+		guard _startInstallationExecution(request, generation: generation) else {
+			statusVM.status = .broken(InstallationBackgroundError())
+			return
+		}
+		statusVM.$packageProgress.combineLatest(statusVM.$uploadProgress, statusVM.$installProgress)
+			.throttle(for: .milliseconds(250), scheduler: DispatchQueue.main, latest: true)
+			.sink { [weak self, weak statusVM] _ in
+				guard let self, let statusVM, self.installGeneration == generation else { return }
+				self._updateInstallationExecution(statusVM)
+			}
+			.store(in: &cancellables)
 
 		guard request.method == 1 else {
 			_beginInstall(request.app, context: context, statusVM: statusVM, generation: generation)
@@ -326,14 +405,19 @@ final class AppInstallationManager: ObservableObject {
 			
 		}
 
+		_updateInstallationExecution(statusVM)
 		switch newStatus {
 		case .completed:
+			if let request = currentRequest { _completedBackgroundInstalls.insert(request.id) }
+			_updateInstallationExecution(statusVM)
+			_persistInstallQueue()
 			_log("Install completed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .notice)
 			progressTask?.cancel()
 			progressTask = nil
 			NotificationCenter.default.post(name: Notification.Name("Aether.installedAppsRefresh"), object: nil)
 			_finishCompletedInstall(generation: generation)
 		case .broken:
+			_endInstallationExecution(success: false)
 			_log("Install failed for \(app.name ?? app.identifier ?? .localized("app")). Queue paused.", category: "Install", level: .error)
 			progressTask?.cancel()
 			progressTask = nil
@@ -416,6 +500,9 @@ final class AppInstallationManager: ObservableObject {
 	}
 	
 	func cancel() {
+		if !(hasCompletedSuccessfully && !queuedInstalls.isEmpty) {
+			_endInstallationExecution(success: hasCompletedSuccessfully)
+		}
 		guard currentRequest != nil || activeApp != nil || installTask != nil || iDevicePreflightTask != nil else { return }
 		installGeneration = UUID()
 		settlementTask?.cancel()
@@ -435,6 +522,7 @@ final class AppInstallationManager: ObservableObject {
 		currentRequest = nil
 		lastErrorMessage = nil
 		_hasLaunchedSemiLocalInstall = false
+		_persistInstallQueue()
 
 		guard worker != nil || preflight != nil else {
 			_cleanupInstallResources()
@@ -467,6 +555,61 @@ final class AppInstallationManager: ObservableObject {
 		#if !targetEnvironment(macCatalyst)
 		BackgroundAudioManager.shared.stop("installation")
 		#endif
+	}
+
+	private func _startInstallationExecution(_ request: InstallationRequest, generation: UUID) -> Bool {
+		#if !targetEnvironment(macCatalyst)
+		let token = _backgroundTaskToken ?? "installation-\(generation.uuidString)"
+		_backgroundTaskToken = token
+		let accepted = BackgroundTaskManager.shared.startWork(for: token,
+			title: request.app.name ?? .localized("Installing App"), subtitle: .localized("Preparing Installation"),
+			progress: _backgroundBaseProgress, installation: true) { [weak self] in
+			self?._interruptInstallation(generation: generation)
+		}
+		if !accepted {
+			_backgroundTaskToken = nil
+			_log("Installation background execution unavailable.", category: "Background", level: .notice)
+			return UIApplication.shared.applicationState == .active
+		}
+		#endif
+		return true
+	}
+
+	private func _interruptInstallation(generation: UUID) {
+		guard installGeneration == generation, !hasCompletedSuccessfully else { return }
+		_endInstallationExecution(success: false)
+		installTask?.cancel()
+		iDevicePreflightTask?.cancel()
+		progressTask?.cancel()
+		lastErrorMessage = InstallationBackgroundError().localizedDescription
+		viewModel?.status = .broken(InstallationBackgroundError())
+		_persistInstallQueue()
+		_log("Installation background time expired; queue paused for Retry/Cancel.", category: "Background", level: .notice)
+	}
+
+	private func _updateInstallationExecution(_ model: InstallerStatusViewModel) {
+		#if !targetEnvironment(macCatalyst)
+		guard let token = _backgroundTaskToken else { return }
+		let phaseProgress = min(0.99, max(0, model.packageProgress) * 0.25
+			+ max(0, model.uploadProgress) * 0.45 + max(0, model.installProgress) * 0.30)
+		let remaining = installationCards.filter { !_completedBackgroundInstalls.contains($0.id) }.count
+		_backgroundQueueTotal = max(_backgroundQueueTotal, _completedBackgroundInstalls.count + remaining)
+		let currentProgress = currentRequest.map { _completedBackgroundInstalls.contains($0.id) } == true ? 0 : phaseProgress
+		let progress = (Double(_completedBackgroundInstalls.count) + currentProgress) / Double(_backgroundQueueTotal)
+		BackgroundTaskManager.shared.updateWork(for: token,
+			title: activeApp?.name ?? .localized("Installing App"), subtitle: model.statusLabel,
+			progress: _backgroundBaseProgress + (1 - _backgroundBaseProgress) * progress)
+		#endif
+	}
+
+	private func _endInstallationExecution(success: Bool) {
+		#if !targetEnvironment(macCatalyst)
+		if let token = _backgroundTaskToken { BackgroundTaskManager.shared.stopTask(for: token, success: success) }
+		#endif
+		_backgroundTaskToken = nil
+		_backgroundBaseProgress = 0
+		_completedBackgroundInstalls.removeAll()
+		_backgroundQueueTotal = 1
 	}
 
 	private func _log(
@@ -510,3 +653,9 @@ extension AppInstallationManager {
 	}
 }
 #endif
+
+private struct InstallationBackgroundError: LocalizedError {
+	var errorDescription: String? {
+		.localized("iOS interrupted background installation. Open Aether and retry. If the app was already installed, refresh the Device list first.")
+	}
+}

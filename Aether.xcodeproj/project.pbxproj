@@ -136,6 +136,7 @@
 		3379C1B02DA869A1004372DA = {
 			isa = PBXGroup;
 			children = (
+				FEA800000000000000000007,
 				3379C1BB2DA869A1004372DA /* Aether */,
 				FEA700000000000000000005 /* AetherTunnel */,
 				3371F7302DA9ECDD00281AC6 /* Frameworks */,
@@ -147,6 +148,7 @@
 		3379C1BA2DA869A1004372DA /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				FEA800000000000000000003,
 				3379C1B92DA869A1004372DA /* Aether.app */,
 				FEA700000000000000000003 /* AetherTunnel.appex */,
 			);
@@ -160,6 +162,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 3379C1CD2DA869A3004372DA /* Build configuration list for PBXNativeTarget "Aether" */;
 			buildPhases = (
+				FEA800000000000000000010,
 				3379C1B52DA869A1004372DA /* Sources */,
 				3379C1B62DA869A1004372DA /* Frameworks */,
 				3379C1B72DA869A1004372DA /* Resources */,
@@ -168,6 +171,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				FEA80000000000000000000A,
 				FEA70000000000000000000A /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
@@ -215,6 +219,67 @@
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
+
+
+        FEA800000000000000000001 = {isa = PBXBuildFile; fileRef = FEA800000000000000000003; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+        FEA800000000000000000002 = {isa = PBXBuildFile; fileRef = FEA800000000000000000004; };
+        FEA800000000000000000006 = {isa = PBXBuildFile; fileRef = FEA800000000000000000005; };
+        FEA800000000000000000003 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AetherDownloadActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+        FEA800000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AetherDownloadActivity/DownloadActivityWidget.swift; sourceTree = SOURCE_ROOT; };
+        FEA800000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Aether/Models/DownloadActivityAttributes.swift; sourceTree = SOURCE_ROOT; };
+        FEA800000000000000000007 = {isa = PBXGroup; children = (FEA800000000000000000004, FEA800000000000000000005, ); name = AetherDownloadActivity; sourceTree = "<group>"; };
+        FEA800000000000000000008 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = FEA80000000000000000000D;
+            buildPhases = (FEA80000000000000000000E, FEA80000000000000000000F, );
+            buildRules = (); dependencies = (); name = AetherDownloadActivity;
+            productName = AetherDownloadActivity; productReference = FEA800000000000000000003;
+            productType = "com.apple.product-type.app-extension";
+        };
+        FEA800000000000000000009 = {isa = PBXContainerItemProxy; containerPortal = 3379C1B12DA869A1004372DA; proxyType = 1; remoteGlobalIDString = FEA800000000000000000008; remoteInfo = AetherDownloadActivity; };
+        FEA80000000000000000000A = {isa = PBXTargetDependency; target = FEA800000000000000000008; targetProxy = FEA800000000000000000009; platformFilter = ios; };
+        FEA80000000000000000000D = {isa = XCConfigurationList; buildConfigurations = (FEA80000000000000000000B, FEA80000000000000000000C, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        FEA80000000000000000000E = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (FEA800000000000000000002, FEA800000000000000000006, ); runOnlyForDeploymentPostprocessing = 0; };
+        FEA80000000000000000000F = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        FEA800000000000000000010 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (FEA800000000000000000001, ); name = "Embed Download Live Activity"; runOnlyForDeploymentPostprocessing = 0; };
+
+        FEA80000000000000000000B = {
+            isa = XCBuildConfiguration;
+            baseConfigurationReference = 570920BD2F98A4F0008C4A83;
+            buildSettings = {
+                APPLICATION_EXTENSION_API_ONLY = YES;
+                CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = ""; DEVELOPMENT_TEAM = "";
+                CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = "$(AETHER_PROJECT_VERSION)-debug";
+                GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = AetherDownloadActivity/Info.plist;
+                INFOPLIST_KEY_CFBundleDisplayName = Aether;
+                IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+                LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+                PRODUCT_BUNDLE_IDENTIFIER = "$(AETHER_PRODUCT_BUNDLE_IDENTIFIER)$(AETHER_DISAMBIGUATOR).DownloadActivity";
+                PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES;
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO;
+                SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";
+            };
+            name = Debug;
+        };
+
+        FEA80000000000000000000C = {
+            isa = XCBuildConfiguration;
+            baseConfigurationReference = 570920BD2F98A4F0008C4A83;
+            buildSettings = {
+                APPLICATION_EXTENSION_API_ONLY = YES;
+                CODE_SIGN_STYLE = Manual; CODE_SIGN_IDENTITY = ""; DEVELOPMENT_TEAM = "";
+                CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = "$(AETHER_PROJECT_VERSION)";
+                GENERATE_INFOPLIST_FILE = YES; INFOPLIST_FILE = AetherDownloadActivity/Info.plist;
+                INFOPLIST_KEY_CFBundleDisplayName = Aether;
+                IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+                LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+                PRODUCT_BUNDLE_IDENTIFIER = "$(AETHER_PRODUCT_BUNDLE_IDENTIFIER).DownloadActivity";
+                PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES;
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO;
+                SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2";
+            };
+            name = Release;
+        };
 
 /* Begin PBXProject section */
 		3379C1B12DA869A1004372DA /* Project object */ = {
@@ -268,6 +333,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				FEA800000000000000000008,
 				3379C1B82DA869A1004372DA /* Aether */,
 				FEA700000000000000000008 /* AetherTunnel */,
 			);

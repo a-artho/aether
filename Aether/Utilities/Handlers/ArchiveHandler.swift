@@ -46,7 +46,7 @@ final class ArchiveHandler: NSObject {
 
 		let app = _app
 		let workDirectory = _uniqueWorkDir
-		let payloadURL = try await Task.detached(priority: .utility) { [fileManager = _fileManager] in
+		let worker = Task.detached(priority: .utility) { [fileManager = _fileManager] in
 			try Task.checkCancellation()
 			guard
 				let uuid = app.uuid,
@@ -64,7 +64,10 @@ final class ArchiveHandler: NSObject {
 			try fileManager.copyItemPreferClone(at: appURL, to: movedAppURL)
 			try Task.checkCancellation()
 			return payloadURL
-		}.value
+		}
+		let payloadURL = try await withTaskCancellationHandler {
+			try await worker.value
+		} onCancel: { worker.cancel() }
 		_payloadUrl = payloadURL
 	}
 	
@@ -72,7 +75,8 @@ final class ArchiveHandler: NSObject {
 		try _beginWorkOperation()
 		defer { _finishWorkOperation() }
 
-		return try await Task.detached(priority: .background) { [self] in
+		let worker = Task.detached(priority: .utility) { [self] in
+			try Task.checkCancellation()
 			guard let payloadUrl = self._payloadUrl else {
 				throw SigningFileHandlerError.appNotFound
 			}
@@ -109,9 +113,13 @@ final class ArchiveHandler: NSObject {
 					}
 				})
 			
+			try Task.checkCancellation()
 			try FileManager.default.moveItem(at: zipUrl, to: ipaUrl)
 			return ipaUrl
-		}.value
+		}
+		return try await withTaskCancellationHandler {
+			try await worker.value
+		} onCancel: { worker.cancel() }
 	}
 	
 	func moveToArchive(_ package: URL, shouldOpen: Bool = false) async throws -> URL? {

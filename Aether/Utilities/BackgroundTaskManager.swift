@@ -9,7 +9,9 @@
 
 import Foundation
 import BackgroundTasks
+import UIKit
 
+@MainActor
 class BackgroundTaskManager: ObservableObject {
 	static let shared = BackgroundTaskManager()
 
@@ -23,16 +25,31 @@ class BackgroundTaskManager: ObservableObject {
 	private var latestProgress: [String: Double] = [:]
 	private var latestPresentation: [String: (title: String, subtitle: String)] = [:]
 	private var completionBeforeLaunch: [String: Bool] = [:]
+	private var fallbackTasks: [String: UIBackgroundTaskIdentifier] = [:]
 	private var expirationHandlers: [String: () -> Void] = [:]
 	
-	func startTask(for downloadId: String, filename: String) {
-		_ = _startTask(
-			for: downloadId,
-			kind: .download,
-			title: filename,
-			subtitle: .localized("Downloading"),
-			progress: 0
-		)
+
+	/// A continued task is owned by the operation, not by its current phase.
+	/// The short UIKit task bridges scheduler delivery and background wake-ups.
+	@discardableResult
+	func startWork(for token: String, title: String, subtitle: String, progress: Double,
+		installation: Bool = false, signing: Bool = false, onExpiration: @escaping () -> Void) -> Bool {
+		if let identifier = taskIdentifierByToken[token] {
+			expirationHandlers[identifier] = onExpiration
+			_updateTask(for: token, title: title, subtitle: subtitle, progress: progress)
+			return true
+		}
+		return _startTask(for: token, kind: installation ? .installation : (signing ? .signing : .download),
+			title: title, subtitle: subtitle, progress: progress, onExpiration: onExpiration)
+	}
+
+	func hasExecution(for token: String) -> Bool {
+		guard let identifier = taskIdentifierByToken[token] else { return false }
+		return activeTasks[identifier] != nil || fallbackTasks[identifier] != nil
+	}
+
+	func updateWork(for token: String, title: String, subtitle: String, progress: Double) {
+		_updateTask(for: token, title: title, subtitle: subtitle, progress: progress)
 	}
 
 	@discardableResult
@@ -92,6 +109,7 @@ class BackgroundTaskManager: ObservableObject {
 		guard let taskIdentifier = _reserveTaskIdentifier(for: token, kind: kind) else {
 			return false
 		}
+		if taskIdentifierByToken[token] != nil, activeTasks[taskIdentifier] != nil { return true }
 		completionBeforeLaunch.removeValue(forKey: taskIdentifier)
 		latestProgress[taskIdentifier] = progress
 		latestPresentation[taskIdentifier] = (title, subtitle)
@@ -105,7 +123,9 @@ class BackgroundTaskManager: ObservableObject {
 				using: .main
 			) { task in
 				guard let task = task as? BGContinuedProcessingTask else { return }
+				self._endFallback(for: task.identifier)
 				self.activeTasks[task.identifier] = task
+				DebugLogManager.shared.log("Continued task started by iOS.", category: "Background", level: .info)
 				task.progress.totalUnitCount = 100
 				self.applyProgress(to: task, progress: self.latestProgress[task.identifier] ?? 0)
 				if let presentation = self.latestPresentation[task.identifier] {
@@ -130,14 +150,26 @@ class BackgroundTaskManager: ObservableObject {
 			self.registeredTasks.insert(taskIdentifier)
 		}
 		
+		// Continued-processing requests must originate in the foreground. A background
+		// URLSession completion may only borrow finite time for processing and preserve
+		// its staged file if that time expires.
+		if UIApplication.shared.applicationState == .background {
+			if onExpiration != nil, _startFallback(for: taskIdentifier) { return true }
+			_clearTaskState(for: taskIdentifier)
+			return false
+		}
+
 		let request = BGContinuedProcessingTaskRequest(identifier: taskIdentifier, title: title, subtitle: subtitle)
 		request.strategy = .fail
 		do {
 			try BGTaskScheduler.shared.submit(request)
+			DebugLogManager.shared.log("Continued task accepted: \(subtitle).", category: "Background", level: .info)
+			_startFallback(for: taskIdentifier)
 			return true
 		} catch {
+			DebugLogManager.shared.log("Continued task request failed: \(error.localizedDescription)", category: "Background", level: .notice)
+			if onExpiration != nil, _startFallback(for: taskIdentifier) { return true }
 			_clearTaskState(for: taskIdentifier)
-			print(error)
 			return false
 		}
 	}
@@ -193,6 +225,7 @@ class BackgroundTaskManager: ObservableObject {
 
 	private func _expire(_ task: BGContinuedProcessingTask) {
 		let taskIdentifier = task.identifier
+		guard activeTasks[taskIdentifier] === task else { return }
 		activeTasks.removeValue(forKey: taskIdentifier)
 		task.setTaskCompleted(success: false)
 		let onExpiration = expirationHandlers[taskIdentifier]
@@ -203,6 +236,8 @@ class BackgroundTaskManager: ObservableObject {
 	private enum TaskKind {
 		case download
 		case pairing
+		case installation
+		case signing
 	}
 
 	private func _reserveTaskIdentifier(for token: String, kind: TaskKind) -> String? {
@@ -214,6 +249,10 @@ class BackgroundTaskManager: ObservableObject {
 		switch kind {
 		case .download:
 			candidates = (0..<maximumDownloadTasks).map { "\(baseId).download.\($0)" }
+		case .signing:
+			candidates = ["\(baseId).signing"]
+		case .installation:
+			candidates = ["\(baseId).installation"]
 		case .pairing:
 			candidates = ["\(baseId).pairing"]
 		}
@@ -231,6 +270,7 @@ class BackgroundTaskManager: ObservableObject {
 		for taskIdentifier: String,
 		preservingPendingCompletion: Bool = false
 	) {
+		_endFallback(for: taskIdentifier)
 		activeTasks.removeValue(forKey: taskIdentifier)
 		latestProgress.removeValue(forKey: taskIdentifier)
 		latestPresentation.removeValue(forKey: taskIdentifier)
@@ -240,6 +280,30 @@ class BackgroundTaskManager: ObservableObject {
 		expirationHandlers.removeValue(forKey: taskIdentifier)
 		if let token = tokenByTaskIdentifier.removeValue(forKey: taskIdentifier) {
 			taskIdentifierByToken.removeValue(forKey: token)
+		}
+	}
+
+	@discardableResult
+	private func _startFallback(for identifier: String) -> Bool {
+		if fallbackTasks[identifier] != nil { return true }
+		let task = UIApplication.shared.beginBackgroundTask(withName: identifier) { [weak self] in
+			Task { @MainActor in
+				guard let self, self.fallbackTasks[identifier] != nil else { return }
+				let handler = self.expirationHandlers[identifier]
+				BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
+				self._clearTaskState(for: identifier)
+				DebugLogManager.shared.log("Background execution time expired.", category: "Background", level: .notice)
+				handler?()
+			}
+		}
+		guard task != .invalid else { return false }
+		fallbackTasks[identifier] = task
+		return true
+	}
+
+	private func _endFallback(for identifier: String) {
+		if let task = fallbackTasks.removeValue(forKey: identifier) {
+			UIApplication.shared.endBackgroundTask(task)
 		}
 	}
 

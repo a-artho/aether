@@ -31,7 +31,8 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		var installproxy: InstallationProxyClientHandle?
 		var remotePath: String?
 
-		try await Task.detached(priority: .utility) {
+		let worker = Task.detached(priority: .utility) {
+			try Task.checkCancellation()
 			guard HeartbeatManager.hasPairingFile() else {
 				throw IDeviceConnectionError.pairingFileMissing
 			}
@@ -134,6 +135,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 				throw IDeviceSwiftError(afc_file_close_result)
 			}
 
+			try Task.checkCancellation()
 			try await self._updateStatus(with: .installing)
 
 
@@ -157,6 +159,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 				}
 			}
 
+			try Task.checkCancellation()
 			let installError: UnsafeMutablePointer<IdeviceFfiError>? = remoteDir.withCString { cString in
 				let context = Unmanaged.passUnretained(self).toOpaque()
 
@@ -181,7 +184,12 @@ public class InstallationProxy: Identifiable, ObservableObject {
 
 			try await Task.sleep(nanoseconds: 350_000_000)
 			try await self._updateStatus(with: .completed(.success(())))
-		}.value
+		}
+		try await withTaskCancellationHandler {
+			try await worker.value
+		} onCancel: {
+			worker.cancel()
+		}
 	}
 
 	private func _updateStatus(with status: InstallerStatusViewModel.InstallerStatus) async throws {

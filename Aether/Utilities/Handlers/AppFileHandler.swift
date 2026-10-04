@@ -106,7 +106,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 									download.unpackageProgress = progress
 									
 									#if !targetEnvironment(macCatalyst)
-									BackgroundTaskManager.shared.updateProgress(for: download.id, progress: download.overallProgress)
+									BackgroundTaskManager.shared.updateProgress(for: download.id, progress: download.backgroundProgress)
 									#endif
 								}
 							}

@@ -109,35 +109,78 @@ enum FR {
 	}
 	
 	@MainActor
+	@discardableResult
 	static func signPackageFile(
 		_ app: AppInfoPresentable,
 		using options: Options,
 		icon: UIImage?,
 		certificate: CertificatePair?,
+		backgroundTaskToken: String? = nil,
 		completion: @escaping (Result<String, Error>) -> Void
-	) {
+	) -> Task<Void, Never> {
 		let appSnapshot = AppSnapshot(app)
 		let certificateSnapshot = SigningCertificateSnapshot(certificate)
 		let iconData = icon?.pngData()
-		Task.detached {
+		let token = backgroundTaskToken ?? "signing-\(UUID().uuidString)"
+		var worker: Task<Void, Never>?
+		var backgroundObserver: NSObjectProtocol?
+		#if !targetEnvironment(macCatalyst)
+		if backgroundTaskToken == nil {
+			let accepted = BackgroundTaskManager.shared.startWork(for: token,
+				title: app.name ?? .localized("Signing App"), subtitle: .localized("Signing"), progress: 0, signing: true) {
+				worker?.cancel()
+			}
+			if !accepted {
+				backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+					object: nil, queue: .main) { _ in worker?.cancel() }
+			}
+			if !accepted, UIApplication.shared.applicationState != .active {
+				completion(.failure(NSError(domain: "Aether.Background", code: 1,
+					userInfo: [NSLocalizedDescriptionKey: String.localized("Open Aether to finish signing. Background execution is unavailable.")])))
+				if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+				return Task {}
+			}
+		}
+		#endif
+		worker = Task.detached {
 			let handler = SigningHandler(app: appSnapshot, options: options)
 			handler.appCertificate = certificateSnapshot
 			handler.appIconData = iconData
 			
 			do {
+				try Task.checkCancellation()
 				try await handler.copy()
+				await MainActor.run {
+					#if !targetEnvironment(macCatalyst)
+					if backgroundTaskToken == nil {
+						BackgroundTaskManager.shared.updateWork(for: token, title: appSnapshot.name ?? .localized("Signing App"), subtitle: .localized("Signing"), progress: 0.2)
+					}
+					#endif
+				}
+				try Task.checkCancellation()
 				try await handler.modify()
+				try Task.checkCancellation()
 				try? await handler.clean()
 				await MainActor.run {
+					#if !targetEnvironment(macCatalyst)
+					if backgroundTaskToken == nil { BackgroundTaskManager.shared.stopTask(for: token, success: true) }
+					#endif
+					if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
 					completion(.success(handler.signedUUID))
 				}
 			} catch {
 				try? await handler.clean()
 				await MainActor.run {
+					if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+					if let signed = Storage.shared.signedApp(uuid: handler.signedUUID) { Storage.shared.deleteApp(for: signed) }
+					#if !targetEnvironment(macCatalyst)
+					if backgroundTaskToken == nil { BackgroundTaskManager.shared.stopTask(for: token, success: false) }
+					#endif
 					completion(.failure(error))
 				}
 			}
 		}
+		return worker!
 	}
 	
 	static func handleCertificateFiles(

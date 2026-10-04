@@ -46,7 +46,7 @@ extension Storage {
 /// A value-only description of an app for file workers. `Signed` and `Imported`
 /// are main-context objects, so they must never outlive the main actor in a
 /// detached signing, export, or installation task.
-struct AppSnapshot: AppInfoPresentable, Sendable {
+struct AppSnapshot: AppInfoPresentable, Sendable, Codable {
 	let name: String?
 	let version: String?
 	let identifier: String?

@@ -3,6 +3,7 @@
 //  Aether
 //
 
+import CoreData
 import Combine
 import Foundation
 import UIKit
@@ -29,6 +30,11 @@ class Download: ObservableObject, Identifiable, @unchecked Sendable {
 	@Published var unpackageProgress: Double = 0
 	@Published var state: State
 
+	var backgroundProgress: Double {
+		if isSigningUpdate { return 0.55 }
+		return overallProgress * (automaticUpdate == nil ? 1 : 0.5)
+	}
+
 	var overallProgress: Double {
 		onlyArchiving
 			? unpackageProgress
@@ -52,6 +58,11 @@ class Download: ObservableObject, Identifiable, @unchecked Sendable {
 	let onlyArchiving: Bool
 	let sourceIsStable: Bool
 	var sourceProvenance: SourceAppProvenance?
+	var automaticUpdate: AutomaticUpdateIntent?
+	@Published var isSigningUpdate = false
+	@Published var waitingForForeground = false
+	var backgroundTaskTransferred = false
+	var interruptionForegroundGeneration: UInt64 = 0
 
 	init(
 		transferIdentifier: String = UUID().uuidString,
@@ -105,6 +116,11 @@ class DownloadManager: NSObject, ObservableObject {
 	private var _session: URLSession!
 	private var _backgroundEventsCompletionHandler: (() -> Void)?
 	private var _finishedEventsBeforeHandler = false
+	private var _signingUpdates = Set<String>()
+	private var _foregroundGeneration: UInt64 = 0
+	private var _foregroundObserver: NSObjectProtocol?
+	private var _backgroundObserver: NSObjectProtocol?
+	private let _updateSigningGate = AutomaticUpdateSigningGate()
 	private var _processingTasks: [String: Task<Void, Never>] = [:]
 	private let _persistenceWriter = DownloadPersistenceWriter()
 	private var _persistenceRevision: UInt64 = 0
@@ -129,6 +145,38 @@ class DownloadManager: NSObject, ObservableObject {
 
 		_store.pruneArtifacts(keeping: downloads)
 		_restoreSessionTasks()
+		_foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+			object: nil, queue: .main) { [weak self] _ in
+			Task { @MainActor in
+				self?._foregroundGeneration &+= 1
+				self?._resumeInterruptedProcessing()
+				#if !targetEnvironment(macCatalyst)
+				if let self { DownloadActivityManager.shared.reconcile(self.downloads) }
+				#endif
+			}
+		}
+		_backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+			object: nil, queue: .main) { [weak self] _ in
+			Task { @MainActor in
+				guard let self else { return }
+				#if !targetEnvironment(macCatalyst)
+				for download in self.downloads {
+					guard case .processing = download.state,
+						!BackgroundTaskManager.shared.hasExecution(for: download.id) else { continue }
+					download.waitingForForeground = true
+					download.interruptionForegroundGeneration = self._foregroundGeneration
+					self._processingTasks[download.id]?.cancel()
+				}
+				self._persistDownloads()
+				self._releaseIdleBackgroundTunnel()
+				#endif
+			}
+		}
+	}
+
+	deinit {
+		if let _backgroundObserver { NotificationCenter.default.removeObserver(_backgroundObserver) }
+		if let _foregroundObserver { NotificationCenter.default.removeObserver(_foregroundObserver) }
 	}
 
 	func prepareForBackgroundEvents() {
@@ -147,7 +195,8 @@ class DownloadManager: NSObject, ObservableObject {
 	func startDownload(
 		from url: URL,
 		id logicalIdentifier: String = UUID().uuidString,
-		sourceProvenance: SourceAppProvenance? = nil
+		sourceProvenance: SourceAppProvenance? = nil,
+		automaticUpdate: AutomaticUpdateIntent? = nil
 	) async -> Download {
 		if let existingDownload = getDownload(from: url, sourceProvenance: sourceProvenance) {
 			return existingDownload
@@ -158,12 +207,13 @@ class DownloadManager: NSObject, ObservableObject {
 			url: url,
 			sourceProvenance: sourceProvenance
 		)
+		download.automaticUpdate = automaticUpdate
 		downloads.append(download)
 		guard await _persistBeforeResuming(download) else { return download }
 
 		let task = _makeFreshTask(for: download)
 		download.task = task
-		_startContinuedTask(for: download)
+		_startDownloadActivity(for: download)
 		task.resume()
 
 		return download
@@ -181,7 +231,7 @@ class DownloadManager: NSObject, ObservableObject {
 			sourceIsStable: sourceIsStable
 		)
 		downloads.append(download)
-		_startContinuedTask(for: download)
+		_startDownloadActivity(for: download)
 		return download
 	}
 
@@ -207,7 +257,7 @@ class DownloadManager: NSObject, ObservableObject {
 		task.taskDescription = download.id
 		download.task = task
 		guard await _persistBeforeResuming(download) else { return }
-		_startContinuedTask(for: download)
+		_startDownloadActivity(for: download)
 		task.resume()
 	}
 
@@ -227,7 +277,7 @@ class DownloadManager: NSObject, ObservableObject {
 		let task = _makeFreshTask(for: download)
 		download.task = task
 		guard await _persistBeforeResuming(download) else { return }
-		_startContinuedTask(for: download)
+		_startDownloadActivity(for: download)
 		task.resume()
 	}
 
@@ -268,6 +318,9 @@ class DownloadManager: NSObject, ObservableObject {
 
 	func deleteDownload(_ download: Download) {
 		guard _isCurrent(download) else { return }
+		#if !targetEnvironment(macCatalyst)
+		DownloadActivityManager.shared.finish(download, status: .cancelled)
+		#endif
 		_processingTasks.removeValue(forKey: download.id)?.cancel()
 		download.task?.cancel()
 		download.task = nil
@@ -277,6 +330,7 @@ class DownloadManager: NSObject, ObservableObject {
 			downloads.remove(at: index)
 		}
 		_persistDownloads()
+		_releaseIdleBackgroundTunnel()
 		_store.cleanupArtifacts(for: download)
 
 		let importIdentifier = download.importIdentifier
@@ -378,8 +432,13 @@ class DownloadManager: NSObject, ObservableObject {
 		sourceURL: URL,
 		sourceIsStable: Bool
 	) {
-		guard _isCurrent(download) else { return }
+		guard _isCurrent(download), _processingTasks[download.id] == nil else { return }
 		download.state = .processing
+		#if !targetEnvironment(macCatalyst)
+		DownloadActivityManager.shared.finish(download, status: .downloaded)
+		#endif
+		guard _ensureProcessingExecution(download, subtitle: .localized("Processing")) else { return }
+		download.waitingForForeground = false
 		download.unpackageProgress = 0
 		_persistDownloads()
 
@@ -393,6 +452,11 @@ class DownloadManager: NSObject, ObservableObject {
 			self._processingTasks.removeValue(forKey: download.id)
 			guard self._isCurrent(download) else { return }
 
+			if download.waitingForForeground {
+				self._persistDownloads()
+				self._resumeInterruptedProcessing()
+				return
+			}
 			if let error {
 				if !(error is CancellationError) {
 					UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -492,6 +556,10 @@ class DownloadManager: NSObject, ObservableObject {
 							)
 						}
 					case .processing:
+						if download.automaticUpdate?.signedUUID != nil {
+							self._complete(download: download)
+							continue
+						}
 						if
 							let stagingURL = self._store.stagingURL(for: download),
 							FileManager.default.fileExists(atPath: stagingURL.path)
@@ -505,6 +573,9 @@ class DownloadManager: NSObject, ObservableObject {
 					}
 				}
 
+				#if !targetEnvironment(macCatalyst)
+				DownloadActivityManager.shared.reconcile(self.downloads)
+				#endif
 				self._persistDownloads()
 				self._store.pruneArtifacts(keeping: self.downloads)
 				for download in downloadsToPause {
@@ -551,18 +622,28 @@ class DownloadManager: NSObject, ObservableObject {
 
 	private func _complete(download: Download) {
 		guard _isCurrent(download) else { return }
+		if download.automaticUpdate != nil {
+			_finishAutomaticUpdate(download)
+			return
+		}
+		_finishDownload(download)
+	}
+
+	private func _finishDownload(_ download: Download) {
+		guard _isCurrent(download) else { return }
 		download.progress = 1
 		download.unpackageProgress = 1
 		#if !targetEnvironment(macCatalyst)
-		BackgroundTaskManager.shared.updateProgress(for: download.id, progress: 1)
+		if !download.backgroundTaskTransferred { BackgroundTaskManager.shared.updateProgress(for: download.id, progress: 1) }
 		#endif
-		_stopContinuedTask(for: download, success: true)
+		if !download.backgroundTaskTransferred { _stopContinuedTask(for: download, success: true) }
 		_store.cleanupArtifacts(for: download)
 
 		if let index = downloads.firstIndex(where: { $0.id == download.id }) {
 			downloads.remove(at: index)
 		}
 		_persistDownloads()
+		_releaseIdleBackgroundTunnel()
 	}
 
 	private func _failTransfer(
@@ -662,6 +743,9 @@ class DownloadManager: NSObject, ObservableObject {
 	}
 
 	private func _persistDownloads(immediately: Bool = true) {
+		#if !targetEnvironment(macCatalyst)
+		for download in downloads { DownloadActivityManager.shared.update(download) }
+		#endif
 		_persistenceRevision &+= 1
 		let revision = _persistenceRevision
 		let records = downloads
@@ -702,12 +786,48 @@ class DownloadManager: NSObject, ObservableObject {
 		downloads.contains(where: { $0 === download })
 	}
 
-	private func _startContinuedTask(for download: Download) {
+	private func _ensureProcessingExecution(_ download: Download, subtitle: String) -> Bool {
 		#if !targetEnvironment(macCatalyst)
-		BackgroundTaskManager.shared.startTask(
-			for: download.id,
-			filename: download.sourceProvenance?.sourceAppName ?? download.fileName
-		)
+		let accepted = BackgroundTaskManager.shared.startWork(for: download.id,
+			title: download.sourceProvenance?.sourceAppName ?? download.fileName,
+			subtitle: subtitle, progress: download.backgroundProgress) { [weak self, weak download] in
+			guard let self, let download, self._isCurrent(download) else { return }
+			// URLSession owns networking independently. Only defer in-app work.
+			guard case .processing = download.state else { return }
+			download.waitingForForeground = true
+			download.interruptionForegroundGeneration = self._foregroundGeneration
+			self._processingTasks[download.id]?.cancel()
+			self._persistDownloads()
+			self._releaseIdleBackgroundTunnel()
+			DebugLogManager.shared.log("Processing interrupted; retaining the IPA and Update intent for foreground recovery.", category: "Background", level: .notice)
+		}
+		if !accepted, UIApplication.shared.applicationState != .active {
+			download.waitingForForeground = true
+			download.interruptionForegroundGeneration = _foregroundGeneration
+			_persistDownloads()
+			return false
+		}
+		#endif
+		return true
+	}
+
+	private func _resumeInterruptedProcessing() {
+		guard UIApplication.shared.applicationState == .active else { return }
+		for download in downloads where download.waitingForForeground && _foregroundGeneration > download.interruptionForegroundGeneration {
+			guard _processingTasks[download.id] == nil, !_signingUpdates.contains(download.id) else { continue }
+			download.waitingForForeground = false
+			if download.automaticUpdate?.signedUUID != nil { _complete(download: download) }
+			else { retryProcessing(download) }
+		}
+	}
+
+	private func _startDownloadActivity(for download: Download) {
+		if download.onlyArchiving {
+			_ = _ensureProcessingExecution(download, subtitle: .localized("Processing"))
+			return
+		}
+		#if !targetEnvironment(macCatalyst)
+		DownloadActivityManager.shared.start(download)
 		#endif
 	}
 
@@ -715,6 +835,11 @@ class DownloadManager: NSObject, ObservableObject {
 		#if !targetEnvironment(macCatalyst)
 		BackgroundTaskManager.shared.stopTask(for: download.id, success: success)
 		#endif
+		_releaseIdleBackgroundTunnel()
+	}
+
+	private func _releaseIdleBackgroundTunnel() {
+		if UIApplication.shared.applicationState == .background { DeviceConnectionManager.shared.handleAppBackground() }
 	}
 }
 
@@ -751,6 +876,7 @@ extension DownloadManager: @preconcurrency URLSessionDownloadDelegate {
 			)
 			try FileManager.default.removeFileIfNeeded(at: destinationURL)
 			try FileManager.default.moveItem(at: location, to: destinationURL)
+			try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: destinationURL.path)
 
 			download.task = nil
 			download.resumeData = nil
@@ -802,10 +928,7 @@ extension DownloadManager: @preconcurrency URLSessionDownloadDelegate {
 		if shouldUpdateUI {
 			download.lastUIProgressUpdate = now
 			#if !targetEnvironment(macCatalyst)
-			BackgroundTaskManager.shared.updateProgress(
-				for: download.id,
-				progress: download.overallProgress
-			)
+			DownloadActivityManager.shared.update(download)
 			#endif
 		}
 
@@ -939,6 +1062,165 @@ private enum DownloadValidationError: LocalizedError {
 			return .localized("The download failed with HTTP %d (%@).", arguments: statusCode, description)
 		case .invalidArchive:
 			return .localized("The downloaded file is not a valid IPA archive.")
+		}
+	}
+}
+
+/// Persisted with the transfer, so pause/retry and background recovery retain
+/// the user's Update intent. Certificate secrets stay in certificate storage.
+struct AutomaticUpdateIntent: Codable {
+	let bundleIdentifier: String
+	let installedVersion: String?
+	let certificateUUID: String
+	let teamIdentifier: String?
+	var options: Options
+	var signedUUID: String?
+	var installationEnqueued: Bool?
+}
+
+private actor AutomaticUpdateSigningGate {
+	private var occupied = false
+	private var waiters: [CheckedContinuation<Void, Never>] = []
+	func acquire() async {
+		if !occupied { occupied = true; return }
+		await withCheckedContinuation { waiters.append($0) }
+	}
+	func release() {
+		if waiters.isEmpty { occupied = false }
+		else { waiters.removeFirst().resume() }
+	}
+}
+
+private struct AutomaticUpdateError: LocalizedError {
+	let message: String
+	var errorDescription: String? { message }
+}
+
+extension DownloadManager {
+	func startUpdate(from url: URL, id: String, sourceProvenance: SourceAppProvenance?, installedApp: InstalledApp) async {
+		// A transfer started in app details remains download-only. Never silently
+		// convert an already running normal download into an installation.
+		guard getDownload(from: url, sourceProvenance: sourceProvenance) == nil else { return }
+		do {
+			let certificates = Storage.shared.getAllCertificates()
+			let selectedUUID = UserDefaults.standard.string(forKey: "aether.selectedCertUUID")
+			let index = UserDefaults.standard.integer(forKey: "aether.selectedCert")
+			let certificate = certificates.first { $0.uuid == selectedUUID }
+				?? (certificates.indices.contains(index) ? certificates[index] : nil)
+			guard let certificate, let uuid = certificate.uuid else {
+				throw AutomaticUpdateError(message: .localized("Select a signing certificate in Library before updating."))
+			}
+			let team = installedApp.appInfo?.Entitlements?["com.apple.developer.team-identifier"]?.value as? String
+			try _validateUpdateCertificate(certificate, team: team)
+			var options = OptionsManager.shared.options
+			// Updating must replace this app, even when normal signing preferences
+			// rename identifiers or override the displayed version.
+			options.appIdentifier = installedApp.bundleIdentifier
+			options.appVersion = nil
+			options.appName = nil
+			options.signingOption = .default
+			let intent = AutomaticUpdateIntent(bundleIdentifier: installedApp.bundleIdentifier,
+				installedVersion: installedApp.version, certificateUUID: uuid,
+				teamIdentifier: team, options: options)
+			DebugLogManager.shared.log("Automatic update started for \(installedApp.bundleIdentifier).", category: "Update", level: .notice)
+			_ = await startDownload(from: url, id: id, sourceProvenance: sourceProvenance, automaticUpdate: intent)
+		} catch {
+			DebugLogManager.shared.log("Update preflight failed: \(error.localizedDescription)", category: "Update", level: .error)
+			UIAlertController.showAlertWithOk(title: .localized("Update"), message: error.localizedDescription)
+		}
+	}
+
+	private func _validateUpdateCertificate(_ certificate: CertificatePair, team: String?) throws {
+		guard !certificate.revoked, let expiration = certificate.expiration, expiration > Date(),
+			SigningCertificateSnapshot(certificate) != nil,
+			let provision = Storage.shared.getProvisionFileDecoded(for: certificate) else {
+			throw AutomaticUpdateError(message: .localized("The selected signing certificate is unavailable, expired, or revoked."))
+		}
+		if let team, !team.isEmpty, !provision.TeamIdentifier.contains(team) {
+			throw AutomaticUpdateError(message: .localized("Choose a certificate from the installed app’s signing team to update it."))
+		}
+	}
+
+	private func _finishAutomaticUpdate(_ download: Download) {
+		if download.automaticUpdate?.installationEnqueued == true { _finishDownload(download); return }
+		guard _isCurrent(download), !_signingUpdates.contains(download.id),
+			_ensureProcessingExecution(download, subtitle: .localized("Signing Update")) else { return }
+		_signingUpdates.insert(download.id)
+		download.waitingForForeground = false
+		download.state = .processing
+		download.isSigningUpdate = true
+		_persistDownloads()
+		Task {
+			await _updateSigningGate.acquire()
+			do {
+				guard _isCurrent(download), !download.waitingForForeground, var intent = download.automaticUpdate else {
+					throw CancellationError()
+				}
+				let certificate = Storage.shared.getAllCertificates().first { $0.uuid == intent.certificateUUID }
+				guard let certificate else {
+					throw AutomaticUpdateError(message: .localized("The signing certificate was removed. Import it again before retrying."))
+				}
+				try _validateUpdateCertificate(certificate, team: intent.teamIdentifier)
+				if intent.signedUUID == nil {
+					let request: NSFetchRequest<Imported> = Imported.fetchRequest()
+					request.fetchLimit = 1
+					request.predicate = NSPredicate(format: "uuid == %@", download.importIdentifier)
+					guard let imported = try Storage.shared.context.fetch(request).first,
+						imported.identifier == intent.bundleIdentifier,
+						InstalledAppUpdateCatalog.isNewer(imported.version, than: intent.installedVersion) else {
+						throw AutomaticUpdateError(message: .localized("The downloaded app’s identifier or version does not match this update."))
+					}
+					DebugLogManager.shared.log("Signing update for \(intent.bundleIdentifier).", category: "Update", level: .notice)
+					let signedUUID: String = try await withCheckedThrowingContinuation { continuation in
+						FR.signPackageFile(imported, using: intent.options, icon: nil, certificate: certificate, backgroundTaskToken: download.id) {
+							continuation.resume(with: $0)
+						}
+					}
+					guard _isCurrent(download) else {
+						if let signed = Storage.shared.signedApp(uuid: signedUUID) { Storage.shared.deleteApp(for: signed) }
+						throw CancellationError()
+					}
+					intent.signedUUID = signedUUID
+					download.automaticUpdate = intent
+					guard await _persistBeforeResuming(download) else {
+						download.state = .failed(.localized("Could not save the signed update. Retry processing."), .retryProcessing)
+						_persistDownloads()
+						throw CancellationError()
+					}
+				}
+				guard _isCurrent(download), let uuid = intent.signedUUID,
+					let signed = Storage.shared.signedApp(uuid: uuid) else {
+					throw AutomaticUpdateError(message: .localized("The signed update is no longer available."))
+				}
+				DebugLogManager.shared.log("Sending update to the install queue for \(intent.bundleIdentifier).", category: "Update", level: .notice)
+				guard !download.waitingForForeground else { throw CancellationError() }
+				download.backgroundTaskTransferred = AppInstallationManager.shared.startInstall(app: signed, backgroundTaskToken: download.id, retryExisting: false)
+				guard AppInstallationManager.shared.containsInstallation(for: signed) else {
+					throw AutomaticUpdateError(message: .localized("The update could not enter the install queue. Check the installation method and retry."))
+				}
+				intent.installationEnqueued = true
+				download.automaticUpdate = intent
+				_ = await _persistBeforeResuming(download)
+				if intent.options.post_deleteAppAfterSigned {
+					let request: NSFetchRequest<Imported> = Imported.fetchRequest()
+					request.fetchLimit = 1
+					request.predicate = NSPredicate(format: "uuid == %@", download.importIdentifier)
+					if let imported = try? Storage.shared.context.fetch(request).first { Storage.shared.deleteApp(for: imported) }
+				}
+				_finishDownload(download)
+			} catch is CancellationError {
+				// Removal cancels automatic installation, including during signing.
+			} catch {
+				_failProcessing(download, error: error)
+				DebugLogManager.shared.log("Automatic update stopped: \(error.localizedDescription)", category: "Update", level: .error)
+				if _isCurrent(download) {
+					UIAlertController.showAlertWithOk(title: .localized("Update Failed"), message: error.localizedDescription)
+				}
+			}
+			download.isSigningUpdate = false
+			_signingUpdates.remove(download.id)
+			await _updateSigningGate.release()
+			_resumeInterruptedProcessing()
 		}
 	}
 }

@@ -21,41 +21,66 @@ struct SourceAppsCellView: View {
 	let source: ASRepository
 	let app: ASRepository.App
 	var showSourceBadge: Bool = false
+	var showsDownloadButton: Bool = true
+	var downloadButtonStyle: DownloadButtonView.Style = .compact
+	var updateTarget: InstalledApp? = nil
+	var onSelect: (() -> Void)? = nil
 	
 	var body: some View {
 		VStack {
 			HStack(spacing: 12) {
-				FRIconCellView(
-					title: app.currentName,
-					iconUrl: app.iconURL
-				) {
-					_subtitleView()
+				_selectableContent {
+					_appDetails
 				}
-				.overlay(alignment: .bottomLeading) {
-					if showSourceBadge, let iconURL = source.currentIconURL {
-						LazyImage(request: ImageRequest(url: iconURL, userInfo: [
-							.thumbnailKey: ImageRequest.ThumbnailOptions(maxPixelSize: Float(18 * displayScale))
-						])) { state in
-							if let image = state.image {
-								image
-									.appIconStyle(size: 18, isCircle: true, background: Color(uiColor: .secondarySystemBackground))
-									.offset(x: 36, y: 4)
-							}
-						}
-					}
+				if showsDownloadButton {
+					DownloadButtonView(sourceURL: sourceURL, source: source, app: app, style: downloadButtonStyle, updateTarget: updateTarget)
 				}
-				DownloadButtonView(sourceURL: sourceURL, source: source, app: app)
 			}
 			
 			if
 				_storeCellAppearance != 0,
 				let desc = SourceAppBodyText.body(in: app.localizedDescription)
 			{
-				Text(desc)
-					.frame(maxWidth: .infinity, alignment: .leading)
-					.font(.subheadline)
-					.foregroundStyle(.secondary)
-					.padding(.top, 2)
+				_selectableContent {
+					Text(desc)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.font(.subheadline)
+						.foregroundStyle(.secondary)
+						.padding(.top, 2)
+				}
+			}
+		}
+	}
+
+	/// Keep the navigation target separate from the transfer control so tapping
+	/// Update never also opens details, including in large-description mode.
+	@ViewBuilder
+	private func _selectableContent<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+		if let onSelect {
+			Button(action: onSelect) {
+				content().contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+		} else {
+			content()
+		}
+	}
+
+	private var _appDetails: some View {
+		FRIconCellView(title: app.currentName, iconUrl: app.iconURL) {
+			_subtitleView()
+		}
+		.overlay(alignment: .bottomLeading) {
+			if showSourceBadge, let iconURL = source.currentIconURL {
+				LazyImage(request: ImageRequest(url: iconURL, userInfo: [
+					.thumbnailKey: ImageRequest.ThumbnailOptions(maxPixelSize: Float(18 * displayScale))
+				])) { state in
+					if let image = state.image {
+						image
+							.appIconStyle(size: 18, isCircle: true, background: Color(uiColor: .secondarySystemBackground))
+							.offset(x: 36, y: 4)
+					}
+				}
 			}
 		}
 	}
