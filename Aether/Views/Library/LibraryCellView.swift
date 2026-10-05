@@ -44,7 +44,7 @@ struct LibraryCellView: View {
 
 	private func _installOrShowQueue(for app: AppInfoPresentable) {
 		if installationManager.containsInstallation(for: app) {
-			AppTabManager.shared.switchTo(.installed)
+			AppTabManager.shared.showInstallQueue()
 		} else {
 			installationManager.startInstall(app: app)
 		}

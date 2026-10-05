@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 import Darwin
 import Minizip
 
@@ -60,41 +59,6 @@ enum BundlePackageWriter {
         }
         try visit(normalizedRoot, relativeName: normalizedRoot.lastPathComponent)
         return result.sorted { $0.name < $1.name }
-    }
-
-    /// Content and archive metadata form the cache key; filenames/UUIDs alone do not.
-    static func fingerprint(_ entries: [Entry], compression: Int32,
-        check: () throws -> Void = { try Task.checkCancellation() }) throws -> String {
-        var hash = SHA256()
-        func field(_ bytes: Data) {
-            var length = UInt64(bytes.count).bigEndian
-            withUnsafeBytes(of: &length) { hash.update(bufferPointer: $0) }
-            hash.update(data: bytes)
-        }
-        field(Data("Aether-package-v1:\(compression)".utf8))
-        let buffer = UnsafeMutableRawPointer.allocate(byteCount: bufferSize, alignment: 16)
-        defer { buffer.deallocate() }
-        for entry in entries {
-            try check()
-            field(Data(entry.name.utf8))
-            field(Data("\(entry.metadata.st_mode):\(entry.metadata.st_size):\(entry.metadata.st_mtimespec.tv_sec):\(entry.metadata.st_mtimespec.tv_nsec)".utf8))
-            if entry.kind == S_IFREG {
-                try read(entry, buffer: buffer, check: check) { bytes in hash.update(bufferPointer: bytes) }
-            } else if entry.kind == S_IFLNK {
-                field(try symlinkData(entry))
-            }
-        }
-        return hex(hash.finalize())
-    }
-
-    static func digest(at url: URL, check: () throws -> Void = { try Task.checkCancellation() }) throws -> String {
-        var info = stat()
-        guard lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG else { throw Failure.archive("cached file") }
-        let buffer = UnsafeMutableRawPointer.allocate(byteCount: bufferSize, alignment: 16)
-        defer { buffer.deallocate() }
-        var hash = SHA256()
-        try read(Entry(url: url, name: url.lastPathComponent, metadata: info), buffer: buffer, check: check) { hash.update(bufferPointer: $0) }
-        return hex(hash.finalize())
     }
 
     static func write(_ entries: [Entry], to output: URL, compression: Int32,
@@ -195,5 +159,4 @@ enum BundlePackageWriter {
         Data(try FileManager.default.destinationOfSymbolicLink(atPath: entry.url.path).utf8)
     }
     private static func posixError() -> Error { NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
-    private static func hex(_ digest: SHA256.Digest) -> String { digest.map { String(format: "%02x", $0) }.joined() }
 }

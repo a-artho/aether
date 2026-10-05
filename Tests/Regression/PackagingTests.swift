@@ -62,48 +62,4 @@ final class PackagingTests: XCTestCase {
         XCTAssertThrowsError(try BundlePackageWriter.write(entries, to: destination, compression: 1) { _ in })
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
-    func testCacheReusesCompletedPackageAndInvalidatesChangedContentsAndCompression() throws {
-        let directory = root.appendingPathComponent("Cache")
-        let cache = InstallPackageCache(directory: directory)
-        let first = output()
-        XCTAssertFalse(try cache.package(BundlePackageWriter.entries(at: payload), to: first, compression: 1) { _ in })
-        let second = output()
-        XCTAssertTrue(try cache.package(BundlePackageWriter.entries(at: payload), to: second, compression: 1) { _ in })
-        XCTAssertEqual(try Data(contentsOf: first), try Data(contentsOf: second))
-        let originalDate = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate!
-        var contents = try Data(contentsOf: file)
-        contents[0] ^= 1
-        try contents.write(to: file)
-        try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: file.path)
-        XCTAssertFalse(try cache.package(BundlePackageWriter.entries(at: payload), to: output(), compression: 1) { _ in })
-        XCTAssertFalse(try cache.package(BundlePackageWriter.entries(at: payload), to: output(), compression: 9) { _ in })
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted(), ["Package.ipa", "Package.json"])
-    }
-    func testFreshStagingDirectoryAndCacheInstanceCanReusePackage() throws {
-        let directory = root.appendingPathComponent("Cache")
-        XCTAssertFalse(try InstallPackageCache(directory: directory).package(BundlePackageWriter.entries(at: payload), to: output(), compression: 1) { _ in })
-        let staging = root.appendingPathComponent("new/Payload")
-        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-        try FileManager.default.copyItemPreferClone(at: payload.appendingPathComponent("Test.app"), to: staging.appendingPathComponent("Test.app"))
-        let destination = output()
-        let stagedEntries = try BundlePackageWriter.entries(at: staging)
-        XCTAssertTrue(try InstallPackageCache(directory: directory).package(stagedEntries, to: destination, compression: 1) { _ in })
-        try assertArchive(destination)
-    }
-    func testCorruptCachedPackageIsRebuilt() throws {
-        let directory = root.appendingPathComponent("Cache")
-        let cache = InstallPackageCache(directory: directory)
-        XCTAssertFalse(try cache.package(BundlePackageWriter.entries(at: payload), to: output(), compression: 1) { _ in })
-        try Data("bad cache".utf8).write(to: directory.appendingPathComponent("Package.ipa"))
-        let destination = output()
-        XCTAssertFalse(try cache.package(BundlePackageWriter.entries(at: payload), to: destination, compression: 1) { _ in })
-        try assertArchive(destination)
-    }
-    func testUnavailableCacheDoesNotFailPackaging() throws {
-        let blocked = root.appendingPathComponent("Cache")
-        try Data("not a directory".utf8).write(to: blocked)
-        let destination = output()
-        XCTAssertFalse(try InstallPackageCache(directory: blocked).package(BundlePackageWriter.entries(at: payload), to: destination, compression: 1) { _ in })
-        try assertArchive(destination)
-    }
 }

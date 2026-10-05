@@ -40,6 +40,7 @@ final class AppTabManager: ObservableObject {
 	@Published var requestedSettingsPage: SettingsPage? = nil
 	@Published private(set) var isInstallationSettingsRequested = false
 	@Published var isLibrarySearchPresented = false
+	@Published private(set) var installationFocusRequest: UUID?
 	
 	private init() {}
 	
@@ -52,6 +53,16 @@ final class AppTabManager: ObservableObject {
 		withAnimation(.easeInOut(duration: 0.25)) {
 			self.selectedTab = tab
 		}
+	}
+
+	func showInstallQueue() {
+		installationFocusRequest = UUID()
+		switchTo(.installed)
+	}
+
+	func consumeInstallationFocusRequest(_ request: UUID) {
+		guard installationFocusRequest == request else { return }
+		installationFocusRequest = nil
 	}
 
 	func openSettings(page: SettingsPage? = nil) {

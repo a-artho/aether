@@ -11,13 +11,13 @@ cp "$repo_root/Aether/Utilities/ServerInstallProgress.swift" "$scratch/Sources/C
 cp "$repo_root/Aether/Extensions/FileManager+clone.swift" "$scratch/Sources/Core/"
 cp "$repo_root/Aether/Utilities/TaskCancellationRelay.swift" "$scratch/Sources/Core/"
 cp "$repo_root/Aether/Utilities/Handlers/BundlePackageWriter.swift" "$scratch/Sources/Core/"
-cp "$repo_root/Aether/Utilities/Handlers/InstallPackageCache.swift" "$scratch/Sources/Core/"
 cp "$test_dir/PackagingTests.swift" "$scratch/Tests/RegressionTests/"
 cp "$test_dir/RegressionTests.swift" "$scratch/Tests/RegressionTests/"
 python3 "$test_dir/generate-operation-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-lifecycle-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-background-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-correction-tests.py" "$scratch/Tests/RegressionTests"
+python3 "$test_dir/generate-audit-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-fixtures.py" "$scratch/Tests/RegressionTests/Fixtures"
 if [[ -n "${AETHER_ZIPFOUNDATION_CHECKOUT:-}" ]]; then
   python3 - "$scratch/Package.swift" "$AETHER_ZIPFOUNDATION_CHECKOUT" <<'PY'

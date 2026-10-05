@@ -107,14 +107,7 @@ final class ArchiveHandler: NSObject {
 				guard shouldPublish, !Task.isCancelled else { return }
 				Task { @MainActor in self.viewModel.packageProgress = progress }
 			}
-			if self._purpose == .install {
-				let reused = try InstallPackageCache.shared.package(entries, to: ipaUrl, compression: level, progress: report)
-				await MainActor.run {
-					DebugLogManager.shared.log("Install package cache \(reused ? "hit" : "miss").", category: "Install Transfer", level: .info)
-				}
-			} else {
-				try BundlePackageWriter.write(entries, to: ipaUrl, compression: level, progress: report)
-			}
+			try BundlePackageWriter.write(entries, to: ipaUrl, compression: level, progress: report)
 			try Task.checkCancellation()
 			return ipaUrl
 		}

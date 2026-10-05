@@ -8,6 +8,7 @@ import IDeviceSwift
 import NimbleViews
 
 struct InstalledAppDetailView: View {
+	@AppStorage("Aether.controlsInHeader") private var controlsInHeader = false
 	@Environment(\.dismiss) private var dismiss
 	let app: InstalledApp
 	@ObservedObject var store: InstalledAppsStore
@@ -25,8 +26,7 @@ struct InstalledAppDetailView: View {
 	var body: some View {
 		ScrollViewReader { scrollProxy in
 			List {
-				informationSection
-				updatesSection
+				updatesSection.id("updatesSection")
 			}
 			.listStyle(.plain)
 			.navigationTitle(app.displayName)
@@ -83,7 +83,8 @@ struct InstalledAppDetailView: View {
 					}
 				}
 
-				ToolbarItem(placement: .topBarTrailing) {
+				ToolbarItemGroup(placement: .topBarTrailing) {
+					if controlsInHeader { informationHeaderButton(.specifications, systemImage: "info.circle") }
 					Button {
 						isUninstallPresented = true
 					} label: {
@@ -118,36 +119,28 @@ struct InstalledAppDetailView: View {
 			#if DEBUG
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.scrollDetailToBottom"))) { _ in
 				withAnimation {
-					scrollProxy.scrollTo("informationSection", anchor: .top)
+					scrollProxy.scrollTo("updatesSection", anchor: .top)
 				}
 			}
 			#endif
 		}
+		.modifier(DeviceControlsBar(controls: informationControls, isEnabled: !controlsInHeader))
 	}
 
 	@ViewBuilder
 	private var updatesSection: some View {
 		if hasCheckedUpdates && !updates.isEmpty {
-			Section {
-				HStack {
-					Text(.localized("Updates"))
-						.font(.title2.bold())
-						.accessibilityAddTraits(.isHeader)
-					Spacer()
-					updateRefreshStatus
-				}
-				.listRowSeparator(.hidden)
-			}
-			ForEach(InstalledAppUpdateCandidate.groupedByDate(updates)) { group in
-				Section {
+			NBSection(.localized("Updates"), trailing: { updateRefreshStatus }) {
+				ForEach(InstalledAppUpdateCandidate.groupedByDate(updates)) { group in
+					SourceAppDateChip(title: updateDateTitle(group.date))
+						.padding(.vertical, 4)
+						.listRowSeparator(.hidden)
+						.listRowBackground(Color.clear)
 					ForEach(group.updates) { update in
 						SourceAppsCellView(sourceURL: update.sourceURL, source: update.repository, app: update.app,
 							showSourceBadge: true, onSelect: { selectedUpdate = update })
 							.accessibilityHint(update.repository.name ?? update.sourceURL.host ?? "")
 					}
-				} header: {
-					SourceAppDateChip(title: updateDateTitle(group.date))
-						.padding(.vertical, 4)
 				}
 			}
 		} else {
@@ -193,20 +186,25 @@ struct InstalledAppDetailView: View {
 		return formatter.string(from: date)
 	}
 
-	private var informationSection: some View {
-		Section {
-			HStack(spacing: 12) {
-				DeviceAccessoryTile(title: .localized("Info"), subtitle: .localized("App details"), systemImage: "info.circle") {
-					selectedInformationPage = .specifications
-				}
-				DeviceAccessoryTile(title: .localized("Entitlements"), subtitle: .localized("Permissions"), systemImage: "key.horizontal") {
-					selectedInformationPage = .entitlements
-				}
-			}
-			.listRowSeparator(.hidden)
-			.listRowBackground(Color.clear)
+	private func informationHeaderButton(_ page: InstalledAppInformationView.Page, systemImage: String) -> some View {
+		Button {
+			HapticManager.shared.impact()
+			selectedInformationPage = page
+		} label: {
+			Image(systemName: systemImage).foregroundStyle(.secondary)
 		}
-		.id("informationSection")
+		.accessibilityLabel(page.title)
+	}
+
+	private var informationControls: some View {
+		DeviceAccessoryTileGroup {
+			DeviceAccessoryTile(title: .localized("Info"), subtitle: .localized("App details"), systemImage: "info.circle") {
+				selectedInformationPage = .specifications
+			}
+			DeviceAccessoryTile(title: .localized("Entitlements"), subtitle: .localized("Permissions"), systemImage: "key.horizontal") {
+				selectedInformationPage = .entitlements
+			}
+		}
 	}
 
 	private var hasUnavailableCatalogs: Bool {
@@ -277,8 +275,7 @@ private struct InstalledAppInformationView: View {
 
 	var body: some View {
 		List {
-			switch page {
-			case .specifications:
+			if page == .specifications {
 				Section(.localized("Specifications")) {
 					_detailRow(label: .localized("Signer"), value: app.signerIdentity ?? .localized("Unavailable"))
 					_detailRow(label: .localized("Bundle Identifier"), value: app.bundleIdentifier, isCopyable: true)
@@ -338,41 +335,8 @@ private struct InstalledAppInformationView: View {
 						.padding(.vertical, 2)
 					}
 				}
-
-			case .entitlements:
-				Section(.localized("Entitlements")) {
-					if app.entitlementsList.isEmpty {
-						Text(.localized("No Entitlements"))
-							.foregroundStyle(.secondary)
-					} else {
-						ForEach(app.entitlementsList, id: \.key) { item in
-							VStack(alignment: .leading, spacing: 4) {
-								HStack {
-									Text(item.key)
-										.font(.caption.weight(.semibold))
-										.foregroundStyle(.primary)
-									Spacer()
-									Button {
-										UIPasteboard.general.string = "\(item.key): \(item.value)"
-										_triggerCopyFeedback(label: item.key)
-									} label: {
-										Image(systemName: "doc.on.doc")
-											.font(.caption2)
-											.foregroundStyle(.secondary)
-									}
-									.buttonStyle(.plain)
-								}
-
-								Text(item.value)
-									.font(.caption2.monospaced())
-									.foregroundStyle(.secondary)
-									.textSelection(.enabled)
-							}
-							.padding(.vertical, 2)
-						}
-					}
-				}
 			}
+			entitlementsSection
 		}
 		.listStyle(.insetGrouped)
 		.navigationTitle(page.title)
@@ -388,6 +352,41 @@ private struct InstalledAppInformationView: View {
 					.background(.black.opacity(0.8), in: Capsule())
 					.padding(.bottom, 24)
 					.transition(.opacity.combined(with: .move(edge: .bottom)))
+			}
+		}
+	}
+
+	private var entitlementsSection: some View {
+		Section(.localized("Entitlements")) {
+			if app.entitlementsList.isEmpty {
+				Text(.localized("No Entitlements"))
+					.foregroundStyle(.secondary)
+			} else {
+				ForEach(app.entitlementsList, id: \.key) { item in
+					VStack(alignment: .leading, spacing: 4) {
+						HStack {
+							Text(item.key)
+								.font(.caption.weight(.semibold))
+								.foregroundStyle(.primary)
+							Spacer()
+							Button {
+								UIPasteboard.general.string = "\(item.key): \(item.value)"
+								_triggerCopyFeedback(label: item.key)
+							} label: {
+								Image(systemName: "doc.on.doc")
+									.font(.caption2)
+									.foregroundStyle(.secondary)
+							}
+							.buttonStyle(.plain)
+						}
+
+						Text(item.value)
+							.font(.caption2.monospaced())
+							.foregroundStyle(.secondary)
+							.textSelection(.enabled)
+					}
+					.padding(.vertical, 2)
+				}
 			}
 		}
 	}

@@ -17,6 +17,12 @@ struct AppearanceView: View {
 	
 	@AppStorage("Aether.shouldTintIcons")
 	private var _shouldTintIcons: Bool = false
+
+	@AppStorage("Aether.controlsInHeader")
+	private var _controlsInHeader: Bool = false
+
+	@AppStorage("Aether.liquidGlassTiles")
+	private var _liquidGlassTiles: Bool = true
 	
 	@AppStorage("Aether.shouldChangeIconsBasedOffStyle")
 	private var _shouldChangeIconsBasedOffStyle: Bool = false
@@ -70,6 +76,20 @@ struct AppearanceView: View {
 				}
 			}
 			
+			if #available(iOS 26, *) {
+				NBSection(.localized("Device Controls")) {
+					Toggle(isOn: $_controlsInHeader) {
+						SettingsRowLabel(.localized("Controls in Header"), systemImage: "rectangle.topthird.inset.filled", backgroundColor: .blue)
+					}
+					Toggle(isOn: $_liquidGlassTiles) {
+						SettingsRowLabel(.localized("Liquid Glass Tiles"), systemImage: "square.grid.2x2.fill", backgroundColor: .cyan)
+					}
+					.disabled(_controlsInHeader)
+				} footer: {
+					Text(.localized("Move device and app information controls into the header. Liquid Glass Tiles applies when controls are shown as tiles."))
+				}
+			}
+
 			NBSection(.localized("Library")) {
 				Toggle(isOn: $_shouldChangeIconsBasedOffStyle) {
 					SettingsRowLabel(.localized("Dynamic Icons"), systemImage: "app.badge.fill", backgroundColor: .indigo)

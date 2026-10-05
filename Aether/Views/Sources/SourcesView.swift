@@ -211,31 +211,9 @@ struct SourcesView: View {
 			let source = _source(withObjectURI: sourceObjectURI),
 			let repository = viewModel.repository(for: source)
 		{
-			if let app = _app(matching: appLocator, in: repository) {
-				SourceAppsDetailView(sourceURL: source.sourceURL, source: repository, app: app)
-			} else {
-				TabPlaceholderView(
-					title: .localized("App Unavailable"),
-					description: .localized("This app is no longer available in this source."),
-					systemImage: "exclamationmark.triangle"
-				)
-			}
+			SourceAppsDetailView(sourceURL: source.sourceURL, source: repository, app: appLocator.app)
 		} else {
 			ProgressView()
-		}
-	}
-
-	private func _app(
-		matching locator: SourcesRouter.AppLocator,
-		in repository: ASRepository
-	) -> ASRepository.App? {
-		switch locator {
-		case .bundleID(let id):
-			return repository.apps.first { $0.id == id }
-		case .fallback(let name, let developer):
-			return repository.apps.first {
-				$0.currentName == name && $0.developer == developer
-			}
 		}
 	}
 

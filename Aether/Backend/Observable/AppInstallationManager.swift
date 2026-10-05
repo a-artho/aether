@@ -198,7 +198,7 @@ final class AppInstallationManager: ObservableObject {
 	}
 
 	private func _enqueue(_ request: InstallationRequest) -> Bool {
-		if request.signing == nil { AppTabManager.shared.switchTo(.installed) }
+		if request.signing == nil { AppTabManager.shared.showInstallQueue() }
 		if currentRequest?.appKey == request.appKey, !hasCompletedSuccessfully {
 			if case .broken = viewModel?.status {
 				if request.signing != nil {
@@ -315,7 +315,7 @@ final class AppInstallationManager: ObservableObject {
 					if signing.options.post_deleteAppAfterSigned, !request.app.isSigned { Storage.shared.deleteApp(for: request.app) }
 					if signing.options.post_installAppAfterSigned {
 						self._persistInstallQueue()
-						AppTabManager.shared.switchTo(.installed)
+						AppTabManager.shared.showInstallQueue()
 						statusVM.status = .none
 						self._startTransportInstallation(signedRequest, context: context, statusVM: statusVM, generation: generation)
 					} else {

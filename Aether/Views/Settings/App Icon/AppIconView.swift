@@ -17,11 +17,11 @@ extension AppIconView {
 		var image: UIImage
 		var id: String { key ?? displayName }
 		
-		init(displayName: String, author: String, key: String? = nil) {
+		init(displayName: String, author: String, key: String? = nil, previewImageName: String? = nil) {
 			self.displayName = displayName
 			self.author = author
 			self.key = key
-			self.image = altImage(key)
+			self.image = previewImageName.flatMap { UIImage(named: $0) } ?? altImage(key)
 		}
 	}
 	
@@ -39,6 +39,7 @@ struct AppIconView: View {
 	var sections: [String: [AltIcon]] = [
 		"Main": [
 			AltIcon(displayName: "Aether", author: "Artho", key: nil),
+			AltIcon(displayName: "Aether Dark", author: "Artho", key: "AetherDark", previewImageName: "AetherDarkPreview"),
 			AltIcon(displayName: "Feather (macOS)", author: "Samara", key: "V2Mac"),
 			AltIcon(displayName: "Feather v1", author: "Samara", key: "V1"),
 			AltIcon(displayName: "Feather v1 (macOS)", author: "Samara", key: "V1Mac"),

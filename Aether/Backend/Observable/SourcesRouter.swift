@@ -24,15 +24,13 @@ final class SourcesRouter: ObservableObject {
 		)
 	}
 
-	enum AppLocator: Hashable {
-		case bundleID(String)
-		case fallback(name: String, developer: String?)
+	struct AppLocator: Hashable {
+		// A bundle identifier is shared by versions and tweak variants. Keep the
+		// selected catalog snapshot so refreshes cannot silently change the target.
+		let app: ASRepository.App
 
 		static func locator(for app: ASRepository.App) -> AppLocator {
-			if let id = app.id?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
-				return .bundleID(id)
-			}
-			return .fallback(name: app.currentName, developer: app.developer)
+			AppLocator(app: app)
 		}
 	}
 

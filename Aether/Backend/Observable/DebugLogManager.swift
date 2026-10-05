@@ -164,6 +164,8 @@ public final class DebugLogManager: ObservableObject {
 	@Published public var sortOrder: SortOrder = .newestFirst
 
 	private var _inMemoryEntries: [DebugLogItem] = []
+	private var _publishedEntryIDs = Set<UUID>()
+	private var _maxPublishedCount = 1000
 	private let _maxInMemoryCount: Int = 1000
 	private let _lock = NSLock()
 	private let _logger = Logger(
@@ -206,9 +208,7 @@ public final class DebugLogManager: ObservableObject {
 
 		DispatchQueue.main.async { [weak self] in
 			guard let self else { return }
-			if !self.entries.contains(where: { $0.id == item.id }) {
-				self.entries.insert(item, at: 0)
-			}
+			self._publish(item)
 		}
 
 		switch level {
@@ -229,12 +229,26 @@ public final class DebugLogManager: ObservableObject {
 		}
 	}
 
+	// Accessed only on the main queue, like the published entries array.
+	private func _publish(_ item: DebugLogItem) {
+		guard _publishedEntryIDs.insert(item.id).inserted else { return }
+		entries.insert(item, at: 0)
+		if entries.count > _maxPublishedCount {
+			for entry in entries.suffix(entries.count - _maxPublishedCount) {
+				_publishedEntryIDs.remove(entry.id)
+			}
+			entries.removeLast(entries.count - _maxPublishedCount)
+		}
+	}
+
 	public func clearDiagnostics() {
 		_lock.lock()
 		_inMemoryEntries.removeAll()
 		_lock.unlock()
 		DispatchQueue.main.async { [weak self] in
-			self?.entries.removeAll { $0.source == .diagnostics }
+			guard let self else { return }
+			self.entries.removeAll { $0.source == .diagnostics }
+			self._publishedEntryIDs = Set(self.entries.map(\.id))
 		}
 	}
 
@@ -306,7 +320,11 @@ public final class DebugLogManager: ObservableObject {
 		combined.sort { $0.date > $1.date }
 
 		await MainActor.run {
+			// Explicit history loading retains the requested time window for export.
+			// Live arrivals replace oldest entries instead of growing it indefinitely.
 			self.entries = combined
+			self._maxPublishedCount = max(self._maxInMemoryCount, combined.count)
+			self._publishedEntryIDs = Set(self.entries.map(\.id))
 			self.lastFetchDate = Date()
 		}
 	}
