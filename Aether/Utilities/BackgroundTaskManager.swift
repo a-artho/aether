@@ -195,6 +195,10 @@ class BackgroundTaskManager: ObservableObject {
         guard workByToken[token] === work else { return }
         let handler = work.onExpiration
         DebugLogManager.shared.log("Continued execution interrupted id=\(work.identifier) progress=\(work.progress) state=\(UIApplication.shared.applicationState.rawValue)", category: "Background", level: .notice)
+        // Publish the recovery instruction while the native activity still belongs to us.
+        // Completion may replace its presentation with the system's failed-task UI.
+        work.subtitle = .localized("Open Aether to resume")
+        work.task?.updateTitle(work.title, subtitle: work.subtitle)
         _stopTask(for: token, success: false)
         handler?()
     }

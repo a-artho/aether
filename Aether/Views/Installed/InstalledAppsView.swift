@@ -291,41 +291,8 @@ struct InstalledAppsView: View {
 		isDisabled: Bool = false,
 		action: @escaping () -> Void
 	) -> some View {
-		Button(action: action) {
-			HStack(spacing: 8) {
-				Image(systemName: systemImage)
-					.font(.system(size: 17, weight: .semibold))
-					.foregroundStyle(isActive ? activeColor : Color.secondary.opacity(isDisabled ? 0.55 : 1))
-					.frame(width: 24, height: 24)
-
-				VStack(alignment: .leading, spacing: 2) {
-					Text(title)
-						.font(.subheadline.weight(.semibold))
-						.foregroundStyle(.primary)
-						.lineLimit(1)
-
-					Text(subtitle)
-						.font(.caption2.weight(.medium))
-						.foregroundStyle(.secondary)
-						.lineLimit(1)
-						.minimumScaleFactor(0.8)
-				}
-
-				Spacer(minLength: 0)
-			}
-			.padding(.horizontal, 10)
-			.padding(.vertical, 8)
-			.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-			.background {
-				RoundedRectangle(cornerRadius: 15, style: .continuous)
-					.fill(Color(uiColor: .secondarySystemGroupedBackground))
-			}
-		}
-		.buttonStyle(_HomeCardButtonStyle {
-			HapticManager.shared.impact()
-		})
-		.disabled(isDisabled)
-		.opacity(isDisabled ? 0.6 : 1.0)
+		DeviceAccessoryTile(title: title, subtitle: subtitle, systemImage: systemImage,
+			isActive: isActive, activeColor: activeColor, isDisabled: isDisabled, action: action)
 	}
 
 	private var _canOpenSpoofing: Bool {
@@ -599,6 +566,54 @@ struct InstalledAppIconView: View {
 				image = loaded
 			}
 		}
+	}
+}
+
+struct DeviceAccessoryTile: View {
+	let title: String
+	let subtitle: String
+	let systemImage: String
+	var isActive = false
+	var activeColor: Color = .green
+	var isDisabled = false
+	let action: () -> Void
+
+	var body: some View {
+		Button(action: action) {
+			HStack(spacing: 8) {
+				Image(systemName: systemImage)
+					.font(.system(size: 17, weight: .semibold))
+					.foregroundStyle(isActive ? activeColor : Color.secondary.opacity(isDisabled ? 0.55 : 1))
+					.frame(width: 24, height: 24)
+
+				VStack(alignment: .leading, spacing: 2) {
+					Text(title)
+						.font(.subheadline.weight(.semibold))
+						.foregroundStyle(.primary)
+						.lineLimit(1)
+
+					Text(subtitle)
+						.font(.caption2.weight(.medium))
+						.foregroundStyle(.secondary)
+						.lineLimit(1)
+						.minimumScaleFactor(0.8)
+				}
+
+				Spacer(minLength: 0)
+			}
+			.padding(.horizontal, 10)
+			.padding(.vertical, 8)
+			.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+			.background {
+				RoundedRectangle(cornerRadius: 15, style: .continuous)
+					.fill(Color(uiColor: .secondarySystemGroupedBackground))
+			}
+		}
+		.buttonStyle(_HomeCardButtonStyle {
+			HapticManager.shared.impact()
+		})
+		.disabled(isDisabled)
+		.opacity(isDisabled ? 0.6 : 1.0)
 	}
 }
 

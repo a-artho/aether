@@ -15,6 +15,7 @@ struct InstalledAppDetailView: View {
 	@FetchRequest(sortDescriptors: []) private var sources: FetchedResults<AltSource>
 	@State private var updates: [InstalledAppUpdateCandidate] = []
 	@State private var selectedUpdate: InstalledAppUpdateCandidate?
+	@State private var selectedInformationPage: InstalledAppInformationView.Page?
 	@State private var hasCheckedUpdates = false
 
 	@State private var isUninstallPresented = false
@@ -38,6 +39,20 @@ struct InstalledAppDetailView: View {
 					SourceAppsDetailView(sourceURL: update.sourceURL, source: update.repository, app: update.app)
 				}
 			}
+			.sheet(item: $selectedInformationPage) { page in
+				NBNavigationView(page.title, displayMode: .inline) {
+					InstalledAppInformationView(app: app, page: page)
+						.toolbar {
+							ToolbarItem(placement: .topBarTrailing) {
+								Button(.localized("Close"), systemImage: "xmark") {
+									selectedInformationPage = nil
+								}
+								.tint(.primary)
+							}
+						}
+				}
+			}
+
 			.task(id: updateRequest) {
 				await sourcesViewModel.ensureSourcesLoaded(Array(sources))
 				do {
@@ -179,17 +194,17 @@ struct InstalledAppDetailView: View {
 	}
 
 	private var informationSection: some View {
-		NBSection(.localized("Info")) {
-			NavigationLink {
-				InstalledAppInformationView(app: app, page: .specifications)
-			} label: {
-				Text(.localized("Bundle"))
+		Section {
+			HStack(spacing: 12) {
+				DeviceAccessoryTile(title: .localized("Info"), subtitle: .localized("App details"), systemImage: "info.circle") {
+					selectedInformationPage = .specifications
+				}
+				DeviceAccessoryTile(title: .localized("Entitlements"), subtitle: .localized("Permissions"), systemImage: "key.horizontal") {
+					selectedInformationPage = .entitlements
+				}
 			}
-			NavigationLink {
-				InstalledAppInformationView(app: app, page: .entitlements)
-			} label: {
-				Text(.localized("Entitlements"))
-			}
+			.listRowSeparator(.hidden)
+			.listRowBackground(Color.clear)
 		}
 		.id("informationSection")
 	}
@@ -243,12 +258,14 @@ struct InstalledAppDetailView: View {
 }
 
 private struct InstalledAppInformationView: View {
-	enum Page {
+	enum Page: String, Identifiable {
 		case specifications, entitlements
+
+		var id: String { rawValue }
 
 		var title: String {
 			switch self {
-			case .specifications: .localized("Bundle")
+			case .specifications: .localized("Info")
 			case .entitlements: .localized("Entitlements")
 			}
 		}

@@ -209,6 +209,7 @@ final class BackgroundOwnershipTests:XCTestCase {
   UIApplication.shared.applicationState = .background
   task.expirationHandler?();await settle()
   XCTAssertEqual(expirations,1);XCTAssertTrue(operation.isFinished)
+  XCTAssertEqual(task.presentations.last,"Open Aether to resume")
   XCTAssertTrue(BackgroundFixture.BackgroundAudioManager.shared.requesters.isEmpty)
   XCTAssertFalse(operation.beginJob(title:"Next",signing:false,onExpiration:{}))
   XCTAssertEqual(task.completions,[false])

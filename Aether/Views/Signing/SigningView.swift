@@ -147,7 +147,10 @@ extension SigningView {
 		Button {
 			_start()
 		} label: {
-			NBSheetButton(title: .localized("Start Signing"), style: .prominent)
+			NBSheetButton(
+				title: _temporaryOptions.post_installAppAfterSigned ? .localized("Sign and Install") : .localized("Start Signing"),
+				style: .prominent
+			)
 		}
 		.buttonStyle(.plain)
 		.padding(.horizontal, 16)
