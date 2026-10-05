@@ -1,5 +1,6 @@
 import Foundation
 import ZIPFoundation
+import Darwin
 
 /// A private input snapshot and a fresh output directory are required. The same
 /// parser supplies both the validated names and the bytes we subsequently read.
@@ -21,29 +22,28 @@ enum SafeIPAArchive {
 		let manager = FileManager.default
 		guard !manager.fileExists(atPath: root.path) else { throw UnsafeArchive("The extraction directory already exists.") }
 		try manager.createDirectory(at: root, withIntermediateDirectories: false)
-		let resolvedRoot = root.resolvingSymlinksInPath().standardizedFileURL.path
 		var totalWritten: UInt64 = 0
 		let declaredBytes = inspection.bytes
 		var extractedEntries = 0
 		do {
+			let rootDescriptor = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+			guard rootDescriptor >= 0 else { throw posixError() }
+			defer { close(rootDescriptor) }
 			for entry in archive {
 				extractedEntries += 1
 				try Task.checkCancellation()
-				var destination = root
-				for component in entry.path.split(separator: "/").filter({ $0 != "." }).map(String.init) { destination.appendPathComponent(component) }
-				guard destination.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(resolvedRoot + "/") else {
-					throw UnsafeArchive("An archive entry escapes its extraction directory.")
-				}
-				if entry.type == .directory {
-					try manager.createDirectory(at: destination, withIntermediateDirectories: true)
-					continue
-				}
-				try manager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-				// No archive link entries are permitted, and each file must be new.
-				guard !manager.fileExists(atPath: destination.path), manager.createFile(atPath: destination.path, contents: nil) else {
-					throw UnsafeArchive("An archive entry conflicts with another file.")
-				}
-				let output = try FileHandle(forWritingTo: destination)
+				let components = entry.path.split(separator: "/").filter { $0 != "." }.map(String.init)
+				// Traverse from the exact extraction directory, never by comparing
+				// Foundation's /var and /private/var path spellings. Every directory
+				// is opened without following links, including parents already created.
+				let directoryComponents = entry.type == .directory ? components : Array(components.dropLast())
+				let parent = try openDirectories(directoryComponents, relativeTo: rootDescriptor)
+				defer { close(parent) }
+				if entry.type == .directory { continue }
+				guard let name = components.last else { throw UnsafeArchive("The archive contains an unsafe file path.") }
+				let fileDescriptor = openat(parent, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+				guard fileDescriptor >= 0 else { throw UnsafeArchive("An archive entry conflicts with another file or cannot be created.") }
+				let output = FileHandle(fileDescriptor: fileDescriptor, closeOnDealloc: true)
 				defer { try? output.close() }
 				var written: UInt64 = 0
 				let crc = try archive.extract(entry, bufferSize: 256 * 1024) { chunk in
@@ -63,7 +63,8 @@ enum SafeIPAArchive {
 				}
 				// Preserve executable bits for app/framework binaries, without special modes.
 				let permissions = (entry.fileAttributes[.posixPermissions] as? NSNumber)?.intValue ?? 0o644
-				try manager.setAttributes([.posixPermissions: permissions & 0o777], ofItemAtPath: destination.path)
+				guard fchmod(fileDescriptor, mode_t(permissions & 0o777)) == 0 else { throw posixError() }
+				try output.close()
 			}
 			guard extractedEntries == inspection.entries else { throw UnsafeArchive("The archive became unreadable during extraction.") }
 			progress(1)
@@ -72,6 +73,27 @@ enum SafeIPAArchive {
 			throw error
 		}
 	}
+
+	private static func openDirectories(_ components: [String], relativeTo root: Int32) throws -> Int32 {
+		var parent = dup(root)
+		guard parent >= 0 else { throw posixError() }
+		do {
+			for component in components {
+				try Task.checkCancellation()
+				if mkdirat(parent, component, 0o755) != 0, errno != EEXIST { throw posixError() }
+				let child = openat(parent, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+				guard child >= 0 else { throw UnsafeArchive("An archive entry escapes or conflicts with its extraction directory.") }
+				close(parent)
+				parent = child
+			}
+			return parent
+		} catch {
+			close(parent)
+			throw error
+		}
+	}
+
+	private static func posixError() -> Error { NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
 
 	private static func validatedEntries(_ archive: Archive, declaredCount: Int) throws -> Inspection {
 		var entries = 0

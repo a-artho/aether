@@ -23,7 +23,6 @@ struct StoredDownload: Codable, Sendable {
 	let url: URL
 	let fileName: String
 	let sourceProvenance: SourceAppProvenance?
-	let automaticUpdate: AutomaticUpdateIntent?
 	let waitingForForeground: Bool?
 	let status: Status
 	let failureMessage: String?
@@ -40,7 +39,6 @@ struct StoredDownload: Codable, Sendable {
 		self.url = download.url
 		self.fileName = download.fileName
 		self.sourceProvenance = download.sourceProvenance
-		self.automaticUpdate = download.automaticUpdate
 		self.waitingForForeground = download.waitingForForeground
 		self.stagedFileName = download.stagedFileName
 		self.bytesDownloaded = download.bytesDownloaded
@@ -153,7 +151,6 @@ final class DownloadStore {
 				stagedFileName: record.stagedFileName,
 				importIdentifier: record.importIdentifier ?? storageKey(for: record.id)
 			)
-			download.automaticUpdate = record.automaticUpdate
 			download.waitingForForeground = record.waitingForForeground ?? false
 			download.resumeData = resumeData
 			download.bytesDownloaded = record.bytesDownloaded ?? 0

@@ -81,40 +81,41 @@ final class ArchiveHandler: NSObject {
 				throw SigningFileHandlerError.appNotFound
 			}
 			
-			let zipUrl = self._uniqueWorkDir.appendingPathComponent("Archive.zip")
 			let ipaUrl = self._uniqueWorkDir.appendingPathComponent("Archive.ipa")
 			
 			let progressLock = NSLock()
 			var lastProgressUpdate = Date.distantPast
-			var lastReportedProgress = 0.0
-			let compression: ZipCompression = self._purpose == .install
-				? .NoCompression
-				: ArchiveHandler.compressionLevel()
+			// Install and export packaging both honor Archive & Compression settings.
+			let compression = ArchiveHandler.compressionLevel()
 
-			try Zip.zipFiles(
-				paths: [payloadUrl],
-				zipFilePath: zipUrl,
-				password: nil,
-				compression: compression,
-				progress: { progress in
-					progressLock.lock()
-					let now = Date()
-					let shouldPublish = now.timeIntervalSince(lastProgressUpdate) >= 0.125
-						|| progress - lastReportedProgress >= 0.01
-						|| progress >= 1
-					if shouldPublish {
-						lastProgressUpdate = now
-						lastReportedProgress = progress
-					}
-					progressLock.unlock()
-					guard shouldPublish, !Task.isCancelled else { return }
-					Task { @MainActor in
-						self.viewModel.packageProgress = progress
-					}
-				})
-			
+			let entries = try BundlePackageWriter.entries(at: payloadUrl)
+			let level: Int32
+			switch compression {
+			case .NoCompression: level = 0
+			case .BestSpeed: level = 1
+			case .DefaultCompression: level = -1
+			case .BestCompression: level = 9
+			}
+			let report: (Double) -> Void = { progress in
+				progressLock.lock()
+				let now = Date()
+				let shouldPublish = now.timeIntervalSince(lastProgressUpdate) >= 0.125 || progress >= 1
+				if shouldPublish {
+					lastProgressUpdate = now
+				}
+				progressLock.unlock()
+				guard shouldPublish, !Task.isCancelled else { return }
+				Task { @MainActor in self.viewModel.packageProgress = progress }
+			}
+			if self._purpose == .install {
+				let reused = try InstallPackageCache.shared.package(entries, to: ipaUrl, compression: level, progress: report)
+				await MainActor.run {
+					DebugLogManager.shared.log("Install package cache \(reused ? "hit" : "miss").", category: "Install Transfer", level: .info)
+				}
+			} else {
+				try BundlePackageWriter.write(entries, to: ipaUrl, compression: level, progress: report)
+			}
 			try Task.checkCancellation()
-			try FileManager.default.moveItem(at: zipUrl, to: ipaUrl)
 			return ipaUrl
 		}
 		return try await withTaskCancellationHandler {
@@ -200,7 +201,9 @@ final class ArchiveHandler: NSObject {
 	}
 	
 	static func compressionLevel() -> ZipCompression {
-		let rawValue = UserDefaults.standard.integer(forKey: "Aether.compressionLevel")
+		guard let rawValue = UserDefaults.standard.object(forKey: "Aether.compressionLevel") as? Int else {
+			return .DefaultCompression
+		}
 		return ZipCompression.allCases.first(where: { $0.rawValue == rawValue })
 			?? .DefaultCompression
 	}

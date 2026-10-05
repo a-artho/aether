@@ -22,8 +22,6 @@ struct SourceAppsCellView: View {
 	let app: ASRepository.App
 	var showSourceBadge: Bool = false
 	var showsDownloadButton: Bool = true
-	var downloadButtonStyle: DownloadButtonView.Style = .compact
-	var updateTarget: InstalledApp? = nil
 	var onSelect: (() -> Void)? = nil
 	
 	var body: some View {
@@ -33,7 +31,7 @@ struct SourceAppsCellView: View {
 					_appDetails
 				}
 				if showsDownloadButton {
-					DownloadButtonView(sourceURL: sourceURL, source: source, app: app, style: downloadButtonStyle, updateTarget: updateTarget)
+					DownloadButtonView(sourceURL: sourceURL, source: source, app: app)
 				}
 			}
 			

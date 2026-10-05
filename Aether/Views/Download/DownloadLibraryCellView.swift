@@ -82,7 +82,6 @@ struct DownloadLibraryCellView: View {
 			return .localized("Resuming")
 		case .processing:
 			if download.waitingForForeground { return .localized("Waiting for Aether to Open") }
-			if download.isSigningUpdate { return .localized("Signing Update") }
 			return .localized("Processing") + " \(Int(download.overallProgress * 100))%"
 		case .failed(let message, _):
 			return message.isEmpty ? .localized("Download Failed") : message

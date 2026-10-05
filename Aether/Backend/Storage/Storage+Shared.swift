@@ -23,10 +23,10 @@ extension Storage {
 	
 	@MainActor
 	@discardableResult
-	func deleteApp(for app: AppInfoPresentable, ownedSigningTransaction: Bool = false) -> Bool {
+	func deleteApp(for app: AppInfoPresentable) -> Bool {
 		guard !AppInstallationManager.shared.containsInstallation(for: app),
-			(ownedSigningTransaction || !DownloadManager.shared.usesLibraryArtifact(app)) else {
-			DebugLogManager.shared.log("Kept app files required by an installation or update.", category: "Library", level: .notice)
+			!DownloadManager.shared.usesLibraryArtifact(app) else {
+			DebugLogManager.shared.log("Kept app files required by an installation or import.", category: "Library", level: .notice)
 			return false
 		}
 		do {

@@ -26,6 +26,28 @@ final class RegressionTests: XCTestCase {
 			XCTAssertTrue(FileManager.default.fileExists(atPath: output.appendingPathComponent("Payload/App.app/Info.plist").path))
 		}
 	}
+	func testExtractionThroughAliasedParentDirectory() throws {
+		let root = try workspace(), actual = root.appendingPathComponent("actual"), alias = root.appendingPathComponent("alias")
+		try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: false)
+		try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: actual)
+		try SafeIPAArchive.extract(fixture("valid"), to: alias.appendingPathComponent("output")) { _ in }
+		XCTAssertEqual(try Data(contentsOf: actual.appendingPathComponent("output/Payload/App.app/Info.plist")), Data("<plist/>".utf8))
+	}
+	func testParentReplacedBySymlinkCannotEscapeDuringExtraction() throws {
+		let root = try workspace(), output = root.appendingPathComponent("output"), elsewhere = root.appendingPathComponent("elsewhere")
+		try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: false)
+		var changed = false
+		XCTAssertThrowsError(try SafeIPAArchive.extract(fixture("valid"), to: output) { _ in
+			guard !changed else { return }
+			changed = true
+			let payload = output.appendingPathComponent("Payload")
+			try! FileManager.default.moveItem(at: payload, to: root.appendingPathComponent("movedPayload"))
+			try! FileManager.default.createSymbolicLink(at: payload, withDestinationURL: elsewhere)
+		})
+		XCTAssertTrue(changed)
+		XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: elsewhere.path), [])
+		XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+	}
 	func testCaseDistinctResourcesAreAcceptedByInspection() throws {
 		XCTAssertEqual(try SafeIPAArchive.inspect(fixture("case-distinct")).entries, 2)
 		let root = try workspace(), probe = root.appendingPathComponent("probe")
@@ -62,37 +84,22 @@ final class RegressionTests: XCTestCase {
 		try SafeIPAArchive.extract(snapshot, to: root.appendingPathComponent("output")) { _ in }
 	}
 
-	private func state(_ version: String, at date: Double = 1) -> ServerInstallMonitor.InstalledState {
-		.init(installed: true, version: version, registeredAt: Date(timeIntervalSince1970: date))
+	func testServerProgressDoesNotCompleteBeforeStarting() {
+		var monitor = ServerInstallProgress()
+		XCTAssertFalse(monitor.observe(progress: nil))
+		XCTAssertFalse(monitor.observe(progress: 0))
+		XCTAssertFalse(monitor.hasStarted)
 	}
-	func testDisappearingProgressIsNotSuccess() {
-		var monitor = ServerInstallMonitor(expectedVersion: "2", previous: state("1"), startedAt: 0)
-		XCTAssertEqual(monitor.observe(progress: 0.7, installed: state("1"), now: 1), .waiting)
-		XCTAssertEqual(monitor.observe(progress: nil, installed: state("1"), now: 2), .waiting)
-		if case .failed = monitor.observe(progress: nil, installed: state("1"), now: 33) {} else { XCTFail("Must fail bounded verification") }
+	func testServerProgressCompletesAfterReturningToZero() {
+		var monitor = ServerInstallProgress()
+		XCTAssertFalse(monitor.observe(progress: 0.7))
+		XCTAssertFalse(monitor.observe(progress: 1))
+		XCTAssertTrue(monitor.observe(progress: 0))
 	}
-	func testNewVersionAndRegistrationVerifySuccess() {
-		var update = ServerInstallMonitor(expectedVersion: "2", previous: state("1"), startedAt: 0)
-		_ = update.observe(progress: 0.7, installed: state("1"), now: 1)
-		XCTAssertEqual(update.observe(progress: nil, installed: state("2", at: 2), now: 2), .success)
-		var reinstall = ServerInstallMonitor(expectedVersion: "1", previous: state("1"), startedAt: 0)
-		_ = reinstall.observe(progress: 0.7, installed: state("1"), now: 1)
-		XCTAssertEqual(reinstall.observe(progress: nil, installed: state("1"), now: 2), .waiting)
-		XCTAssertEqual(reinstall.observe(progress: nil, installed: state("1", at: 2), now: 3), .success)
-	}
-	func testFastInstallWithoutProgressPulseUsesChangedDeviceEvidence() {
-		var monitor = ServerInstallMonitor(expectedVersion: "2", previous: state("1"), startedAt: 0)
-		XCTAssertEqual(monitor.observe(progress: nil, installed: state("2", at: 2), now: 1), .success)
-		var unchanged = ServerInstallMonitor(expectedVersion: "1", previous: state("1"), startedAt: 0)
-		XCTAssertEqual(unchanged.observe(progress: 1, installed: state("1"), now: 1), .waiting)
-		if case .failed = unchanged.observe(progress: nil, installed: state("1"), now: 32) {} else { XCTFail("An unchanged copy cannot prove a reinstall") }
-	}
-
-	func testNoStartAndEndlessPositiveProgressHaveDeadlines() {
-		var monitor = ServerInstallMonitor(expectedVersion: "1", previous: nil, startedAt: 0)
-		if case .failed = monitor.observe(progress: nil, installed: nil, now: 120) {} else { XCTFail("No start deadline") }
-		var active = ServerInstallMonitor(expectedVersion: "1", previous: nil, startedAt: 0)
-		if case .failed = active.observe(progress: 0.5, installed: nil, now: 1800) {} else { XCTFail("No overall deadline") }
+	func testServerProgressMatchesFeatherWhenProgressBecomesUnavailable() {
+		var monitor = ServerInstallProgress()
+		XCTAssertFalse(monitor.observe(progress: 0.7))
+		XCTAssertTrue(monitor.observe(progress: nil))
 	}
 	func testCancellationBeforeAndAfterAttachingWorker() async {
 		for before in [true, false] {

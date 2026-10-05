@@ -12,17 +12,13 @@ import NimbleViews
 struct DownloadButtonView: View {
 	enum Style {
 		case compact
-		case prominent
 		case navigation
-		case update
 	}
 
 	let sourceURL: URL?
 	let source: ASRepository?
 	let app: ASRepository.App
 	var style: Style = .compact
-	var updateTarget: InstalledApp? = nil
-	@ObservedObject private var installationManager = AppInstallationManager.shared
 	@ObservedObject private var downloadManager = DownloadManager.shared
 
 	private var currentDownload: Download? {
@@ -32,23 +28,13 @@ struct DownloadButtonView: View {
 
 	var body: some View {
 		ZStack {
-			if style == .update, let target = updateTarget,
-			   installationManager.installationCards.contains(where: { $0.app.identifier == target.bundleIdentifier }) {
-				NBButton(installationManager.currentRequest?.app.identifier == target.bundleIdentifier
-					? .localized("Installing") : .localized("Queued"), style: .text)
-					.foregroundStyle(.secondary)
-			} else if let currentDownload {
+			if let currentDownload {
 				DownloadProgressButton(download: currentDownload)
 					.compatTransition()
 			} else {
 				Button {
 					if let url = app.currentDownloadUrl {
 						Task {
-							if style == .update, let updateTarget {
-								await downloadManager.startUpdate(from: url, id: app.currentUniqueId,
-									sourceProvenance: _sourceProvenance(), installedApp: updateTarget)
-								return
-							}
 							_ = await downloadManager.startDownload(
 								from: url,
 								id: app.currentUniqueId,
@@ -58,22 +44,10 @@ struct DownloadButtonView: View {
 					}
 				} label: {
 					switch style {
-					case .update:
-						NBButton(.localized("Update"), style: .text)
-							.foregroundStyle(_themeColor)
 					case .compact:
 						Image(systemName: "icloud.and.arrow.down")
 							.font(.system(size: 18, weight: .semibold))
 							.foregroundStyle(_themeColor)
-							.frame(width: 44, height: 44)
-							.contentShape(Rectangle())
-					case .prominent:
-						Image(systemName: "icloud.and.arrow.down")
-							.font(.footnote.bold())
-							.foregroundStyle(_themeColor)
-							.frame(width: 35, height: 35)
-							.background(Color(uiColor: .quaternarySystemFill))
-							.clipShape(Circle())
 							.frame(width: 44, height: 44)
 							.contentShape(Rectangle())
 					case .navigation:

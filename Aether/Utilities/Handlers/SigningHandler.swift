@@ -29,8 +29,8 @@ final class SigningHandler: NSObject {
 	var appIconData: Data?
 	var appCertificate: SigningCertificateSnapshot?
 	
-	init(app: AppSnapshot, options: Options = OptionsManager.shared.options, transactionIdentifier: String? = nil) {
-		self._uuid = transactionIdentifier ?? UUID().uuidString
+	init(app: AppSnapshot, options: Options = OptionsManager.shared.options) {
+		self._uuid = UUID().uuidString
 		self._app = app
 		self._options = options
 		self._uniqueWorkDir = _fileManager.temporaryDirectory

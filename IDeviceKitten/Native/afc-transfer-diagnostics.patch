@@ -1,0 +1,234 @@
+--- a/idevice/src/lib.rs
++++ b/idevice/src/lib.rs
+@@ -500,6 +500,47 @@
+         } else {
+             Err(IdeviceError::NoEstablishedConnection)
+         }
++    }
++
++
++    #[cfg(feature = "afc")]
++    pub(crate) async fn send_raw_profiled(&mut self, message: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics) -> Result<(), IdeviceError> {
++        let socket = self.socket.as_mut().ok_or(IdeviceError::NoEstablishedConnection)?;
++        let start = std::time::Instant::now();
++        let result: Result<(), std::io::Error> = async {
++            // Preserve send_raw_with_progress's 64 KiB subdivisions and write_all semantics.
++            for part in message.chunks(64 * 1024) {
++                let mut remaining = part;
++                while !remaining.is_empty() {
++                    let n = std::future::poll_fn(|cx| {
++                        let poll_start = std::time::Instant::now();
++                        let result = std::pin::Pin::new(&mut **socket).poll_write(cx, remaining);
++                        let elapsed = poll_start.elapsed().as_secs_f64();
++                        metrics.poll_seconds += elapsed;
++                        metrics.max_poll_seconds = metrics.max_poll_seconds.max(elapsed);
++                        metrics.write_polls += 1;
++                        if result.is_pending() { metrics.pending_polls += 1; }
++                        result
++                    }).await?;
++                    if n == 0 { return Err(std::io::ErrorKind::WriteZero.into()); }
++                    metrics.socket_bytes += n as u64;
++                    remaining = &remaining[n..];
++                }
++            }
++            Ok(())
++        }.await;
++        metrics.socket_write_seconds += start.elapsed().as_secs_f64();
++        result?;
++        let start = std::time::Instant::now();
++        let result = std::future::poll_fn(|cx| {
++            metrics.flush_polls += 1;
++            let result = std::pin::Pin::new(&mut **socket).poll_flush(cx);
++            if result.is_pending() { metrics.flush_pending_polls += 1; }
++            result
++        }).await;
++        metrics.flush_seconds += start.elapsed().as_secs_f64();
++        result?;
++        Ok(())
+     }
+ 
+     /// Reads exactly `len` bytes from the device
+--- a/idevice/src/services/afc/mod.rs
++++ b/idevice/src/services/afc/mod.rs
+@@ -690,3 +690,26 @@
+         Ok(Self::new(idevice))
+     }
+ }
++
++/// Per-call, opt-in AFC write measurements. Durations include scheduling while awaited.
++#[repr(C)]
++#[derive(Default, Debug, Clone, Copy)]
++pub struct AfcWriteDiagnostics {
++    pub queue_seconds: f64,
++    pub worker_seconds: f64,
++    pub return_seconds: f64,
++    pub copy_seconds: f64,
++    pub serialize_seconds: f64,
++    pub socket_write_seconds: f64,
++    pub flush_seconds: f64,
++    pub reply_seconds: f64,
++    pub poll_seconds: f64,
++    pub max_poll_seconds: f64,
++    pub packets: u64,
++    pub replies: u64,
++    pub socket_bytes: u64,
++    pub write_polls: u64,
++    pub pending_polls: u64,
++    pub flush_polls: u64,
++    pub flush_pending_polls: u64,
++}
+--- a/idevice/src/services/afc/inner_file.rs
++++ b/idevice/src/services/afc/inner_file.rs
+@@ -197,6 +197,37 @@
+             self.as_mut()
+                 .send_packet(AfcOpcode::Write, header_payload, chunk.to_vec())
+                 .await?;
++        }
++        Ok(())
++    }
++
++
++    /// Diagnostic equivalent of write: identical packet order, sizes and reply checks.
++    pub async fn write_profiled(mut self: Pin<&mut Self>, bytes: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics) -> Result<(), IdeviceError> {
++        for chunk in bytes.chunks(MAX_WRITE_TRANSFER) {
++            let start = std::time::Instant::now();
++            let header_payload = self.as_ref().fd.to_le_bytes().to_vec();
++            let payload = chunk.to_vec();
++            metrics.copy_seconds += start.elapsed().as_secs_f64();
++            // SAFETY: the pinned fields are not moved, matching send_packet.
++            let this = unsafe { self.as_mut().get_unchecked_mut() };
++            let header_len = header_payload.len() as u64 + AfcPacketHeader::LEN;
++            let packet = AfcPacket {
++                header: AfcPacketHeader { magic: MAGIC, entire_len: header_len + payload.len() as u64,
++                    header_payload_len: header_len, packet_num: this.client.package_number, operation: AfcOpcode::Write },
++                header_payload, payload,
++            };
++            this.client.package_number += 1;
++            let start = std::time::Instant::now();
++            let wire = packet.serialize();
++            metrics.serialize_seconds += start.elapsed().as_secs_f64();
++            metrics.packets += 1;
++            this.client.idevice.send_raw_profiled(&wire, metrics).await?;
++            let start = std::time::Instant::now();
++            let result = this.client.read().await;
++            metrics.reply_seconds += start.elapsed().as_secs_f64();
++            result?;
++            metrics.replies += 1;
+         }
+         Ok(())
+     }
+@@ -583,4 +614,46 @@
+         drop(file);
+         receiver.await.unwrap();
+     }
+-}
++    #[tokio::test]
++    async fn profiled_write_preserves_bytes_and_measures_delayed_reply() {
++        let (client, mut server) = tokio::io::duplex(64 * 1024);
++        let receiver = tokio::spawn(async move {
++            for expected in [MAX_WRITE_TRANSFER, 123] {
++                let (sequence, bytes) = receive_write(&mut server).await;
++                assert_eq!(bytes.len(), expected);
++                assert!(bytes.iter().all(|b| *b == 0x5a));
++                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
++                reply(&mut server, sequence, 0).await;
++            }
++        });
++        let mut file = file(client);
++        let mut metrics = crate::afc::AfcWriteDiagnostics::default();
++        file.as_mut().write_profiled(&vec![0x5a; MAX_WRITE_TRANSFER + 123], &mut metrics).await.unwrap();
++        receiver.await.unwrap();
++        assert_eq!(metrics.packets, 2);
++        assert_eq!(metrics.replies, 2);
++        assert_eq!(metrics.socket_bytes, (MAX_WRITE_TRANSFER + 123 + 2 * 48) as u64);
++        assert!(metrics.reply_seconds >= 0.035);
++        assert!(metrics.write_polls > 0);
++        assert!(metrics.pending_polls > 0);
++    }
++
++    #[tokio::test]
++    async fn profiled_error_retains_partial_counters_and_stops() {
++        let (client, mut server) = tokio::io::duplex(64 * 1024);
++        let receiver = tokio::spawn(async move {
++            let (sequence, _) = receive_write(&mut server).await;
++            reply(&mut server, sequence, 18).await;
++            assert_eq!(server.read(&mut [0u8; 1]).await.unwrap(), 0);
++        });
++        let mut file = file(client);
++        let mut metrics = crate::afc::AfcWriteDiagnostics::default();
++        assert!(file.as_mut().write_profiled(&vec![0x5a; MAX_WRITE_TRANSFER + 123], &mut metrics).await.is_err());
++        assert_eq!(metrics.packets, 1);
++        assert_eq!(metrics.replies, 0);
++        assert!(metrics.socket_bytes > 0);
++        drop(file);
++        receiver.await.unwrap();
++    }
++
++}
+--- a/idevice/src/services/afc/file.rs
++++ b/idevice/src/services/afc/file.rs
+@@ -121,6 +121,10 @@
+         self.inner.as_mut().write(bytes).await
+     }
+ 
++    pub async fn write_entire_profiled(&mut self, bytes: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics) -> Result<(), IdeviceError> {
++        self.inner.as_mut().write_profiled(bytes, metrics).await
++    }
++
+     /// Applies an flock(2)-style lock to the file
+     ///
+     /// # Arguments
+--- a/ffi/src/afc.rs
++++ b/ffi/src/afc.rs
+@@ -973,3 +973,51 @@
+         drop(boxed);
+     }
+ }
++
++#[repr(C)]
++#[derive(Default, Debug, Clone, Copy)]
++pub struct AfcWriteDiagnostics {
++    pub queue_seconds: f64,
++    pub worker_seconds: f64,
++    pub return_seconds: f64,
++    pub copy_seconds: f64,
++    pub serialize_seconds: f64,
++    pub socket_write_seconds: f64,
++    pub flush_seconds: f64,
++    pub reply_seconds: f64,
++    pub poll_seconds: f64,
++    pub max_poll_seconds: f64,
++    pub packets: u64,
++    pub replies: u64,
++    pub socket_bytes: u64,
++    pub write_polls: u64,
++    pub pending_polls: u64,
++    pub flush_polls: u64,
++    pub flush_pending_polls: u64,
++}
++
++/// Diagnostic variant of afc_file_write. Output is reset on entry, including errors.
++/// Caller must provide valid handle/data pointers and a writable output struct.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn afc_file_write_diagnostics(
++    handle: *mut AfcFileHandle, data: *const u8, length: libc::size_t,
++    output: *mut AfcWriteDiagnostics,
++) -> *mut IdeviceFfiError {
++    if output.is_null() { return ffi_err!(IdeviceError::FfiInvalidArg); }
++    unsafe { *output = Default::default(); }
++    if handle.is_null() || data.is_null() { return ffi_err!(IdeviceError::FfiInvalidArg); }
++    let fd = unsafe { &mut *(handle as *mut idevice::afc::file::FileDescriptor) };
++    let data_slice = unsafe { std::slice::from_raw_parts(data, length) };
++    let submitted = std::time::Instant::now();
++    let (res, mut metrics, finished) = run_sync(async move {
++        let worker_started = std::time::Instant::now();
++        let mut metrics = idevice::afc::AfcWriteDiagnostics::default();
++        metrics.queue_seconds = submitted.elapsed().as_secs_f64();
++        let res = fd.write_entire_profiled(data_slice, &mut metrics).await;
++        metrics.worker_seconds = worker_started.elapsed().as_secs_f64();
++        (res, metrics, std::time::Instant::now())
++    });
++    metrics.return_seconds = finished.elapsed().as_secs_f64();
++    unsafe { *output = AfcWriteDiagnostics { queue_seconds: metrics.queue_seconds, worker_seconds: metrics.worker_seconds, return_seconds: metrics.return_seconds, copy_seconds: metrics.copy_seconds, serialize_seconds: metrics.serialize_seconds, socket_write_seconds: metrics.socket_write_seconds, flush_seconds: metrics.flush_seconds, reply_seconds: metrics.reply_seconds, poll_seconds: metrics.poll_seconds, max_poll_seconds: metrics.max_poll_seconds, packets: metrics.packets, replies: metrics.replies, socket_bytes: metrics.socket_bytes, write_polls: metrics.write_polls, pending_polls: metrics.pending_polls, flush_polls: metrics.flush_polls, flush_pending_polls: metrics.flush_pending_polls }; }
++    match res { Ok(_) => null_mut(), Err(e) => ffi_err!(e) }
++}

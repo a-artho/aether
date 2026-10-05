@@ -58,10 +58,8 @@ final class AppInstallationManager: ObservableObject {
 	private var settlementTask: Task<Void, Never>?
 	private var installGeneration = UUID()
 	private var cancellables = Set<AnyCancellable>()
-	private var _previousInstalledState: ServerInstallMonitor.InstalledState?
 	private var _hasLaunchedSemiLocalInstall = false
 	private var _backgroundTaskToken: String?
-	private var _backgroundBaseProgress = 0.0
 	private var _completedBackgroundInstalls = Set<UUID>()
 	private var _backgroundQueueTotal = 1
 	private var _backgroundObserver: NSObjectProtocol?
@@ -148,8 +146,7 @@ final class AppInstallationManager: ObservableObject {
 		return false
 	}
 	
-	@discardableResult
-	func startInstall(app: AppInfoPresentable, backgroundTaskToken: String? = nil, retryExisting: Bool = true) -> Bool {
+	func startInstall(app: AppInfoPresentable) {
 		let request = InstallationRequest(
 			app: AppSnapshot(app),
 			method: UserDefaults.standard.integer(forKey: "Aether.installationMethod"),
@@ -160,21 +157,15 @@ final class AppInstallationManager: ObservableObject {
 				title: .localized("Install"),
 				message: .localized("You cannot update ‘%@‘ with itself, please use an alternative tool to update it.", arguments: Bundle.main.name)
 			)
-			return false
+			return
 		}
-		let adopted = currentRequest == nil && queuedInstalls.isEmpty && _backgroundTaskToken == nil && backgroundTaskToken != nil
-		if adopted {
-			_backgroundTaskToken = backgroundTaskToken
-			_backgroundBaseProgress = 0.6
-		}
-		_enqueue(request, retryExisting: retryExisting)
-		return adopted
+		_enqueue(request)
 	}
 
-	private func _enqueue(_ request: InstallationRequest, retryExisting: Bool = true) {
+	private func _enqueue(_ request: InstallationRequest) {
 		AppTabManager.shared.switchTo(.installed)
 		if currentRequest?.appKey == request.appKey, !hasCompletedSuccessfully {
-			if retryExisting, case .broken = viewModel?.status { retryActiveInstall() }
+			if case .broken = viewModel?.status { retryActiveInstall() }
 			return
 		}
 		guard !queuedInstalls.contains(where: { $0.appKey == request.appKey }) else { return }
@@ -205,9 +196,6 @@ final class AppInstallationManager: ObservableObject {
 		let generation = UUID()
 		installGeneration = generation
 		let context = InstallationContext(method: request.method, serverMethod: request.serverMethod)
-		_previousInstalledState = (request.method == 1 ? nil : request.app.identifier.flatMap { UIApplication.installedApplicationState(for: $0) }).map {
-			ServerInstallMonitor.InstalledState(installed: $0.installed, version: $0.version, registeredAt: $0.registeredAt)
-		}
 		let statusVM = InstallerStatusViewModel(isIdevice: request.method == 1)
 		viewModel = statusVM
 		activeApp = request.app
@@ -277,6 +265,20 @@ final class AppInstallationManager: ObservableObject {
 		}
 		#endif
 		
+		let diagnosticLog: (@Sendable (String) -> Void)?
+		if DebugLogManager.shared.isLoggingEnabled {
+			diagnosticLog = { message in
+				_ = Task<Void, Never> { @MainActor in
+					DebugLogManager.shared.log(message, category: "Install Transfer", level: .notice)
+				}
+			}
+		} else {
+			diagnosticLog = nil
+		}
+		let diagnosticProvider = DeviceConnectionManager.shared.tunnelMethod.displayName
+		if context.method == 1, diagnosticLog != nil {
+			_log("transfer[\(generation.uuidString)] app=\(appSnapshot.name ?? "unknown") version=\(appSnapshot.version ?? "unknown") provider=\(diagnosticProvider) compression=\(ArchiveHandler.compressionLevel().rawValue) diagnosticSchema=2", category: "Install Transfer", level: .notice)
+		}
 		installTask = Task.detached { [weak self, appSnapshot] in
 			defer {
 				Task { @MainActor [weak self] in
@@ -297,10 +299,17 @@ final class AppInstallationManager: ObservableObject {
 				await MainActor.run {
 					self?.archiveHandler = handler
 				}
+				let preparationStarted = diagnosticLog == nil ? 0 : ProcessInfo.processInfo.systemUptime
 				try await handler.move()
+				let packagingStarted = diagnosticLog == nil ? 0 : ProcessInfo.processInfo.systemUptime
 				try Task.checkCancellation()
 				
 				let packageUrl = try await handler.archive()
+				if let diagnosticLog {
+					let now = ProcessInfo.processInfo.systemUptime
+					let bytes = (try? packageUrl.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+					diagnosticLog("transfer[\(generation.uuidString)] preparationSeconds=\(now - preparationStarted) moveSeconds=\(packagingStarted - preparationStarted) packagingSeconds=\(now - packagingStarted) packagedBytes=\(bytes)")
+				}
 				try Task.checkCancellation()
 				
 				if context.method == 0 {
@@ -326,7 +335,9 @@ final class AppInstallationManager: ObservableObject {
 					}
 					try await proxy.install(
 						at: packageUrl,
-						suspend: appSnapshot.identifier == Bundle.main.bundleIdentifier
+						suspend: appSnapshot.identifier == Bundle.main.bundleIdentifier,
+						diagnosticID: generation.uuidString,
+						diagnosticLog: diagnosticLog
 					)
 				}
 			} catch is CancellationError {
@@ -405,7 +416,7 @@ final class AppInstallationManager: ObservableObject {
 			
 			if case .installing = newStatus, !isMock, let bundleIdentifier = app.identifier {
 				if progressTask == nil {
-					progressTask = startInstallProgressPolling(bundleID: bundleIdentifier, version: app.version ?? "1", viewModel: statusVM, generation: generation)
+					progressTask = startInstallProgressPolling(bundleID: bundleIdentifier, viewModel: statusVM, generation: generation)
 				}
 			}
 			
@@ -461,45 +472,31 @@ final class AppInstallationManager: ObservableObject {
 	}
 
 	private func startInstallProgressPolling(
-		bundleID: String, version: String?, viewModel: InstallerStatusViewModel, generation: UUID
+		bundleID: String, viewModel: InstallerStatusViewModel, generation: UUID
 	) -> Task<Void, Never> {
-		let previous = _previousInstalledState
 		return Task { [weak self, weak viewModel] in
-			var monitor = ServerInstallMonitor(expectedVersion: version, previous: previous, startedAt: ProcessInfo.processInfo.systemUptime)
+			var progressMonitor = ServerInstallProgress()
 			var lastPublishedProgress = -1.0
 			while !Task.isCancelled {
 				guard let self, let viewModel, self.installGeneration == generation else { return }
 				let raw = UIApplication.installProgress(for: bundleID, makeSynchronous: false)
-				let evidence = UIApplication.installedApplicationState(for: bundleID).map {
-					ServerInstallMonitor.InstalledState(installed: $0.installed, version: $0.version, registeredAt: $0.registeredAt)
-				}
-				let outcome = monitor.observe(progress: raw, installed: evidence, now: ProcessInfo.processInfo.systemUptime)
-				if let raw, raw.isFinite {
-					let progress = self._normalizeInstallProgress(raw)
-					if abs(progress - lastPublishedProgress) >= 0.005 {
-						lastPublishedProgress = progress
-						viewModel.installProgress = progress
-					}
-				}
-				switch outcome {
-				case .success:
+				// Match Feather's progress lifecycle; this is not installed-state verification.
+				if progressMonitor.observe(progress: raw) {
 					viewModel.installProgress = 1
 					viewModel.status = .completed(.success(()))
 					return
-				case .failed(let message):
-					viewModel.status = .broken(NSError(domain: "Aether.Install", code: 1, userInfo: [NSLocalizedDescriptionKey: message]))
-					return
-				case .waiting: break
 				}
+				let progress = progressMonitor.hasStarted ? min(1, max(0, ((raw ?? 0) - 0.6) / 0.3)) : 0
+				if abs(progress - lastPublishedProgress) >= 0.005 {
+					lastPublishedProgress = progress
+					viewModel.installProgress = progress
+				}
+				// Avoid Feather's 1 ms polling loop and per-poll logging.
 				do { try await Task.sleep(nanoseconds: 300_000_000) } catch { return }
 			}
 		}
 	}
 
-	private func _normalizeInstallProgress(_ rawProgress: Double) -> Double {
-		min(1.0, max(0.0, (rawProgress - 0.6) / 0.3))
-	}
-	
 	func cancel() {
 		// Once the native install call has begun, its side effects cannot be
 		// rolled back by cancelling a Swift task. Keep the real operation visible.
@@ -574,7 +571,7 @@ final class AppInstallationManager: ObservableObject {
 		_backgroundTaskToken = token
 		let accepted = BackgroundTaskManager.shared.startWork(for: token,
 			title: request.app.name ?? .localized("Installing App"), subtitle: .localized("Preparing Installation"),
-			progress: _backgroundBaseProgress, installation: true) { [weak self] in
+			progress: 0, installation: true) { [weak self] in
 			self?._interruptInstallation(generation: generation)
 		}
 		if !accepted {
@@ -595,7 +592,7 @@ final class AppInstallationManager: ObservableObject {
 		lastErrorMessage = InstallationBackgroundError().localizedDescription
 		viewModel?.status = .broken(InstallationBackgroundError())
 		_persistInstallQueue()
-		_log("Installation background time expired; queue paused for Retry/Cancel.", category: "Background", level: .notice)
+		_log("Installation background time expired; queue paused for Retry/Cancel. transfer[\(generation.uuidString)] status=\(String(describing: viewModel?.status))", category: "Background", level: .notice)
 	}
 
 	private func _updateInstallationExecution(_ model: InstallerStatusViewModel) {
@@ -609,7 +606,7 @@ final class AppInstallationManager: ObservableObject {
 		let progress = (Double(_completedBackgroundInstalls.count) + currentProgress) / Double(_backgroundQueueTotal)
 		BackgroundTaskManager.shared.updateWork(for: token,
 			title: activeApp?.name ?? .localized("Installing App"), subtitle: model.statusLabel,
-			progress: _backgroundBaseProgress + (1 - _backgroundBaseProgress) * progress)
+			progress: progress)
 		#endif
 	}
 
@@ -618,7 +615,6 @@ final class AppInstallationManager: ObservableObject {
 		if let token = _backgroundTaskToken { BackgroundTaskManager.shared.stopTask(for: token, success: success) }
 		#endif
 		_backgroundTaskToken = nil
-		_backgroundBaseProgress = 0
 		_completedBackgroundInstalls.removeAll()
 		_backgroundQueueTotal = 1
 	}

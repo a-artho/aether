@@ -131,7 +131,7 @@ struct InstalledAppDetailView: View {
 			} else {
 				ForEach(updates) { update in
 					SourceAppsCellView(sourceURL: update.sourceURL, source: update.repository, app: update.app,
-						showSourceBadge: true, downloadButtonStyle: .update, updateTarget: app, onSelect: { selectedUpdate = update })
+						showSourceBadge: true, onSelect: { selectedUpdate = update })
 						.accessibilityHint(update.repository.name ?? update.sourceURL.host ?? "")
 				}
 			}

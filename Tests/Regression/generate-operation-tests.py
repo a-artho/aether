@@ -106,7 +106,7 @@ final class OperationRegressionTests:XCTestCase {
   try Data("owned".utf8).write(to:data)
   StorageFixture.AppInstallationManager.shared.queued=true
   XCTAssertFalse(storage.deleteApp(for:app)); XCTAssertFalse(storage.context.deleted)
-  XCTAssertFalse(storage.deleteApp(for:app,ownedSigningTransaction:true)); XCTAssertTrue(FileManager.default.fileExists(atPath:data.path))
+  XCTAssertFalse(storage.deleteApp(for:app)); XCTAssertTrue(FileManager.default.fileExists(atPath:data.path))
   StorageFixture.AppInstallationManager.shared.queued=false; StorageFixture.AppInstallationManager.shared.retiringAppKey="fixture"
   XCTAssertFalse(storage.deleteApp(for:app)); XCTAssertTrue(FileManager.default.fileExists(atPath:data.path))
   StorageFixture.AppInstallationManager.shared.retiringAppKey=nil; StorageFixture.DownloadManager.shared.active=true
@@ -249,8 +249,7 @@ final class TLSRegressionTests:XCTestCase {
 
 parts.append(r"""
 @MainActor enum DownloadDeletionFixture {
- final class Download { let id="fixture"; var task:Task<Void,Never>?; let importIdentifier="import-fixture"; var backgroundTaskTransferred=false }
- final class DownloadActivityManager { enum Status { case cancelled }; static let shared=DownloadActivityManager(); func finish(_ download:Download,status:Status) {} }
+ final class Download { let id="fixture"; var task:Task<Void,Never>?; let importIdentifier="import-fixture" }
  enum AppFileHandler { static var removed:[String]=[]; static func removeImportTransaction(transactionIdentifier:String) async { removed.append(transactionIdentifier) } }
  struct Store { func cleanupArtifacts(for download:Download) {} }
  final class Manager {
@@ -264,17 +263,17 @@ parts.append(r"""
  }
 }
 final class DownloadDeletionRegressionTests:XCTestCase {
- @MainActor func testDeletionWaitsForWorkerAndPreservesTransferredLease() async {
-  for transferred in [false,true] {
+ @MainActor func testDeletionWaitsForWorkerAndReleasesExecution() async {
+  do {
    let manager=DownloadDeletionFixture.Manager(),download=DownloadDeletionFixture.Download(),gate=Gate()
    DownloadDeletionFixture.AppFileHandler.removed=[]
-   download.backgroundTaskTransferred=transferred; manager.downloads=[download]
+   manager.downloads=[download]
    let worker=Task { _=await gate.wait() }
    while gate.count==0 { await Task.yield() }
    manager._processingTasks[download.id]=worker
    manager.deleteDownload(download)
    XCTAssertTrue(worker.isCancelled); XCTAssertTrue(manager.downloads.isEmpty)
-   XCTAssertEqual(manager.stopped,transferred ? 0 : 1)
+   XCTAssertEqual(manager.stopped,1)
    for _ in 0..<20 { await Task.yield() }
    XCTAssertTrue(DownloadDeletionFixture.AppFileHandler.removed.isEmpty)
    gate.release(1); await worker.value

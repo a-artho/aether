@@ -1,0 +1,481 @@
+--- a/idevice/src/remote_pairing/tls_psk.rs
++++ b/idevice/src/remote_pairing/tls_psk.rs
+@@ -6,7 +6,7 @@
+ //! The result is an encrypted stream suitable for CDTunnel.
+ //! We did this ourselves because rustls won't :(
+ 
+-use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
++use aes::cipher::{BlockDecryptMut, BlockEncryptMut, InnerIvInit, KeyInit, KeyIvInit};
+ use hmac::{Hmac, Mac};
+ use sha1::Sha1;
+ use sha2::Sha256;
+@@ -72,24 +72,57 @@
+     }
+ }
+ 
++#[derive(Clone)]
++enum RecordMac {
++    Sha1(HmacSha1),
++    Sha384(HmacSha384),
++}
++
++impl RecordMac {
++    fn new(key: &[u8], suite: CipherSuite) -> Self {
++        match suite {
++            CipherSuite::Aes128CbcSha => Self::Sha1(<HmacSha1 as Mac>::new_from_slice(key).unwrap()),
++            CipherSuite::Aes256CbcSha384 => Self::Sha384(<HmacSha384 as Mac>::new_from_slice(key).unwrap()),
++        }
++    }
++}
++
++enum WriteCipher {
++    Aes128(aes::Aes128),
++    Aes256(aes::Aes256),
++}
++
+ struct KeyBlock {
+-    client_mac_key: Vec<u8>,
+-    server_mac_key: Vec<u8>,
+     client_write_key: Vec<u8>,
+     server_write_key: Vec<u8>,
+     suite: CipherSuite,
++    client_mac: RecordMac,
++    server_mac: RecordMac,
++    write_cipher: WriteCipher,
++}
++
++impl KeyBlock {
++    fn new(client_mac_key: Vec<u8>, server_mac_key: Vec<u8>, client_write_key: Vec<u8>, server_write_key: Vec<u8>, suite: CipherSuite) -> Self {
++        let client_mac = RecordMac::new(&client_mac_key, suite);
++        let server_mac = RecordMac::new(&server_mac_key, suite);
++        let write_cipher = match suite {
++            CipherSuite::Aes128CbcSha => WriteCipher::Aes128(aes::Aes128::new_from_slice(&client_write_key).unwrap()),
++            CipherSuite::Aes256CbcSha384 => WriteCipher::Aes256(aes::Aes256::new_from_slice(&client_write_key).unwrap()),
++        };
++        Self { client_write_key, server_write_key, suite, client_mac, server_mac, write_cipher }
++    }
+ }
+ 
+ fn hmac_compute(key: &[u8], data: &[u8], suite: CipherSuite) -> Vec<u8> {
+     match suite {
+         CipherSuite::Aes128CbcSha => {
+             // PRF uses SHA256 for P_hash, but record MAC uses SHA1
+-            let mut mac = HmacSha256::new_from_slice(key).unwrap();
++            let mut mac = <HmacSha256 as Mac>::new_from_slice(key).unwrap();
+             mac.update(data);
+             mac.finalize().into_bytes().to_vec()
+         }
+         CipherSuite::Aes256CbcSha384 => {
+-            let mut mac = HmacSha384::new_from_slice(key).unwrap();
++            let mut mac = <HmacSha384 as Mac>::new_from_slice(key).unwrap();
+             mac.update(data);
+             mac.finalize().into_bytes().to_vec()
+         }
+@@ -157,63 +190,67 @@
+     let client_write_key = kb[pos..pos + key_len].to_vec();
+     pos += key_len;
+     let server_write_key = kb[pos..pos + key_len].to_vec();
+-    KeyBlock {
+-        client_mac_key,
+-        server_mac_key,
+-        client_write_key,
+-        server_write_key,
+-        suite,
+-    }
+-}
+-
+-fn compute_mac(mac_key: &[u8], seq: u64, ct: u8, data: &[u8], suite: CipherSuite) -> Vec<u8> {
+-    let mut buf = Vec::new();
+-    buf.extend_from_slice(&seq.to_be_bytes());
+-    buf.extend_from_slice(&[ct, 0x03, 0x03]);
+-    buf.extend_from_slice(&(data.len() as u16).to_be_bytes());
+-    buf.extend_from_slice(data);
+-
+-    match suite {
+-        CipherSuite::Aes128CbcSha => {
+-            let mut mac = HmacSha1::new_from_slice(mac_key).unwrap();
+-            mac.update(&buf);
++    KeyBlock::new(client_mac_key, server_mac_key, client_write_key, server_write_key, suite)
++}
++
++fn compute_mac(state: &RecordMac, seq: u64, ct: u8, data: &[u8]) -> Vec<u8> {
++    let sequence = seq.to_be_bytes();
++    let header = [ct, 0x03, 0x03];
++    let length = (data.len() as u16).to_be_bytes();
++    macro_rules! finish_mac {
++        ($mac:expr) => {{
++            let mut mac = $mac.clone();
++            mac.update(&sequence);
++            mac.update(&header);
++            mac.update(&length);
++            mac.update(data);
+             mac.finalize().into_bytes().to_vec()
+-        }
+-        CipherSuite::Aes256CbcSha384 => {
+-            let mut mac = HmacSha384::new_from_slice(mac_key).unwrap();
+-            mac.update(&buf);
+-            mac.finalize().into_bytes().to_vec()
+-        }
+-    }
+-}
+-
+-fn encrypt_record(keys: &KeyBlock, seq: u64, ct: u8, plaintext: &[u8]) -> Vec<u8> {
+-    let mac = compute_mac(&keys.client_mac_key, seq, ct, plaintext, keys.suite);
+-
+-    let mut payload = plaintext.to_vec();
+-    payload.extend_from_slice(&mac);
+-
+-    // PKCS#7 padding (block size = 16 for both AES-128 and AES-256)
+-    let pad_len = 16 - (payload.len() % 16);
+-    payload.extend(std::iter::repeat_n(pad_len as u8 - 1, pad_len));
+-
++        }};
++    }
++    match state {
++        RecordMac::Sha1(mac) => finish_mac!(mac),
++        RecordMac::Sha384(mac) => finish_mac!(mac),
++    }
++}
++
++// One reusable allocation holds framing, IV, plaintext, MAC and ciphertext.
++// Only the IV changes per record; AES and HMAC key schedules are reused.
++fn encrypt_into(keys: &KeyBlock, seq: u64, ct: u8, plaintext: &[u8], framed: bool, out: &mut Vec<u8>) {
++    out.clear();
++    let prefix = if framed { 5 } else { 0 };
++    let mac = compute_mac(&keys.client_mac, seq, ct, plaintext);
++    let payload_len = plaintext.len() + mac.len();
++    let pad_len = 16 - payload_len % 16;
++    out.reserve(prefix + 16 + payload_len + pad_len);
++    out.resize(prefix, 0);
+     let mut iv = [0u8; 16];
+     rand::fill(&mut iv);
+-
+-    let ciphertext = match keys.suite {
+-        CipherSuite::Aes128CbcSha => {
+-            let enc = Aes128CbcEnc::new(keys.client_write_key[..16].into(), &iv.into());
+-            enc.encrypt_padded_vec_mut::<aes::cipher::block_padding::NoPadding>(&payload)
+-        }
+-        CipherSuite::Aes256CbcSha384 => {
+-            let enc = Aes256CbcEnc::new(keys.client_write_key[..32].into(), &iv.into());
+-            enc.encrypt_padded_vec_mut::<aes::cipher::block_padding::NoPadding>(&payload)
+-        }
+-    };
+-
+-    let mut result = iv.to_vec();
+-    result.extend_from_slice(&ciphertext);
+-    result
++    out.extend_from_slice(&iv);
++    out.extend_from_slice(plaintext);
++    out.extend_from_slice(&mac);
++    out.extend(std::iter::repeat_n(pad_len as u8 - 1, pad_len));
++    let payload = &mut out[prefix + 16..];
++    let length = payload.len();
++    match &keys.write_cipher {
++        WriteCipher::Aes128(cipher) => {
++            Aes128CbcEnc::inner_iv_init(cipher.clone(), &iv.into())
++                .encrypt_padded_mut::<aes::cipher::block_padding::NoPadding>(payload, length).unwrap();
++        }
++        WriteCipher::Aes256(cipher) => {
++            Aes256CbcEnc::inner_iv_init(cipher.clone(), &iv.into())
++                .encrypt_padded_mut::<aes::cipher::block_padding::NoPadding>(payload, length).unwrap();
++        }
++    }
++    if framed {
++        let length = (out.len() - 5) as u16;
++        out[..5].copy_from_slice(&[ct, 0x03, 0x03, (length >> 8) as u8, length as u8]);
++    }
++}
++
++fn encrypt_record(keys: &KeyBlock, seq: u64, ct: u8, plaintext: &[u8]) -> Vec<u8> {
++    let mut out = Vec::new();
++    encrypt_into(keys, seq, ct, plaintext, false, &mut out);
++    out
+ }
+ 
+ fn decrypt_record(
+@@ -234,11 +271,7 @@
+     } else {
+         &keys.client_write_key
+     };
+-    let mac_key = if is_server {
+-        &keys.server_mac_key
+-    } else {
+-        &keys.client_mac_key
+-    };
++    let mac_state = if is_server { &keys.server_mac } else { &keys.client_mac };
+ 
+     let decrypted = match keys.suite {
+         CipherSuite::Aes128CbcSha => {
+@@ -270,7 +303,7 @@
+     let plaintext = &decrypted[..content_len - mac_len];
+     let received_mac = &decrypted[content_len - mac_len..content_len];
+ 
+-    let expected_mac = compute_mac(mac_key, seq, ct, plaintext, keys.suite);
++    let expected_mac = compute_mac(mac_state, seq, ct, plaintext);
+     if received_mac != expected_mac.as_slice() {
+         return Err(IdeviceError::InternalError(
+             "TLS MAC verification failed".into(),
+@@ -511,6 +544,7 @@
+         pending_record: Vec::new(),
+         pending_record_total: 0,
+         write_buf: Vec::new(),
++        write_buf_offset: 0,
+     })
+ }
+ 
+@@ -528,6 +562,7 @@
+     pending_record_total: usize,
+     /// Partial outbound TLS record waiting to be flushed
+     write_buf: Vec<u8>,
++    write_buf_offset: usize,
+ }
+ 
+ impl<S> std::fmt::Debug for TlsPskStream<S> {
+@@ -541,15 +576,10 @@
+ 
+ impl<S: AsyncRead + AsyncWrite + Unpin + Send> TlsPskStream<S> {
+     /// Encrypt and send application data, splitting into multiple TLS records if needed.
+-    pub async fn write_app_data(&mut self, data: &[u8]) -> Result<(), IdeviceError> {
+-        for chunk in data.chunks(TLS_MAX_PLAINTEXT) {
+-            let encrypted = encrypt_record(&self.keys, self.write_seq, CT_APPLICATION_DATA, chunk);
+-            self.write_seq += 1;
+-            self.inner
+-                .write_all(&make_record(CT_APPLICATION_DATA, &encrypted))
+-                .await?;
+-        }
+-        self.inner.flush().await?;
++    pub async fn write_app_data(&mut self, data: &[u8]) -> Result<(), IdeviceError>
++    where S: Sync {
++        self.write_all(data).await?;
++        self.flush().await?;
+         Ok(())
+     }
+ 
+@@ -650,71 +680,142 @@
+     }
+ }
+ 
+-impl<S: AsyncRead + AsyncWrite + Unpin + Send + Sync> AsyncWrite for TlsPskStream<S> {
+-    fn poll_write(
+-        self: Pin<&mut Self>,
+-        cx: &mut Context<'_>,
+-        data: &[u8],
+-    ) -> Poll<std::io::Result<usize>> {
+-        let this = self.get_mut();
+-
+-        // Flush any pending partial write first
+-        while !this.write_buf.is_empty() {
+-            match Pin::new(&mut this.inner).poll_write(cx, &this.write_buf) {
+-                Poll::Ready(Ok(n)) => {
+-                    this.write_buf.drain(..n);
+-                }
++impl<S: AsyncRead + AsyncWrite + Unpin + Send + Sync> TlsPskStream<S> {
++    fn poll_drain_write_buffer(&mut self, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
++        while self.write_buf_offset < self.write_buf.len() {
++            match Pin::new(&mut self.inner).poll_write(cx, &self.write_buf[self.write_buf_offset..]) {
++                Poll::Ready(Ok(0)) => return Poll::Ready(Err(std::io::ErrorKind::WriteZero.into())),
++                Poll::Ready(Ok(n)) => self.write_buf_offset += n,
+                 Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                 Poll::Pending => return Poll::Pending,
+             }
+         }
+-
+-        // Clamp to TLS max record size to avoid oversized records
++        self.write_buf.clear();
++        self.write_buf_offset = 0;
++        Poll::Ready(Ok(()))
++    }
++}
++
++impl<S: AsyncRead + AsyncWrite + Unpin + Send + Sync> AsyncWrite for TlsPskStream<S> {
++    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, data: &[u8]) -> Poll<std::io::Result<usize>> {
++        let this = self.get_mut();
++        std::task::ready!(this.poll_drain_write_buffer(cx))?;
++        if data.is_empty() { return Poll::Ready(Ok(0)); }
+         let chunk = &data[..data.len().min(TLS_MAX_PLAINTEXT)];
+-
+-        // Encrypt the new data into a TLS record
+-        let encrypted = encrypt_record(&this.keys, this.write_seq, CT_APPLICATION_DATA, chunk);
+-        let record = make_record(CT_APPLICATION_DATA, &encrypted);
++        encrypt_into(&this.keys, this.write_seq, CT_APPLICATION_DATA, chunk, true, &mut this.write_buf);
++        // Accept exactly one bounded plaintext record into our owned buffer.
++        // Reporting Pending after accepting it would make write_all retry it.
+         this.write_seq += 1;
+-
+-        match Pin::new(&mut this.inner).poll_write(cx, &record) {
+-            Poll::Ready(Ok(written)) => {
+-                if written < record.len() {
+-                    // Buffer the unsent remainder
+-                    this.write_buf.extend_from_slice(&record[written..]);
+-                }
+-                Poll::Ready(Ok(chunk.len()))
+-            }
+-            Poll::Ready(Err(e)) => {
+-                this.write_seq -= 1;
+-                Poll::Ready(Err(e))
+-            }
+-            Poll::Pending => {
+-                // Buffer the entire record for later flush
+-                this.write_buf = record;
+-                Poll::Pending
+-            }
+-        }
++        Poll::Ready(Ok(chunk.len()))
+     }
+ 
+     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+         let this = self.get_mut();
+-
+-        // Flush buffered write data first
+-        while !this.write_buf.is_empty() {
+-            match Pin::new(&mut this.inner).poll_write(cx, &this.write_buf) {
+-                Poll::Ready(Ok(n)) => {
+-                    this.write_buf.drain(..n);
+-                }
+-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+-                Poll::Pending => return Poll::Pending,
+-            }
+-        }
+-
++        std::task::ready!(this.poll_drain_write_buffer(cx))?;
+         Pin::new(&mut this.inner).poll_flush(cx)
+     }
+ 
+-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
++    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
++        std::task::ready!(self.as_mut().poll_flush(cx))?;
+         Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+     }
+ }
++
++#[cfg(test)]
++mod tls_stream_tests {
++    use super::*;
++    use std::io;
++
++    #[derive(Default)]
++    struct Writer { wire: Vec<u8>, calls: usize, partial: usize, zero: bool, fail: bool, shutdown: bool }
++    impl AsyncRead for Writer {
++        fn poll_read(self: Pin<&mut Self>, _: &mut Context<'_>, _: &mut ReadBuf<'_>) -> Poll<io::Result<()>> { Poll::Pending }
++    }
++    impl AsyncWrite for Writer {
++        fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, data: &[u8]) -> Poll<io::Result<usize>> {
++            self.calls += 1;
++            if self.fail { return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into())); }
++            if self.zero { return Poll::Ready(Ok(0)); }
++            if self.calls % 2 == 1 { cx.waker().wake_by_ref(); return Poll::Pending; }
++            let n = if self.partial == 0 { data.len() } else { data.len().min(self.partial) };
++            self.wire.extend_from_slice(&data[..n]);
++            Poll::Ready(Ok(n))
++        }
++        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> { Poll::Ready(Ok(())) }
++        fn poll_shutdown(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> { self.shutdown = true; Poll::Ready(Ok(())) }
++    }
++    fn stream(suite: CipherSuite, writer: Writer) -> TlsPskStream<Writer> {
++        TlsPskStream { inner: writer, keys: KeyBlock::new(vec![1;suite.mac_key_len()], vec![1;suite.mac_key_len()], vec![2;suite.enc_key_len()], vec![2;suite.enc_key_len()], suite), write_seq: 0, read_seq: 0, read_buf: vec![], pending_record: vec![], pending_record_total: 0, write_buf: vec![], write_buf_offset: 0 }
++    }
++    fn decoded(stream: &TlsPskStream<Writer>) -> Vec<u8> {
++        let b = &stream.inner.wire;
++        let mut pos = 0;
++        let mut sequence = 0;
++        let mut output = vec![];
++        while pos < b.len() {
++            let length = u16::from_be_bytes([b[pos+3], b[pos+4]]) as usize;
++            output.extend(decrypt_record(&stream.keys, false, sequence, CT_APPLICATION_DATA, &b[pos+5..pos+5+length]).unwrap());
++            pos += 5 + length;
++            sequence += 1;
++        }
++        assert_eq!(sequence, stream.write_seq);
++        output
++    }
++    #[tokio::test]
++    async fn pending_writes_do_not_duplicate_plaintext() {
++        for suite in [CipherSuite::Aes128CbcSha, CipherSuite::Aes256CbcSha384] {
++            let mut s = stream(suite, Writer::default());
++            s.write_all(b"one payload").await.unwrap();
++            s.flush().await.unwrap();
++            assert_eq!(decoded(&s), b"one payload");
++        }
++    }
++    #[tokio::test]
++    async fn partial_pending_multirecord_writes_preserve_data_and_sequences() {
++        let payload: Vec<u8> = (0..40000).map(|n| (n % 251) as u8).collect();
++        for suite in [CipherSuite::Aes128CbcSha, CipherSuite::Aes256CbcSha384] {
++            let mut s = stream(suite, Writer { partial: 113, ..Writer::default() });
++            s.write_all(&payload).await.unwrap();
++            s.flush().await.unwrap();
++            assert_eq!(decoded(&s), payload);
++            assert_eq!(s.write_seq, 3);
++            assert!(s.write_buf.capacity() <= 32768);
++        }
++    }
++    #[tokio::test]
++    async fn shutdown_flushes_the_last_accepted_record() {
++        let mut s = stream(CipherSuite::Aes256CbcSha384, Writer::default());
++        s.write_all(b"last record").await.unwrap();
++        s.shutdown().await.unwrap();
++        assert!(s.inner.shutdown);
++        assert_eq!(decoded(&s), b"last record");
++    }
++    #[tokio::test]
++    async fn zero_writes_and_transport_errors_are_propagated() {
++        for (writer, expected) in [(Writer { zero: true, ..Writer::default() }, io::ErrorKind::WriteZero), (Writer { fail: true, ..Writer::default() }, io::ErrorKind::BrokenPipe)] {
++            let mut s = stream(CipherSuite::Aes256CbcSha384, writer);
++            s.write_all(b"buffered").await.unwrap();
++            assert_eq!(s.flush().await.unwrap_err().kind(), expected);
++        }
++    }
++    #[tokio::test]
++    async fn empty_writes_do_not_emit_records() {
++        let mut s = stream(CipherSuite::Aes256CbcSha384, Writer::default());
++        assert_eq!(s.write(&[]).await.unwrap(), 0);
++        s.flush().await.unwrap();
++        assert!(s.inner.wire.is_empty());
++        assert_eq!(s.write_seq, 0);
++    }
++    #[test]
++    fn cached_mac_matches_fresh_hmac_and_rejects_tampering() {
++        let s = stream(CipherSuite::Aes256CbcSha384, Writer::default());
++        let mut reference = <HmacSha384 as Mac>::new_from_slice(&[1;48]).unwrap();
++        reference.update(&0u64.to_be_bytes());
++        reference.update(&[CT_APPLICATION_DATA,3,3,0,3]);
++        reference.update(b"abc");
++        assert_eq!(compute_mac(&s.keys.client_mac, 0, CT_APPLICATION_DATA, b"abc"), reference.finalize().into_bytes().to_vec());
++        let mut record = encrypt_record(&s.keys, 0, CT_APPLICATION_DATA, b"abc");
++        record[0] ^= 1;
++        assert!(decrypt_record(&s.keys, false, 0, CT_APPLICATION_DATA, &record).is_err());
++    }
++}
+--- a/idevice/Cargo.toml
++++ b/idevice/Cargo.toml
+@@ -115,6 +115,11 @@
+ tokio = { version = "1.43", features = ["full"] }
+ tun-rs = { version = "2.0.8", features = ["async_tokio"] }
+ bytes = "1.10.1"
++
++# ARM SHA-384 uses the runtime-detected SHA-512 instructions when available.
++# Keep older Apple ARM64 CPUs on the portable fallback and Intel unchanged.
++[target.'cfg(all(target_arch = "aarch64", target_vendor = "apple"))'.dependencies]
++sha2 = { version = "0.10", optional = true, features = ["oid", "asm"] }
+ 
+ [features]
+ default = ["aws-lc"]
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2449,6 +2449,16 @@
+  "cfg-if",
+  "cpufeatures 0.2.17",
+  "digest",
++ "sha2-asm",
++]
++
++[[package]]
++name = "sha2-asm"
++version = "0.6.4"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
++dependencies = [
++ "cc",
+ ]
+ 
+ [[package]]

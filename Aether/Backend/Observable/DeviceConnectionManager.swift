@@ -294,11 +294,6 @@ public final class DeviceConnectionManager: ObservableObject {
 		if AppInstallationManager.shared.isInstalling {
 			return true
 		}
-		// An automatic update still needs this connection after download/signing.
-		// Closing LocalDevVPN here would require reopening it from a locked app.
-		if DownloadManager.shared.downloads.contains(where: {
-			$0.automaticUpdate != nil && $0.isActive && !$0.waitingForForeground
-		}) { return true }
 		// 3. Active on-device pairing session
 		if OnDevicePairingManager.shared.isActive {
 			return true

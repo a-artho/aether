@@ -1,0 +1,103 @@
+--- a/idevice/src/services/afc/inner_file.rs
++++ b/idevice/src/services/afc/inner_file.rs
+@@ -15,7 +15,9 @@
+ };
+ 
+ /// Maximum transfer size for file operations (1MB)
+-const MAX_TRANSFER: u64 = 1024 * 1024; // this is what libimobiledevice uses in afcclient
++const MAX_TRANSFER: u64 = 1024 * 1024; // Keep read requests unchanged.
++// Match Aether's bounded upload buffer; validate one reply per write.
++const MAX_WRITE_TRANSFER: usize = 4 * 1024 * 1024;
+ 
+ fn chunk_number(n: usize, chunk_size: usize) -> impl Iterator<Item = usize> {
+     (0..n)
+@@ -190,7 +192,7 @@
+     /// # Arguments
+     /// * `bytes` - Data to write to the file
+     pub async fn write(mut self: Pin<&mut Self>, bytes: &[u8]) -> Result<(), IdeviceError> {
+-        for chunk in bytes.chunks(MAX_TRANSFER as usize) {
++        for chunk in bytes.chunks(MAX_WRITE_TRANSFER) {
+             let header_payload = self.as_ref().fd.to_le_bytes().to_vec();
+             self.as_mut()
+                 .send_packet(AfcOpcode::Write, header_payload, chunk.to_vec())
+@@ -505,3 +507,80 @@
+             .finish()
+     }
+ }
++
++#[cfg(test)]
++mod afc_large_write_tests {
++    use super::*;
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++    fn file(stream: tokio::io::DuplexStream) -> Pin<Box<OwnedInnerFileDescriptor>> {
++        Box::pin(OwnedInnerFileDescriptor {
++            client: AfcClient::new(crate::Idevice::new(Box::new(stream), "afc-write-test")),
++            fd: 7,
++            path: "test.ipa".into(),
++            pending_fut: None,
++            _m: std::marker::PhantomPinned,
++            dropped: true,
++        })
++    }
++
++    async fn receive_write(stream: &mut tokio::io::DuplexStream) -> (u64, Vec<u8>) {
++        let mut header = [0u8; 40];
++        stream.read_exact(&mut header).await.unwrap();
++        let word = |offset| u64::from_le_bytes(header[offset..offset + 8].try_into().unwrap());
++        assert_eq!(word(0), MAGIC);
++        assert_eq!(word(16), 48);
++        assert_eq!(word(32), AfcOpcode::Write as u64);
++        let sequence = word(24);
++        let length = word(8) as usize - 48;
++        let mut fd = [0u8; 8];
++        stream.read_exact(&mut fd).await.unwrap();
++        assert_eq!(u64::from_le_bytes(fd), 7);
++        let mut bytes = vec![0; length];
++        stream.read_exact(&mut bytes).await.unwrap();
++        (sequence, bytes)
++    }
++
++    async fn reply(stream: &mut tokio::io::DuplexStream, sequence: u64, status: u64) {
++        let packet = AfcPacket {
++            header: AfcPacketHeader { magic: MAGIC, entire_len: 48, header_payload_len: 48,
++                packet_num: sequence, operation: AfcOpcode::Status },
++            header_payload: status.to_le_bytes().to_vec(), payload: Vec::new(),
++        };
++        stream.write_all(&packet.serialize()).await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn writes_large_packets_and_partial_tail_with_acknowledgements() {
++        let (client, mut server) = tokio::io::duplex(64 * 1024);
++        let receiver = tokio::spawn(async move {
++            for (sequence, expected) in [MAX_WRITE_TRANSFER, MAX_WRITE_TRANSFER, 123].into_iter().enumerate() {
++                let (actual_sequence, bytes) = receive_write(&mut server).await;
++                assert_eq!(actual_sequence, sequence as u64);
++                assert_eq!(bytes.len(), expected);
++                assert!(bytes.iter().all(|byte| *byte == 0x5a));
++                reply(&mut server, actual_sequence, 0).await;
++            }
++        });
++        let mut file = file(client);
++        file.as_mut().write(&vec![0x5a; 2 * MAX_WRITE_TRANSFER + 123]).await.unwrap();
++        receiver.await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn rejects_error_ack_and_does_not_send_next_packet() {
++        let (client, mut server) = tokio::io::duplex(64 * 1024);
++        let receiver = tokio::spawn(async move {
++            let (sequence, bytes) = receive_write(&mut server).await;
++            assert_eq!(bytes.len(), MAX_WRITE_TRANSFER);
++            reply(&mut server, sequence, 18).await;
++            let mut next = [0u8; 1];
++            assert_eq!(server.read(&mut next).await.unwrap(), 0);
++        });
++        let mut file = file(client);
++        let result = file.as_mut().write(&vec![0x5a; MAX_WRITE_TRANSFER + 123]).await;
++        assert!(matches!(result, Err(IdeviceError::Afc(_))));
++        drop(file);
++        receiver.await.unwrap();
++    }
++}

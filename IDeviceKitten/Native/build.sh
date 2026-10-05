@@ -20,6 +20,9 @@ if [[ -d "$source_dir" ]]; then
 fi
 tar -xzf "$archive" -C "$work_dir"
 patch -d "$source_dir" -p1 < "$native_dir/verify-saved-pairing.patch"
+patch -d "$source_dir" -p1 < "$native_dir/afc-large-writes.patch"
+patch -d "$source_dir" -p1 < "$native_dir/afc-transfer-diagnostics.patch"
+patch -d "$source_dir" -p1 < "$native_dir/tls-stream-optimization.patch"
 export CARGO_TARGET_DIR="$work_dir/target"
 export IPHONEOS_DEPLOYMENT_TARGET=15.0
 export MACOSX_DEPLOYMENT_TARGET=12.0
@@ -28,10 +31,33 @@ export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 targets=(aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios-macabi x86_64-apple-ios-macabi)
 rustup target add "${targets[@]}"
 cd "$source_dir"
-cargo test --locked -p idevice --no-default-features --features remote_pairing,rustcrypto saved_pairing_tests
-cargo test --locked -p idevice --no-default-features --features remote_pairing,rustcrypto verification_only_wire_tests
+# aes 0.8 requires this opt-in to compile its ARMv8 backend. Its
+# cpufeatures detector supports Apple ARM64; Intel keeps AES-NI detection.
+# Preserve caller flags, including Cargo's higher-priority encoded form.
+cargo_for_target() (
+  local target="$1"
+  shift
+  if [[ "$target" == aarch64-apple-* ]]; then
+    if [[ "${CARGO_ENCODED_RUSTFLAGS+x}" == x ]]; then
+      local separator=$'\x1f'
+      local encoded_flags="${CARGO_ENCODED_RUSTFLAGS}"
+      if [[ -n "$encoded_flags" ]]; then
+        encoded_flags+="$separator"
+      fi
+      export CARGO_ENCODED_RUSTFLAGS="${encoded_flags}--cfg${separator}aes_armv8"
+    else
+      export RUSTFLAGS="${RUSTFLAGS:-} --cfg aes_armv8"
+    fi
+  fi
+  cargo "$@"
+)
+host_target="$(rustc -vV | sed -n 's/^host: //p')"
+cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features remote_pairing,rustcrypto saved_pairing_tests
+cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features remote_pairing,rustcrypto verification_only_wire_tests
+cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features afc,remote_pairing,rustcrypto afc_large_write_tests
+cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features afc,remote_pairing,rustcrypto tls_stream_tests
 for target in "${targets[@]}"; do
-  cargo build --locked --release -p idevice-ffi --target "$target"
+  cargo_for_target "$target" build --locked --release -p idevice-ffi --target "$target"
 done
 headers="$work_dir/headers"
 mkdir -p "$headers"

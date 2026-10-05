@@ -115,36 +115,37 @@ enum FR {
 		using options: Options,
 		icon: UIImage?,
 		certificate: CertificatePair?,
-		backgroundTaskToken: String? = nil,
-		transactionIdentifier: String? = nil,
 		completion: @escaping (Result<String, Error>) -> Void
 	) -> Task<Void, Never> {
 		let appSnapshot = AppSnapshot(app)
 		let certificateSnapshot = SigningCertificateSnapshot(certificate)
 		let iconData = icon?.pngData()
-		let token = backgroundTaskToken ?? "signing-\(UUID().uuidString)"
+		let token = "signing-\(UUID().uuidString)"
 		var worker: Task<Void, Never>?
 		var backgroundObserver: NSObjectProtocol?
 		#if !targetEnvironment(macCatalyst)
-		if backgroundTaskToken == nil {
-			let accepted = BackgroundTaskManager.shared.startWork(for: token,
-				title: app.name ?? .localized("Signing App"), subtitle: .localized("Signing"), progress: 0, signing: true) {
-				worker?.cancel()
-			}
-			if !accepted {
-				backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
-					object: nil, queue: .main) { _ in worker?.cancel() }
-			}
-			if !accepted, UIApplication.shared.applicationState != .active {
-				completion(.failure(NSError(domain: "Aether.Background", code: 1,
-					userInfo: [NSLocalizedDescriptionKey: String.localized("Open Aether to finish signing. Background execution is unavailable.")])))
-				if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
-				return Task {}
-			}
+		let accepted = BackgroundTaskManager.shared.startWork(for: token,
+			title: app.name ?? .localized("Signing App"), subtitle: .localized("Signing"), progress: 0, signing: true) {
+			worker?.cancel()
+		}
+		if !accepted {
+			backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+				object: nil, queue: .main) { _ in worker?.cancel() }
+		}
+		if !accepted, UIApplication.shared.applicationState != .active {
+			completion(.failure(NSError(domain: "Aether.Background", code: 1,
+				userInfo: [NSLocalizedDescriptionKey: String.localized("Open Aether to finish signing. Background execution is unavailable.")])))
+			if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+			return Task {}
 		}
 		#endif
+		let signingStartedAt = Date()
+		#if !targetEnvironment(macCatalyst)
+		DebugLogManager.shared.log("Signing execution granted=\(BackgroundTaskManager.shared.hasExecution(for: token)) continued=\(BackgroundTaskManager.shared.hasNativeTask(for: token)).", category: "Signing", level: .info)
+		#endif
+		DebugLogManager.shared.log("Signing started state=\(UIApplication.shared.applicationState.rawValue).", category: "Signing", level: .info)
 		worker = Task.detached {
-			let handler = SigningHandler(app: appSnapshot, options: options, transactionIdentifier: transactionIdentifier)
+			let handler = SigningHandler(app: appSnapshot, options: options)
 			handler.appCertificate = certificateSnapshot
 			handler.appIconData = iconData
 			
@@ -153,9 +154,7 @@ enum FR {
 				try await handler.copy()
 				await MainActor.run {
 					#if !targetEnvironment(macCatalyst)
-					if backgroundTaskToken == nil {
-						BackgroundTaskManager.shared.updateWork(for: token, title: appSnapshot.name ?? .localized("Signing App"), subtitle: .localized("Signing"), progress: 0.2)
-					}
+					BackgroundTaskManager.shared.updateWork(for: token, title: appSnapshot.name ?? .localized("Signing App"), subtitle: .localized("Signing"), progress: 0.2)
 					#endif
 				}
 				try Task.checkCancellation()
@@ -164,9 +163,10 @@ enum FR {
 				try? await handler.clean()
 				await MainActor.run {
 					#if !targetEnvironment(macCatalyst)
-					if backgroundTaskToken == nil { BackgroundTaskManager.shared.stopTask(for: token, success: true) }
+					BackgroundTaskManager.shared.stopTask(for: token, success: true)
 					#endif
 					if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+					DebugLogManager.shared.log("Signing completed elapsed=\(Date().timeIntervalSince(signingStartedAt)) state=\(UIApplication.shared.applicationState.rawValue).", category: "Signing", level: .info)
 					completion(.success(handler.signedUUID))
 				}
 			} catch {
@@ -174,13 +174,14 @@ enum FR {
 				await MainActor.run {
 					if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
 					if let signed = Storage.shared.signedApp(uuid: handler.signedUUID) {
-						Storage.shared.deleteApp(for: signed, ownedSigningTransaction: true)
+						Storage.shared.deleteApp(for: signed)
 					} else {
 						try? FileManager.default.removeFileIfNeeded(at: FileManager.default.signed(handler.signedUUID))
 					}
 					#if !targetEnvironment(macCatalyst)
-					if backgroundTaskToken == nil { BackgroundTaskManager.shared.stopTask(for: token, success: false) }
+					BackgroundTaskManager.shared.stopTask(for: token, success: false)
 					#endif
+					DebugLogManager.shared.log("Signing stopped elapsed=\(Date().timeIntervalSince(signingStartedAt)) state=\(UIApplication.shared.applicationState.rawValue) cancelled=\(error is CancellationError) error=\(error.localizedDescription).", category: "Signing", level: .error)
 					completion(.failure(error))
 				}
 			}

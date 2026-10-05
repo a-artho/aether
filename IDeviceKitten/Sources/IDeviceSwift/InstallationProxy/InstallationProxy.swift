@@ -25,13 +25,27 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		self.viewModel = viewModel
 	}
 
-	public func install(at url: URL, suspend: Bool = false) async throws {
+	public func install(
+		at url: URL, suspend: Bool = false,
+		diagnosticID: String? = nil,
+		diagnosticLog: (@Sendable (String) -> Void)? = nil
+	) async throws {
+		let diagnostics: InstallationTransferDiagnostics?
+		if let diagnosticLog {
+			diagnostics = await MainActor.run {
+				InstallationTransferDiagnostics(id: diagnosticID ?? self._uuid, emit: diagnosticLog)
+			}
+		} else {
+			diagnostics = nil
+		}
 		var afcClient: AfcClientHandle?
 		var fileHandle: AfcFileHandle?
 		var installproxy: InstallationProxyClientHandle?
 		var remotePath: String?
 
 		let worker = Task.detached(priority: .utility) {
+			var diagnosticOutcome = "failed"
+			defer { diagnostics?.finish(outcome: Task.isCancelled ? "cancelled" : diagnosticOutcome) }
 			try Task.checkCancellation()
 			guard HeartbeatManager.hasPairingFile() else {
 				throw IDeviceConnectionError.pairingFileMissing
@@ -61,6 +75,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 
 			let heartbeat = await self._heartbeat
 
+			diagnostics?.transport(isRSD: heartbeat.isRsd)
 			if heartbeat.isRsd {
 				do {
 					try heartbeat.withRSDServiceConnection { adapter, handshake in
@@ -108,16 +123,29 @@ public class InstallationProxy: Identifiable, ObservableObject {
 
 			let chunkSize = 4 * 1024 * 1024
 			var totalBytesWritten: Int64 = 0
-			while let chunk = try localFile.read(upToCount: chunkSize), !chunk.isEmpty {
+			diagnostics?.beginUpload(bytes: totalSize, chunkBytes: chunkSize)
+			while true {
+				let readStarted = diagnostics?.now() ?? 0
+				let chunk = try localFile.read(upToCount: chunkSize)
+				diagnostics?.recordRead(seconds: (diagnostics?.now() ?? 0) - readStarted)
+				guard let chunk, !chunk.isEmpty else { break }
+				diagnostics?.recordPayload(chunk)
 				try Task.checkCancellation()
+				let writeStarted = diagnostics?.now() ?? 0
+				var nativeMetrics = AfcWriteDiagnostics()
 				let writeError = chunk.withUnsafeBytes { buffer -> UnsafeMutablePointer<IdeviceFfiError>? in
 					guard let baseAddress = buffer.baseAddress else { return nil }
+					if diagnostics != nil {
+						return afc_file_write_diagnostics(openedFileHandle, baseAddress.assumingMemoryBound(to: UInt8.self), chunk.count, &nativeMetrics)
+					}
 					return afc_file_write(
 						openedFileHandle,
 						baseAddress.assumingMemoryBound(to: UInt8.self),
 						chunk.count
 					)
 				}
+				diagnostics?.recordNative(nativeMetrics)
+				diagnostics?.recordWrite(bytes: chunk.count, seconds: (diagnostics?.now() ?? 0) - writeStarted, succeeded: writeError == nil)
 				if let writeError {
 					throw IDeviceSwiftError(writeError)
 				}
@@ -126,9 +154,13 @@ public class InstallationProxy: Identifiable, ObservableObject {
 				let progress = totalSize > 0
 					? Double(totalBytesWritten) / Double(totalSize)
 					: 1
+				let progressStarted = diagnostics?.now() ?? 0
 				try await self._updateUploadProgress(with: min(progress, 1))
+				diagnostics?.recordProgress(seconds: (diagnostics?.now() ?? 0) - progressStarted)
 			}
 
+			diagnostics?.endUpload()
+			diagnostics?.stage("afc-close")
 			let afc_file_close_result = afc_file_close(openedFileHandle)
 			fileHandle = nil
 			guard afc_file_close_result == nil else {
@@ -137,6 +169,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 
 			try Task.checkCancellation()
 			try await self._updateStatus(with: .installing)
+			diagnostics?.stage("installation-proxy-connect")
 
 
 			if heartbeat.isRsd {
@@ -160,6 +193,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			}
 
 			try Task.checkCancellation()
+			diagnostics?.stage("native-install")
 			let installError: UnsafeMutablePointer<IdeviceFfiError>? = remoteDir.withCString { cString in
 				let context = Unmanaged.passUnretained(self).toOpaque()
 
@@ -182,8 +216,10 @@ public class InstallationProxy: Identifiable, ObservableObject {
 				throw IDeviceSwiftError(installError)
 			}
 
+			diagnostics?.stage("completion")
 			try await Task.sleep(nanoseconds: 350_000_000)
 			try await self._updateStatus(with: .completed(.success(())))
+			diagnosticOutcome = "success"
 		}
 		try await withTaskCancellationHandler {
 			try await worker.value

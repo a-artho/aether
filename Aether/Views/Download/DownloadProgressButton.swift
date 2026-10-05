@@ -67,7 +67,7 @@ struct DownloadProgressButton: View {
 			return "play.fill"
 		case .processing:
 			if download.waitingForForeground { return "hourglass" }
-			return download.isSigningUpdate ? "signature" : "archivebox"
+			return "archivebox"
 		case .failed:
 			return "arrow.clockwise"
 		}
@@ -84,7 +84,7 @@ struct DownloadProgressButton: View {
 		case .resuming:
 			return .localized("Resuming Download")
 		case .processing:
-			return download.isSigningUpdate ? .localized("Signing Update") : .localized("Processing")
+			return .localized("Processing")
 		case .failed(_, let action):
 			switch action {
 			case .resume: return .localized("Resume Download")
