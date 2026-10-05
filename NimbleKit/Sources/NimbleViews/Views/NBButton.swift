@@ -11,14 +11,17 @@ public struct NBButton: View {
 	private var _title: String
 	private var _icon: String
 	private var _style: NBToolbarMenuStyle
+	private var _isLoading: Bool
 	private var _horizontalPadding: CGFloat
 	
 	public init(
 		_ title: String = "",
 		systemImage: String = "",
 		style: NBToolbarMenuStyle = .icon,
-		horizontalPadding: CGFloat = 12
+		horizontalPadding: CGFloat = 12,
+		isLoading: Bool = false
 	) {
+		self._isLoading = isLoading
 		self._title = title
 		self._icon = systemImage
 		self._style = style
@@ -37,8 +40,12 @@ public struct NBButton: View {
 				.contentShape(Rectangle())
 			
 		case .text:
-			Text(_title)
-				.font(.footnote).bold()
+			HStack(spacing: 6) {
+					if _isLoading {
+						ProgressView().controlSize(.mini)
+					}
+					Text(_title).font(.footnote).bold()
+				}
 				.padding(.horizontal, _horizontalPadding)
 				.frame(height: 35)
 				.background(Color(uiColor: .quaternarySystemFill))

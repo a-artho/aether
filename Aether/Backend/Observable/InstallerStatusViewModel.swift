@@ -13,6 +13,7 @@ extension InstallerStatusViewModel {
 	var statusImage: String {
 		switch status {
 		case .none: "archivebox.fill"
+		case .signing: "signature"
 		case .ready: "app.gift"
 		case .sendingManifest, .sendingPayload: "paperplane.fill"
 		case .installing: "square.and.arrow.down"
@@ -24,6 +25,7 @@ extension InstallerStatusViewModel {
 	var statusLabel: String {
 		switch status {
 		case .none: .localized("Packaging")
+		case .signing: .localized("Signing")
 		case .ready: .localized("Ready")
 		case .sendingManifest: .localized("Sending Manifest")
 		case .sendingPayload: .localized("Sending Payload")

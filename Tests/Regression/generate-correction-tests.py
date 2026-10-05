@@ -9,6 +9,16 @@ publisher=proxy[proxy.index('private final class UploadProgressPublisher'):proxy
 store=(repo/'Aether/Backend/Observable/DownloadStore.swift').read_text()
 store=store[store.index('struct StoredDownload:'):]
 store=store.replace('private var rootURL: URL {\n\t\tfileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]\n\t\t\t.appendingPathComponent("AetherDownloads", isDirectory: true)\n\t}', 'let rootURL: URL\n init(rootURL: URL) { self.rootURL = rootURL }')
+def declaration(start):
+ text=(repo/'Aether/Backend/Observable/AppInstallationManager.swift').read_text()
+ p=text.index(start); b=text.index('{',p); e=b+1; n=1
+ while n: n+=(text[e]=='{')-(text[e]=='}');e+=1
+ return text[p:e].replace('private struct','struct',1)
+queue_models='''
+enum QueuePersistenceFixture {
+ struct AppSnapshot: Codable { let uuid: String }
+ struct Options: Codable, Sendable { let post_installAppAfterSigned: Bool }
+'''+declaration('struct SigningInput:')+'\n'+declaration('private struct StoredInstallation:')+'\n}\n'
 fixture=r'''
 struct SourceAppProvenance: Codable, Sendable {}
 final class Download {
@@ -60,6 +70,19 @@ final class CorrectionTests: XCTestCase {
   cancelled.submit(0.5); cancelled.cancel()
   await Task.yield(); XCTAssertEqual(values,[1])
  }
+ func testLegacyInstallQueueRemainsDecodable() throws {
+  let data=Data(#"{"app":{"uuid":"signed"},"method":1,"serverMethod":1}"#.utf8)
+  let record=try JSONDecoder().decode(QueuePersistenceFixture.StoredInstallation.self,from:data)
+  XCTAssertEqual(record.app.uuid,"signed");XCTAssertNil(record.signing);XCTAssertNil(record.installRequested)
+ }
+ func testQueuedSigningRestoresOptionsAndSignOnlyIntent() throws {
+  let input=QueuePersistenceFixture.SigningInput(options:.init(post_installAppAfterSigned:false),iconData:Data([1,2]),certificateUUID:"certificate")
+  let original=QueuePersistenceFixture.StoredInstallation(app:.init(uuid:"imported"),method:0,serverMethod:1,signing:input,installRequested:false)
+  let restored=try JSONDecoder().decode(QueuePersistenceFixture.StoredInstallation.self,from:JSONEncoder().encode(original))
+  XCTAssertEqual(restored.installRequested,false)
+  XCTAssertEqual(restored.signing?.options.post_installAppAfterSigned,false)
+  XCTAssertEqual(restored.signing?.iconData,Data([1,2]));XCTAssertEqual(restored.signing?.certificateUUID,"certificate")
+ }
  func testMovedIPARecoversBeforePruningWithoutNewMetadataCommit() throws {
   let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at:root) }
@@ -91,4 +114,4 @@ final class CorrectionTests: XCTestCase {
  }
 }
 '''
-(out/'CorrectionTests.swift').write_text('import Foundation\nimport CryptoKit\nimport XCTest\n'+gate+publisher+store+fixture)
+(out/'CorrectionTests.swift').write_text('import Foundation\nimport CryptoKit\nimport XCTest\n'+gate+publisher+store+queue_models+fixture)

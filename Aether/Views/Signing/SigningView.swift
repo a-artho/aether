@@ -20,7 +20,6 @@ struct SigningView: View {
 	@State private var _isAltPickerPresenting = false
 	@State private var _isFilePickerPresenting = false
 	@State private var _isImagePickerPresenting = false
-	@State private var _isSigning = false
 	@State private var _signingError: String?
 	@State private var _selectedPhoto: PhotosPickerItem? = nil
 	@State var appIcon: UIImage?
@@ -100,8 +99,6 @@ struct SigningView: View {
 					}
 				}
 			}
-			.disabled(_isSigning)
-			.animation(.smooth, value: _isSigning)
 		}
 		.alert(.localized("Error"), isPresented: Binding(
 			get: { scenePhase == .active && _signingError != nil },
@@ -292,33 +289,13 @@ extension SigningView {
 		}
 
 		HapticManager.shared.impact()
-		_isSigning = true
 		
-		FR.signPackageFile(
-			app,
-			using: _temporaryOptions,
+		if AppInstallationManager.shared.startSigning(
+			app: app,
+			options: _temporaryOptions,
 			icon: appIcon,
 			certificate: _selectedCert()
-		) { result in
-			switch result {
-			case .failure(let error):
-				_isSigning = false
-				_signingError = error.localizedDescription
-			case .success(let signedUUID):
-				if
-					_temporaryOptions.post_deleteAppAfterSigned,
-					!app.isSigned
-				{
-					Storage.shared.deleteApp(for: app)
-				}
-				
-				if _temporaryOptions.post_installAppAfterSigned,
-					let signedApp = Storage.shared.signedApp(uuid: signedUUID)
-				{
-					AppInstallationManager.shared.startInstall(app: signedApp, requiresForegroundStart: true)
-				}
-				dismiss()
-			}
-		}
+		) { dismiss() }
+		else { _signingError = .localized("This app is already queued.") }
 	}
 }

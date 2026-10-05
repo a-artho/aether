@@ -51,6 +51,7 @@ struct ActiveInstallationRow: View {
 	}
 
 	private var _progress: Double {
+		if case .signing = viewModel.status { return min(1, max(0, viewModel.signingProgress)) }
 		let progress = max(viewModel.overallProgress, viewModel.installProgress)
 		return progress.isFinite ? min(max(progress, 0), 1) : 0
 	}

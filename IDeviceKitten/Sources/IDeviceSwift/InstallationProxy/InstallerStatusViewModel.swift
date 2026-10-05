@@ -10,6 +10,7 @@ import Combine
 extension InstallerStatusViewModel {
 	public enum InstallerStatus {
 		case none
+		case signing
 		case ready
 		case sendingManifest
 		case sendingPayload
@@ -21,6 +22,7 @@ extension InstallerStatusViewModel {
 
 public class InstallerStatusViewModel: ObservableObject {
 	@Published public var status: InstallerStatus
+	@Published public var signingProgress: Double = 0.0
 	@Published public var uploadProgress: Double = 0.0
 	@Published public var packageProgress: Double = 0.0
 	@Published public var installProgress: Double = 0.0

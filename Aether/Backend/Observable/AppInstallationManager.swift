@@ -19,10 +19,11 @@ final class AppInstallationManager: ObservableObject {
 
 	struct InstallationRequest: Identifiable, Sendable {
 		let id = UUID()
-		let app: AppSnapshot
+		var app: AppSnapshot
 		let method: Int
 		let serverMethod: Int
-		var requiresForegroundStart = false
+		var signing: SigningInput?
+		var installRequested = true
 		#if DEBUG
 		var isMock = false
 		#endif
@@ -33,6 +34,12 @@ final class AppInstallationManager: ObservableObject {
 			let identity = app.uuid ?? app.source?.absoluteString ?? "\(app.identifier ?? "")|\(app.version ?? "")"
 			return "\(app.isSigned)|\(identity)"
 		}
+	}
+
+	struct SigningInput: Codable, Sendable {
+		let options: Options
+		let iconData: Data?
+		let certificateUUID: String?
 	}
 
 	static let shared = AppInstallationManager()
@@ -60,9 +67,7 @@ final class AppInstallationManager: ObservableObject {
 	private var installGeneration = UUID()
 	private var cancellables = Set<AnyCancellable>()
 	private var _hasLaunchedSemiLocalInstall = false
-	private var _backgroundTaskToken: String?
-	private var _completedBackgroundInstalls = Set<UUID>()
-	private var _backgroundQueueTotal = 1
+	private var execution: AppOperationExecution?
 	private var _backgroundObserver: NSObjectProtocol?
 	private var _foregroundObserver: NSObjectProtocol?
 	
@@ -70,6 +75,8 @@ final class AppInstallationManager: ObservableObject {
 		let app: AppSnapshot
 		let method: Int
 		let serverMethod: Int
+		var signing: SigningInput?
+		var installRequested: Bool?
 	}
 	private static let queueStorageKey = "Aether.pendingInstallations"
 
@@ -84,7 +91,7 @@ final class AppInstallationManager: ObservableObject {
 			Task { @MainActor in
 				guard let self, self.isInstalling else { return }
 				#if !targetEnvironment(macCatalyst)
-				if self._backgroundTaskToken.map({ BackgroundTaskManager.shared.hasExecution(for: $0) }) != true {
+				if self.execution?.hasExecution != true {
 					self._interruptInstallation(generation: self.installGeneration)
 				}
 				#endif
@@ -94,7 +101,7 @@ final class AppInstallationManager: ObservableObject {
 			let records = try? JSONDecoder().decode([StoredInstallation].self, from: data) else { return }
 		let requests = records.compactMap { record -> InstallationRequest? in
 			guard Storage.shared.getAppDirectory(for: record.app) != nil else { return nil }
-			return InstallationRequest(app: record.app, method: record.method, serverMethod: record.serverMethod)
+			return InstallationRequest(app: record.app, method: record.method, serverMethod: record.serverMethod, signing: record.signing, installRequested: record.installRequested ?? true)
 		}
 		guard let first = requests.first else {
 			UserDefaults.standard.removeObject(forKey: Self.queueStorageKey)
@@ -119,7 +126,7 @@ final class AppInstallationManager: ObservableObject {
 			if request.isMock { return nil }
 			#endif
 			if request.id == currentRequest?.id, hasCompletedSuccessfully { return nil }
-			return StoredInstallation(app: request.app, method: request.method, serverMethod: request.serverMethod)
+			return StoredInstallation(app: request.app, method: request.method, serverMethod: request.serverMethod, signing: request.signing, installRequested: request.installRequested)
 		}
 		if records.isEmpty { UserDefaults.standard.removeObject(forKey: Self.queueStorageKey) }
 		else if let data = try? JSONEncoder().encode(records) { UserDefaults.standard.set(data, forKey: Self.queueStorageKey) }
@@ -148,13 +155,25 @@ final class AppInstallationManager: ObservableObject {
 		return currentRequest?.appKey == key || retiringAppKey == key || queuedInstalls.contains { $0.appKey == key }
 	}
 
+	func isSigningOrQueuedToSign(_ app: AppInfoPresentable) -> Bool {
+		let key = InstallationRequest.appKey(for: app)
+		if queuedInstalls.contains(where: { $0.appKey == key && $0.signing != nil }) { return true }
+		guard currentRequest?.appKey == key, currentRequest?.signing != nil,
+			let status = viewModel?.status else { return false }
+		switch status {
+		case .broken, .completed: return false
+		default: return true
+		}
+	}
+
 	private var hasCompletedSuccessfully: Bool {
 		if case .completed(.success) = viewModel?.status { return true }
 		return false
 	}
 	
-	func startInstall(app: AppInfoPresentable, requiresForegroundStart: Bool = false) {
-		var request = InstallationRequest(
+	@discardableResult
+	func startInstall(app: AppInfoPresentable) -> Bool {
+		let request = InstallationRequest(
 			app: AppSnapshot(app),
 			method: UserDefaults.standard.integer(forKey: "Aether.installationMethod"),
 			serverMethod: UserDefaults.standard.object(forKey: "Aether.serverMethod") as? Int ?? 1
@@ -164,20 +183,37 @@ final class AppInstallationManager: ObservableObject {
 				title: .localized("Install"),
 				message: .localized("You cannot update ‘%@‘ with itself, please use an alternative tool to update it.", arguments: Bundle.main.name)
 			)
-			return
+			return false
 		}
-		request.requiresForegroundStart = requiresForegroundStart
-		_enqueue(request)
+		return _enqueue(request)
 	}
 
-	private func _enqueue(_ request: InstallationRequest) {
-		AppTabManager.shared.switchTo(.installed)
+	func startSigning(app: AppInfoPresentable, options: Options, icon: UIImage?, certificate: CertificatePair?) -> Bool {
+		let request = InstallationRequest(app: AppSnapshot(app),
+			method: UserDefaults.standard.integer(forKey: "Aether.installationMethod"),
+			serverMethod: UserDefaults.standard.object(forKey: "Aether.serverMethod") as? Int ?? 1,
+			signing: SigningInput(options: options, iconData: icon?.pngData(), certificateUUID: certificate?.uuid),
+			installRequested: options.post_installAppAfterSigned)
+		return _enqueue(request)
+	}
+
+	private func _enqueue(_ request: InstallationRequest) -> Bool {
+		if request.signing == nil { AppTabManager.shared.switchTo(.installed) }
 		if currentRequest?.appKey == request.appKey, !hasCompletedSuccessfully {
-			if case .broken = viewModel?.status { retryActiveInstall() }
-			return
+			if case .broken = viewModel?.status {
+				if request.signing != nil {
+					queuedInstalls.insert(request, at: 0)
+					cancel()
+					return true
+				}
+				retryActiveInstall()
+			}
+			return false
 		}
-		guard !queuedInstalls.contains(where: { $0.appKey == request.appKey }) else { return }
+		guard !queuedInstalls.contains(where: { $0.appKey == request.appKey }) else { return false }
+
 		queuedInstalls.append(request)
+		execution?.updateQueue(pendingJobs: installationCards.count - (hasCompletedSuccessfully ? 1 : 0))
 		_persistInstallQueue()
 		_log("Install queued for \(request.app.name ?? request.app.identifier ?? .localized("app")).", category: "Install", level: .notice)
 		if hasCompletedSuccessfully {
@@ -185,10 +221,12 @@ final class AppInstallationManager: ObservableObject {
 		} else {
 			_startNextIfPossible()
 		}
+		return true
 	}
 
 	func cancelQueuedInstall(id: UUID) {
 		queuedInstalls.removeAll { $0.id == id }
+		execution?.updateQueue(pendingJobs: installationCards.count - (hasCompletedSuccessfully ? 1 : 0))
 		_persistInstallQueue()
 	}
 
@@ -200,9 +238,8 @@ final class AppInstallationManager: ObservableObject {
 
 	private func _startNextIfPossible() {
 		guard currentRequest == nil, retirementTask == nil, !queuedInstalls.isEmpty else { return }
-		// Signing completed its own execution. Start this follow-up in the foreground
-		// rather than relying on a short fallback lease for a full installation.
-		if queuedInstalls[0].requiresForegroundStart, UIApplication.shared.applicationState != .active { return }
+		guard UIApplication.shared.applicationState == .active || execution?.hasExecution == true else { return }
+		if execution == nil || execution?.isFinished == true { execution = AppOperationExecution() }
 		let request = queuedInstalls.removeFirst()
 		let generation = UUID()
 		installGeneration = generation
@@ -217,7 +254,9 @@ final class AppInstallationManager: ObservableObject {
 		statusVM.$status
 			.receive(on: DispatchQueue.main)
 			.sink { [weak self] status in
-				self?._handleStatusChange(status, context: context, generation: generation)
+				guard let self, self.installGeneration == generation else { return }
+				self.objectWillChange.send()
+				self._handleStatusChange(status, context: context, generation: generation)
 			}
 			.store(in: &cancellables)
 
@@ -241,6 +280,64 @@ final class AppInstallationManager: ObservableObject {
 			}
 			.store(in: &cancellables)
 
+		if let signing = request.signing {
+			statusVM.status = .signing
+			let certificate = signing.certificateUUID.flatMap { uuid in Storage.shared.getAllCertificates().first { $0.uuid == uuid } }
+			let snapshot = SigningCertificateSnapshot(certificate)
+			if signing.certificateUUID != nil, snapshot == nil {
+				let error = SigningFileHandlerError.missingCertifcate
+				statusVM.status = .broken(error)
+				return
+			}
+			installTask = FR.signPackageFile(request.app, using: signing.options,
+				iconData: signing.iconData, certificate: snapshot,
+				progress: { [weak self, weak statusVM] progress in
+					guard let self, self.installGeneration == generation else { return }
+					statusVM?.signingProgress = progress
+					self.execution?.updateSigning(progress: progress)
+				}) { [weak self, weak statusVM] result in
+				guard let self, let statusVM, self.installGeneration == generation else { return }
+				self.installTask = nil
+				switch result {
+				case .failure(let error):
+					if case .broken = statusVM.status {} else { statusVM.status = .broken(error) }
+				case .success(let uuid):
+					guard let signedApp = Storage.shared.signedApp(uuid: uuid) else {
+						let error = SigningFileHandlerError.appNotFound
+						statusVM.status = .broken(error)
+						return
+					}
+					var signedRequest = request
+					signedRequest.app = AppSnapshot(signedApp)
+					signedRequest.signing = nil
+					self.currentRequest = signedRequest
+					self.activeApp = signedRequest.app
+					if signing.options.post_deleteAppAfterSigned, !request.app.isSigned { Storage.shared.deleteApp(for: request.app) }
+					if signing.options.post_installAppAfterSigned {
+						self._persistInstallQueue()
+						AppTabManager.shared.switchTo(.installed)
+						statusVM.status = .none
+						self._startTransportInstallation(signedRequest, context: context, statusVM: statusVM, generation: generation)
+					} else {
+						statusVM.status = .completed(.success(()))
+						self._persistInstallQueue()
+					}
+				}
+			}
+			return
+		}
+		if request.installRequested {
+			_startTransportInstallation(request, context: context, statusVM: statusVM, generation: generation)
+		} else { statusVM.status = .completed(.success(())) }
+	}
+
+	private func _startTransportInstallation(_ request: InstallationRequest, context: InstallationContext,
+		statusVM: InstallerStatusViewModel, generation: UUID) {
+		guard request.app.identifier != Bundle.main.bundleIdentifier || request.method == 1 else {
+			statusVM.status = .broken(NSError(domain: "Aether.Install", code: 1,
+				userInfo: [NSLocalizedDescriptionKey: String.localized("Use another app to update Aether in server mode.")]))
+			return
+		}
 		guard request.method == 1 else {
 			_beginInstall(request.app, context: context, statusVM: statusVM, generation: generation)
 			return
@@ -272,7 +369,7 @@ final class AppInstallationManager: ObservableObject {
 
 		#if !targetEnvironment(macCatalyst)
 		if context.method == 0 {
-			BackgroundAudioManager.shared.start("installation")
+			execution?.startServerAudio()
 		}
 		#endif
 		
@@ -364,7 +461,7 @@ final class AppInstallationManager: ObservableObject {
 					self?.archiveHandler = nil
 					self?.installer = nil
 					#if !targetEnvironment(macCatalyst)
-					BackgroundAudioManager.shared.stop("installation")
+					self?.execution?.stopServerAudio()
 					#endif
 					self?.lastErrorMessage = String(describing: error)
 					statusVM.status = .broken(error)
@@ -437,13 +534,14 @@ final class AppInstallationManager: ObservableObject {
 		switch newStatus {
 		case .completed:
 			isFinishingInstallation = false
-			if let request = currentRequest { _completedBackgroundInstalls.insert(request.id) }
-			_updateInstallationExecution(statusVM)
+			execution?.completeJob()
 			_persistInstallQueue()
-			_log("Install completed for \(app.name ?? app.identifier ?? .localized("app")).", category: "Install", level: .notice)
+			_log("Queue job completed for \(app.name ?? app.identifier ?? .localized("app")).", category: currentRequest?.installRequested == true ? "Install" : "Signing", level: .notice)
 			progressTask?.cancel()
 			progressTask = nil
-			NotificationCenter.default.post(name: Notification.Name("Aether.installedAppsRefresh"), object: nil)
+			if currentRequest?.installRequested == true {
+				NotificationCenter.default.post(name: Notification.Name("Aether.installedAppsRefresh"), object: nil)
+			}
 			_finishCompletedInstall(generation: generation)
 		case .broken:
 			isFinishingInstallation = false
@@ -517,9 +615,9 @@ final class AppInstallationManager: ObservableObject {
 			return
 		}
 		isFinishingInstallation = false
-		if !(hasCompletedSuccessfully && !queuedInstalls.isEmpty) {
+		if queuedInstalls.isEmpty || execution?.hasExecution != true {
 			_endInstallationExecution(success: hasCompletedSuccessfully)
-		}
+		} else if !hasCompletedSuccessfully { execution?.completeJob() }
 		guard currentRequest != nil || activeApp != nil || installTask != nil || iDevicePreflightTask != nil else { return }
 		installGeneration = UUID()
 		settlementTask?.cancel()
@@ -572,26 +670,18 @@ final class AppInstallationManager: ObservableObject {
 		installer = nil
 		isWebviewPresenting = false
 		#if !targetEnvironment(macCatalyst)
-		BackgroundAudioManager.shared.stop("installation")
+		execution?.stopServerAudio()
 		#endif
 	}
 
 	private func _startInstallationExecution(_ request: InstallationRequest, generation: UUID) -> Bool {
-		#if !targetEnvironment(macCatalyst)
-		let token = _backgroundTaskToken ?? "installation-\(generation.uuidString)"
-		_backgroundTaskToken = token
-		let accepted = BackgroundTaskManager.shared.startWork(for: token,
-			title: request.app.name ?? .localized("Installing App"), subtitle: .localized("Preparing Installation"),
-			progress: 0, installation: true) { [weak self] in
+		execution?.updateQueue(pendingJobs: installationCards.count - (hasCompletedSuccessfully ? 1 : 0))
+		let accepted = execution?.beginJob(title: request.app.name ?? .localized("Installing App"),
+			signing: request.signing != nil, installsAfterSigning: request.signing?.options.post_installAppAfterSigned ?? true) { [weak self] in
 			self?._interruptInstallation(generation: generation)
-		}
-		if !accepted {
-			_backgroundTaskToken = nil
-			_log("Installation background execution unavailable.", category: "Background", level: .notice)
-			return UIApplication.shared.applicationState == .active
-		}
-		#endif
-		return true
+		} == true
+		if !accepted { _log("Queue background execution unavailable.", category: "Background", level: .notice) }
+		return accepted || UIApplication.shared.applicationState == .active
 	}
 
 	private func _interruptInstallation(generation: UUID) {
@@ -607,27 +697,15 @@ final class AppInstallationManager: ObservableObject {
 	}
 
 	private func _updateInstallationExecution(_ model: InstallerStatusViewModel) {
-		#if !targetEnvironment(macCatalyst)
-		guard let token = _backgroundTaskToken else { return }
-		let phaseProgress = min(0.99, max(0, model.packageProgress) * 0.25
+		if case .signing = model.status { execution?.updateSigning(progress: model.signingProgress); return }
+		let progress = model.isCompleted ? 1 : min(0.99, max(0, model.packageProgress) * 0.25
 			+ max(0, model.uploadProgress) * 0.45 + max(0, model.installProgress) * 0.30)
-		let remaining = installationCards.filter { !_completedBackgroundInstalls.contains($0.id) }.count
-		_backgroundQueueTotal = max(_backgroundQueueTotal, _completedBackgroundInstalls.count + remaining)
-		let currentProgress = currentRequest.map { _completedBackgroundInstalls.contains($0.id) } == true ? 0 : phaseProgress
-		let progress = (Double(_completedBackgroundInstalls.count) + currentProgress) / Double(_backgroundQueueTotal)
-		BackgroundTaskManager.shared.updateWork(for: token,
-			title: activeApp?.name ?? .localized("Installing App"), subtitle: model.statusLabel,
-			progress: progress)
-		#endif
+		execution?.updateInstallation(subtitle: model.statusLabel, progress: progress)
 	}
 
 	private func _endInstallationExecution(success: Bool) {
-		#if !targetEnvironment(macCatalyst)
-		if let token = _backgroundTaskToken { BackgroundTaskManager.shared.stopTask(for: token, success: success) }
-		#endif
-		_backgroundTaskToken = nil
-		_completedBackgroundInstalls.removeAll()
-		_backgroundQueueTotal = 1
+		execution?.finish(success: success)
+		execution = nil
 	}
 
 	private func _log(
@@ -667,7 +745,7 @@ extension AppInstallationManager {
 		app.uuid = identifier
 		var request = InstallationRequest(app: AppSnapshot(app), method: 0, serverMethod: 1)
 		request.isMock = true
-		_enqueue(request)
+		_ = _enqueue(request)
 	}
 }
 #endif

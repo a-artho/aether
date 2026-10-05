@@ -9,11 +9,19 @@ def method(path,start):
  return s[p:e]
 manager=(repo/'Aether/Utilities/BackgroundTaskManager.swift').read_text()
 manager=manager[manager.index('@MainActor\nclass BackgroundTaskManager:'):manager.rindex('#endif')]
+operation=(repo/'Aether/Utilities/AppOperationExecution.swift').read_text()
+operation=operation[operation.index('@MainActor'): ]
 parts=[r'''
 import Foundation
 import XCTest
 enum BackgroundFixture {
 protocol ObservableObject {}
+@MainActor final class BackgroundAudioManager {
+ static let shared=BackgroundAudioManager(); var requesters=Set<String>(); var starts=0; var stops=0
+ func start(_ id:String) { if requesters.insert(id).inserted { starts+=1 } }
+ func stop(_ id:String) { if requesters.remove(id) != nil { stops+=1 } }
+}
+
 @MainActor final class DownloadCheckpointLease { func end() {} }
 struct UIBackgroundTaskIdentifier:Hashable { let raw:Int;static let invalid=Self(raw:-1) }
 @MainActor final class UIApplication {
@@ -53,7 +61,7 @@ final class BGContinuedProcessingTaskRequest {
  enum Level { case info,notice };static let shared=DebugLogManager()
  func log(_ message:String,category:String,level:Level = .info) {}
 }
-''',manager,r'''
+''',manager,operation,r'''
 final class Download {
  enum State:Equatable { case downloading,resuming,pausing,paused,processing,failed }
  var state:State = .downloading;let id=UUID().uuidString;var task:NetworkTask?
@@ -169,6 +177,59 @@ final class BackgroundOwnershipTests:XCTestCase {
   let network=d.task!;driver.pauseDownload(d);driver.saveGate!.resume();await resume.value
   XCTAssertTrue(network.cancelled);XCTAssertFalse(network.resumed)
   BackgroundTaskManager.shared.stopTask(for:d.id,success:false)
+ }
+ @MainActor func testSigningInstallAndNextQueuedJobUseOneGrant() {
+  reset();let operation=BackgroundFixture.AppOperationExecution()
+  let initial=BGTaskScheduler.shared.requests.count
+  operation.updateQueue(pendingJobs:1)
+  XCTAssertTrue(operation.beginJob(title:"First",signing:true,onExpiration:{}))
+  let task=BGTaskScheduler.shared.launchLast()
+  operation.updateSigning(progress:1)
+  XCTAssertEqual(task.progress.fractionCompleted,0.3,accuracy:0.00001)
+  UIApplication.shared.applicationState = .background
+  operation.updateInstallation(subtitle:"Packaging",progress:0.2)
+  operation.updateQueue(pendingJobs:2)
+  XCTAssertEqual(task.progress.fractionCompleted,0.22,accuracy:0.00001)
+  operation.completeJob()
+  operation.updateInstallation(subtitle:"Completed",progress:1) // delayed first-job publisher
+  XCTAssertEqual(task.progress.fractionCompleted,0.5,accuracy:0.00001)
+  operation.updateQueue(pendingJobs:1)
+  XCTAssertTrue(operation.beginJob(title:"Second",signing:false,onExpiration:{}))
+  operation.updateInstallation(subtitle:"Installing",progress:1)
+  operation.completeJob();operation.finish(success:true)
+  XCTAssertEqual(BGTaskScheduler.shared.requests.count,initial+1)
+  XCTAssertEqual(task.completions,[true]);XCTAssertFalse(operation.hasExecution)
+ }
+ @MainActor func testQueueExpirationStopsAudioAndCannotRestartInBackground() async {
+  reset();let operation=BackgroundFixture.AppOperationExecution();var expirations=0
+  XCTAssertTrue(operation.beginJob(title:"Server",signing:false,onExpiration:{expirations+=1}))
+  let task=BGTaskScheduler.shared.launchLast()
+  operation.startServerAudio();operation.startServerAudio()
+  XCTAssertEqual(BackgroundFixture.BackgroundAudioManager.shared.requesters.count,1)
+  UIApplication.shared.applicationState = .background
+  task.expirationHandler?();await settle()
+  XCTAssertEqual(expirations,1);XCTAssertTrue(operation.isFinished)
+  XCTAssertTrue(BackgroundFixture.BackgroundAudioManager.shared.requesters.isEmpty)
+  XCTAssertFalse(operation.beginJob(title:"Next",signing:false,onExpiration:{}))
+  XCTAssertEqual(task.completions,[false])
+ }
+ @MainActor func testQueueCancellingOneServerAudioPhaseDoesNotStopOtherRequesters() {
+  reset();let audio=BackgroundFixture.BackgroundAudioManager.shared;audio.start("unrelated")
+  let operation=BackgroundFixture.AppOperationExecution()
+  XCTAssertTrue(operation.beginJob(title:"Server",signing:false,onExpiration:{}))
+  operation.startServerAudio();operation.stopServerAudio()
+  XCTAssertEqual(audio.requesters,["unrelated"])
+  operation.finish(success:false);operation.finish(success:true)
+  XCTAssertEqual(audio.requesters,["unrelated"]);audio.stop("unrelated")
+ }
+ @MainActor func testSigningOnlyUsesWholeProgressAndTerminalCompletionIsIdempotent() {
+  reset();let operation=BackgroundFixture.AppOperationExecution()
+  XCTAssertTrue(operation.beginJob(title:"Sign only",signing:true,installsAfterSigning:false,onExpiration:{}))
+  let task=BGTaskScheduler.shared.launchLast()
+  operation.updateSigning(progress:0.7)
+  XCTAssertEqual(task.progress.fractionCompleted,0.7,accuracy:0.00001)
+  operation.completeJob();operation.completeJob();operation.finish(success:true);operation.finish(success:false)
+  XCTAssertEqual(task.completions,[true])
  }
  @MainActor func testLateLaunchCannotStealRetryProgressOrCompletion() {
   reset();let manager=BackgroundTaskManager(),token=UUID().uuidString

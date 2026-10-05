@@ -195,6 +195,8 @@ extension LibraryCellView {
 	
 	@ViewBuilder
 	private func _buttonActions(for app: AppInfoPresentable) -> some View {
+		let isSigning = installationManager.isSigningOrQueuedToSign(app)
+		let title = isSigning ? String.localized("Signing") : (app.isSigned ? _installTitle : .localized("Sign"))
 		Button {
 			if app.isSigned {
 				_installOrShowQueue(for: app)
@@ -203,10 +205,11 @@ extension LibraryCellView {
 				selectedSigningAppPresenting = AnyApp(base: app)
 			}
 		} label: {
-			NBButton(app.isSigned ? _installTitle : .localized("Sign"), style: .text)
+			NBButton(title, style: .text, isLoading: isSigning)
 		}
 		.buttonStyle(.borderless)
-		.accessibilityLabel(app.isSigned ? _installTitle : .localized("Sign"))
+		.disabled(isSigning)
+		.accessibilityLabel(title)
 	}
 }
 
