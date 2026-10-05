@@ -8,6 +8,33 @@ struct InstalledAppUpdateCandidate: Identifiable, Sendable {
 	let app: ASRepository.App
 }
 
+struct InstalledAppUpdateDateGroup: Identifiable {
+	let date: Date?
+	let updates: [InstalledAppUpdateCandidate]
+	var id: Date? { date }
+}
+
+extension InstalledAppUpdateCandidate {
+	static func groupedByDate(_ updates: [Self], calendar: Calendar = .current) -> [InstalledAppUpdateDateGroup] {
+		let grouped = Dictionary(grouping: updates) { update in
+			(update.app.currentDate?.date).map { calendar.startOfDay(for: $0) }
+		}
+		return grouped.keys.sorted { lhs, rhs in
+			switch (lhs, rhs) {
+			case (let lhs?, let rhs?): return lhs > rhs
+			case (.some, .none): return true
+			default: return false
+			}
+		}.map { date in
+			let rows = grouped[date, default: []].sorted {
+				let order = ($0.app.currentVersion ?? "").compare($1.app.currentVersion ?? "", options: .numeric)
+				return order == .orderedSame ? $0.id < $1.id : order == .orderedDescending
+			}
+			return InstalledAppUpdateDateGroup(date: date, updates: rows)
+		}
+	}
+}
+
 /// Shared across detail pages. Catalog indexing runs off the main actor and is
 /// rebuilt only when source membership, URLs, or catalog revisions change.
 actor InstalledAppUpdateCatalog {
@@ -50,6 +77,20 @@ actor InstalledAppUpdateCatalog {
 			let order = ($0.app.currentVersion ?? "").compare($1.app.currentVersion ?? "", options: .numeric)
 			return order == .orderedSame ? $0.id < $1.id : order == .orderedDescending
 		}
+	}
+
+	/// One indexed pass for all visible installed apps; no per-row catalog scans.
+	func bundleIdentifiersWithUpdates(installedVersions: [String: String], contexts: [SourceAppCatalogContext]) throws -> Set<String> {
+		guard let first = installedVersions.first else { return [] }
+		_ = try updates(for: first.key, installedVersion: first.value, contexts: contexts)
+		var result = Set<String>()
+		for (identifier, version) in installedVersions {
+			try Task.checkCancellation()
+			if (index[identifier] ?? []).contains(where: { Self.isNewer($0.app.currentVersion, than: version) }) {
+				result.insert(identifier)
+			}
+		}
+		return result
 	}
 
 	/// Compare numeric dotted versions without treating 1.2.0 as newer than 1.2.

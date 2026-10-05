@@ -69,7 +69,7 @@ struct InstalledAppDetailView: View {
 				}
 
 				ToolbarItem(placement: .topBarTrailing) {
-					Button(role: .destructive) {
+					Button {
 						isUninstallPresented = true
 					} label: {
 						if isUninstalling {
@@ -79,7 +79,7 @@ struct InstalledAppDetailView: View {
 							Image(systemName: "trash")
 						}
 					}
-					.tint(.red)
+					.tint(.primary)
 					.disabled(isUninstalling)
 					.accessibilityLabel(.localized("Uninstall"))
 				}
@@ -110,48 +110,80 @@ struct InstalledAppDetailView: View {
 		}
 	}
 
+	@ViewBuilder
 	private var updatesSection: some View {
-		NBSection(.localized("Updates")) {
-			if !hasCheckedUpdates {
-				HStack(spacing: 10) {
-					ProgressView()
-					Text(.localized("Checking for Updates…"))
-						.font(.subheadline)
-						.foregroundStyle(.secondary)
+		if hasCheckedUpdates && !updates.isEmpty {
+			Section {
+				HStack {
+					Text(.localized("Updates"))
+						.font(.title2.bold())
+						.accessibilityAddTraits(.isHeader)
+					Spacer()
+					updateRefreshStatus
 				}
-				.frame(maxWidth: .infinity, minHeight: 60)
 				.listRowSeparator(.hidden)
-			} else if updates.isEmpty {
-				TabPlaceholderView(
-					title: hasUnavailableCatalogs ? .localized("Updates Unavailable") : .localized("No Updates Available"),
-					description: updatePlaceholderDescription,
-					systemImage: hasUnavailableCatalogs ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.triangle.2.circlepath"
-				)
-				.listRowSeparator(.hidden)
-			} else {
-				ForEach(updates) { update in
-					SourceAppsCellView(sourceURL: update.sourceURL, source: update.repository, app: update.app,
-						showSourceBadge: true, onSelect: { selectedUpdate = update })
-						.accessibilityHint(update.repository.name ?? update.sourceURL.host ?? "")
+			}
+			ForEach(InstalledAppUpdateCandidate.groupedByDate(updates)) { group in
+				Section {
+					ForEach(group.updates) { update in
+						SourceAppsCellView(sourceURL: update.sourceURL, source: update.repository, app: update.app,
+							showSourceBadge: true, onSelect: { selectedUpdate = update })
+							.accessibilityHint(update.repository.name ?? update.sourceURL.host ?? "")
+					}
+				} header: {
+					SourceAppDateChip(title: updateDateTitle(group.date))
+						.padding(.vertical, 4)
+				}
+			}
+		} else {
+			NBSection(.localized("Updates"), trailing: { updateRefreshStatus }) {
+				if !hasCheckedUpdates {
+					HStack(spacing: 10) {
+						ProgressView()
+						Text(.localized("Checking for Updates…"))
+							.font(.subheadline)
+							.foregroundStyle(.secondary)
+					}
+					.frame(maxWidth: .infinity, minHeight: 60)
+					.listRowSeparator(.hidden)
+				} else {
+					TabPlaceholderView(
+						title: hasUnavailableCatalogs ? .localized("Updates Unavailable") : .localized("No Updates Available"),
+						description: updatePlaceholderDescription,
+						systemImage: hasUnavailableCatalogs ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.triangle.2.circlepath"
+					)
+					.frame(maxWidth: .infinity, minHeight: 260, alignment: .center)
+					.listRowSeparator(.hidden)
 				}
 			}
 		}
 	}
 
+	private var updateRefreshStatus: some View {
+		SourceRefreshStatusView(
+			lastUpdated: sourcesViewModel.lastUpdated,
+			isRefreshing: !sourcesViewModel.isFinished,
+			hasFailures: !sourcesViewModel.refreshErrors.isEmpty
+		)
+	}
+
+	private func updateDateTitle(_ date: Date?) -> String {
+		guard let date else { return .localized("Unknown Date") }
+		let calendar = Calendar.current
+		if calendar.isDateInToday(date) { return .localized("Today") }
+		if calendar.isDateInYesterday(date) { return .localized("Yesterday") }
+		let formatter = DateFormatter()
+		formatter.locale = Locale.current
+		formatter.dateFormat = "MMM d, yyyy"
+		return formatter.string(from: date)
+	}
+
 	private var informationSection: some View {
-		NBSection(.localized("Information")) {
-			HStack {
-				Text(.localized("Signer"))
-				Spacer(minLength: 8)
-				Text(app.signerIdentity ?? .localized("Unavailable"))
-					.font(.subheadline)
-					.foregroundStyle(.secondary)
-					.multilineTextAlignment(.trailing)
-			}
+		NBSection(.localized("Info")) {
 			NavigationLink {
 				InstalledAppInformationView(app: app, page: .specifications)
 			} label: {
-				Text(.localized("Specifications"))
+				Text(.localized("Bundle"))
 			}
 			NavigationLink {
 				InstalledAppInformationView(app: app, page: .entitlements)
@@ -216,7 +248,7 @@ private struct InstalledAppInformationView: View {
 
 		var title: String {
 			switch self {
-			case .specifications: .localized("Specifications")
+			case .specifications: .localized("Bundle")
 			case .entitlements: .localized("Entitlements")
 			}
 		}
@@ -231,6 +263,7 @@ private struct InstalledAppInformationView: View {
 			switch page {
 			case .specifications:
 				Section(.localized("Specifications")) {
+					_detailRow(label: .localized("Signer"), value: app.signerIdentity ?? .localized("Unavailable"))
 					_detailRow(label: .localized("Bundle Identifier"), value: app.bundleIdentifier, isCopyable: true)
 					if let version = app.version {
 						let versionString = app.build.map { "\(version) (\($0))" } ?? version

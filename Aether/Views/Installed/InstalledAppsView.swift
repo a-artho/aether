@@ -18,6 +18,9 @@ struct InstalledAppsView: View {
 	@ObservedObject private var connection = DeviceConnectionManager.shared
 	@ObservedObject private var cellularAssist = CellularAssistManager.shared
 	@ObservedObject private var tabManager = AppTabManager.shared
+	@ObservedObject private var sourcesViewModel = SourcesViewModel.shared
+	@FetchRequest(sortDescriptors: []) private var sources: FetchedResults<AltSource>
+	@State private var appsWithUpdates = Set<String>()
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@State private var isSpoofingPresented = false
 	@State private var isModeSwitchBlocked = false
@@ -106,7 +109,7 @@ struct InstalledAppsView: View {
 												}
 											)
 										) {
-											InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+											InstalledAppCellView(app: app, loadsIcon: loadsIcons, hasUpdate: appsWithUpdates.contains(app.bundleIdentifier))
 										}
 										.buttonStyle(.plain)
 										.id(app.id)
@@ -146,6 +149,25 @@ struct InstalledAppsView: View {
 			.task {
 				guard loadsApps else { return }
 				await store.load()
+			}
+			.task(id: updateIndicatorRequest) {
+				guard loadsApps, !store.apps.isEmpty else { appsWithUpdates = []; return }
+				await sourcesViewModel.ensureSourcesLoaded(Array(sources))
+				let versions = store.apps.reduce(into: [String: String]()) { result, app in
+					if let version = app.version { result[app.bundleIdentifier] = version }
+				}
+				let contexts = sources.compactMap { source -> SourceAppCatalogContext? in
+					guard let repository = sourcesViewModel.repository(for: source) else { return nil }
+					return SourceAppCatalogContext(sourceObjectURI: source.objectID.uriRepresentation().absoluteString,
+						sourceURL: source.sourceURL, repository: repository, revision: sourcesViewModel.revision(for: source))
+				}
+				do {
+					let matches = try await InstalledAppUpdateCatalog.shared.bundleIdentifiersWithUpdates(installedVersions: versions, contexts: contexts)
+					try Task.checkCancellation()
+					appsWithUpdates = matches
+				} catch is CancellationError {
+					// New installed versions or catalog revisions supersede this lookup.
+				} catch { appsWithUpdates = [] }
 			}
 			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.installedAppsRefresh"))) { _ in
 				Task {
@@ -212,6 +234,11 @@ struct InstalledAppsView: View {
 				Text(.localized("Stop the simulated location before switching to Server mode."))
 			}
 		}
+	}
+
+	private var updateIndicatorRequest: [String] {
+		[String(sourcesViewModel.catalogRevision)] + store.apps.flatMap { [$0.bundleIdentifier, $0.version ?? ""] }
+			+ sources.flatMap { [$0.objectID.uriRepresentation().absoluteString, $0.sourceURL?.absoluteString ?? ""] }
 	}
 
 	private var _deviceControlsCard: some View {
@@ -510,31 +537,28 @@ private struct InstalledAppCellView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	let app: InstalledApp
 	let loadsIcon: Bool
+	let hasUpdate: Bool
+	@AppStorage("Aether.userTintColor") private var themeTint = "#848ef9"
 
 	var body: some View {
-		HStack(spacing: 14) {
+		HStack(spacing: 18) {
 			InstalledAppIconView(
 				bundleIdentifier: app.bundleIdentifier,
 				cacheVersion: app.iconCacheVersion,
 				loadsIcon: loadsIcon
 			)
 
-			VStack(alignment: .leading, spacing: 2) {
-				Text(app.name)
-					.font(.headline)
-					.lineLimit(1)
-				if let version = app.version ?? app.build {
-					Text(version)
-						.font(.subheadline)
-						.foregroundStyle(.secondary)
-				}
-				Text(app.bundleIdentifier)
-					.font(.caption)
-					.foregroundStyle(.secondary)
-					.lineLimit(1)
+			LibraryRowDetails(
+				name: app.name,
+				version: app.version ?? app.build,
+				identifier: app.bundleIdentifier
+			)
+			if hasUpdate {
+				Circle()
+					.fill(Color(hex: themeTint))
+					.frame(width: 8, height: 8)
+					.accessibilityHidden(true)
 			}
-			.frame(maxWidth: .infinity, alignment: .leading)
-
 		}
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
@@ -544,6 +568,7 @@ private struct InstalledAppCellView: View {
 			}
 		}
 		.contentShape(Rectangle())
+		.accessibilityHint(hasUpdate ? .localized("Update Available") : "")
 	}
 
 }

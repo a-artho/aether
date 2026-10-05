@@ -357,17 +357,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		header.backgroundConfiguration = .clear()
 		header.contentConfiguration = UIHostingConfiguration {
 			if sortOption == .latest {
-				HStack {
-					Spacer(minLength: 0)
-					Text(verbatim: title)
-						.font(.caption.weight(.medium))
-						.foregroundStyle(.primary)
-						.lineLimit(1)
-						.padding(.horizontal, 10)
-						.padding(.vertical, 4)
-						.glassEffect(.regular, in: .capsule)
-					Spacer(minLength: 0)
-				}
+				SourceAppDateChip(title: title)
 			} else {
 				HStack {
 					Text(verbatim: title)

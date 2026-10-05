@@ -26,7 +26,7 @@ struct SourceAppsCellView: View {
 	
 	var body: some View {
 		VStack {
-			HStack(spacing: 12) {
+			HStack(spacing: 18) {
 				_selectableContent {
 					_appDetails
 				}
@@ -50,8 +50,8 @@ struct SourceAppsCellView: View {
 		}
 	}
 
-	/// Keep the navigation target separate from the transfer control so tapping
-	/// Update never also opens details, including in large-description mode.
+	/// Keep the navigation target separate from the download control, including
+	/// in large-description mode.
 	@ViewBuilder
 	private func _selectableContent<Content: View>(@ViewBuilder content: () -> Content) -> some View {
 		if let onSelect {
@@ -85,33 +85,27 @@ struct SourceAppsCellView: View {
 
 	@ViewBuilder
 	private func _subtitleView() -> some View {
-		let hasVersion = app.currentVersion != nil && !(app.currentVersion?.isEmpty ?? true)
+		let version = app.currentVersion.flatMap { $0.isEmpty ? nil : $0 }
 
-		if _storeCellAppearance != 0 {
-			if let version = app.currentVersion, !version.isEmpty {
+		VStack(alignment: .leading, spacing: 2) {
+			if let version {
 				Text(version)
+					.font(.subheadline)
 					.foregroundStyle(.secondary)
+					.lineLimit(1)
 			}
-		} else {
-			HStack(spacing: 4) {
-				if let version = app.currentVersion, !version.isEmpty {
-					Text(version)
-					.layoutPriority(1)
-				}
 
-				let rawSubtitle = SourceAppBodyText.subtitle(in: app.currentDescription, followingVersion: hasVersion)
-				if let rawSubtitle, !rawSubtitle.isEmpty {
-					let cleanSubtitle = rawSubtitle
-					if hasVersion {
-						Text("•")
-							.font(.caption2)
-							.foregroundStyle(Color.secondary.opacity(0.5))
-					}
-					Text(cleanSubtitle)
+			if _storeCellAppearance == 0 {
+				if let description = SourceAppBodyText.subtitle(in: app.currentDescription, followingVersion: false) {
+					Text(description)
+						.font(.footnote)
 						.foregroundStyle(.secondary)
-				} else if !hasVersion {
+						.lineLimit(1)
+				} else if version == nil {
 					Text(.localized("An awesome application"))
+						.font(.footnote)
 						.foregroundStyle(.secondary)
+						.lineLimit(1)
 				}
 			}
 		}
