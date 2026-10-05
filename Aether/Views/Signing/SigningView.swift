@@ -12,6 +12,7 @@ import NimbleViews
 // MARK: - View
 struct SigningView: View {
 	@Environment(\.dismiss) var dismiss
+	@Environment(\.scenePhase) private var scenePhase
 	@StateObject private var _optionsManager = OptionsManager.shared
 	
 	@State private var _temporaryOptions: Options = OptionsManager.shared.options
@@ -20,6 +21,7 @@ struct SigningView: View {
 	@State private var _isFilePickerPresenting = false
 	@State private var _isImagePickerPresenting = false
 	@State private var _isSigning = false
+	@State private var _signingError: String?
 	@State private var _selectedPhoto: PhotosPickerItem? = nil
 	@State var appIcon: UIImage?
 	
@@ -101,6 +103,12 @@ struct SigningView: View {
 			.disabled(_isSigning)
 			.animation(.smooth, value: _isSigning)
 		}
+		.alert(.localized("Error"), isPresented: Binding(
+			get: { scenePhase == .active && _signingError != nil },
+			set: { if !$0, scenePhase == .active { _signingError = nil } }
+		)) {
+			Button(.localized("Dismiss"), role: .cancel) { _signingError = nil }
+		} message: { Text(_signingError ?? "") }
 		.onAppear {
 			let storedUUID = UserDefaults.standard.string(forKey: "aether.selectedCertUUID") ?? ""
 			if !storedUUID.isEmpty, let idx = certificates.firstIndex(where: { $0.uuid == storedUUID }) {
@@ -294,15 +302,8 @@ extension SigningView {
 		) { result in
 			switch result {
 			case .failure(let error):
-				let ok = UIAlertAction(title: .localized("Dismiss"), style: .cancel) { _ in
-					dismiss()
-				}
-				
-				UIAlertController.showAlert(
-					title: "Error",
-					message: error.localizedDescription,
-					actions: [ok]
-				)
+				_isSigning = false
+				_signingError = error.localizedDescription
 			case .success(let signedUUID):
 				if
 					_temporaryOptions.post_deleteAppAfterSigned,
@@ -314,7 +315,7 @@ extension SigningView {
 				if _temporaryOptions.post_installAppAfterSigned,
 					let signedApp = Storage.shared.signedApp(uuid: signedUUID)
 				{
-					AppInstallationManager.shared.startInstall(app: signedApp)
+					AppInstallationManager.shared.startInstall(app: signedApp, requiresForegroundStart: true)
 				}
 				dismiss()
 			}

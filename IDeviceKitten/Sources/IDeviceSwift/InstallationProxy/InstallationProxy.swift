@@ -10,6 +10,36 @@ import SwiftUI
 import IDevice
 import UIKit.UIApplication
 
+// One pending main-queue delivery, regardless of how many AFC writes finish.
+// Closing discards delayed deliveries so they cannot overwrite a terminal state.
+private final class UploadProgressPublisher: @unchecked Sendable {
+ private let lock = NSLock()
+ private var latest: Double?
+ private var scheduled = false
+ private var closed = false
+ private let publish: @MainActor @Sendable (Double) -> Void
+ init(publish: @escaping @MainActor @Sendable (Double) -> Void) { self.publish = publish }
+ func submit(_ value: Double) {
+  lock.lock()
+  guard !closed else { lock.unlock(); return }
+  latest = value
+  let enqueue = !scheduled
+  scheduled = true
+  lock.unlock()
+  if enqueue { DispatchQueue.main.async { [self] in drain() } }
+ }
+ @MainActor private func drain() {
+  lock.lock()
+  let value = closed ? nil : latest
+  latest = nil
+  scheduled = false
+  lock.unlock()
+  if let value { publish(value) }
+ }
+ @MainActor func finish() { drain(); cancel() }
+ func cancel() { lock.lock(); closed = true; latest = nil; lock.unlock() }
+}
+
 public class InstallationProxy: Identifiable, ObservableObject {
 	private let _heartbeat = HeartbeatManager.shared
 	private let _uuid = UUID().uuidString
@@ -121,6 +151,10 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			let localFile = try FileHandle(forReadingFrom: url)
 			defer { try? localFile.close() }
 
+			let progressPublisher = UploadProgressPublisher { [weak self] value in
+				self?.viewModel.uploadProgress = value
+			}
+			defer { progressPublisher.cancel() }
 			let chunkSize = 4 * 1024 * 1024
 			var totalBytesWritten: Int64 = 0
 			diagnostics?.beginUpload(bytes: totalSize, chunkBytes: chunkSize)
@@ -155,10 +189,12 @@ public class InstallationProxy: Identifiable, ObservableObject {
 					? Double(totalBytesWritten) / Double(totalSize)
 					: 1
 				let progressStarted = diagnostics?.now() ?? 0
-				try await self._updateUploadProgress(with: min(progress, 1))
+				progressPublisher.submit(min(progress, 1))
 				diagnostics?.recordProgress(seconds: (diagnostics?.now() ?? 0) - progressStarted)
 			}
 
+			try Task.checkCancellation()
+			await MainActor.run { progressPublisher.finish() }
 			diagnostics?.endUpload()
 			diagnostics?.stage("afc-close")
 			let afc_file_close_result = afc_file_close(openedFileHandle)
@@ -231,12 +267,6 @@ public class InstallationProxy: Identifiable, ObservableObject {
 	private func _updateStatus(with status: InstallerStatusViewModel.InstallerStatus) async throws {
 		await MainActor.run {
 			self.viewModel.status = status
-		}
-	}
-
-	private func _updateUploadProgress(with status: Double) async throws {
-		await MainActor.run {
-			self.viewModel.uploadProgress = status
 		}
 	}
 

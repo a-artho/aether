@@ -127,6 +127,8 @@ final class DownloadStore {
 			return []
 		}
 
+		let stagedFiles = (try? fileManager.contentsOfDirectory(at: stagingDirectoryURL,
+			includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])) ?? []
 		return records.map { record in
 			let transferIdentifier = record.transferIdentifier ?? storageKey(for: record.id)
 			let legacyResumeData = record.transferIdentifier == nil
@@ -159,6 +161,19 @@ final class DownloadStore {
 				guard download.totalBytes > 0 else { return 0 }
 				return Double(download.bytesDownloaded) / Double(download.totalBytes)
 			}()
+			// The validated URLSession file may have moved before its queue checkpoint committed.
+			// Recover only the exact transfer's regular file before startup pruning runs.
+			if record.stagedFileName == nil, record.status == .downloading || record.status == .resuming,
+				let staged = stagedFiles.first(where: { url in
+					guard url.deletingPathExtension().lastPathComponent == storageKey(for: transferIdentifier),
+						let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else { return false }
+					return values.isRegularFile == true && values.isSymbolicLink != true
+				}) {
+				download.stagedFileName = staged.lastPathComponent
+				download.state = .processing
+				download.resumeData = nil
+				download.progress = 1
+			}
 			return download
 		}
 	}

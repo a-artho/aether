@@ -17,6 +17,7 @@ cp "$test_dir/RegressionTests.swift" "$scratch/Tests/RegressionTests/"
 python3 "$test_dir/generate-operation-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-lifecycle-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-background-tests.py" "$scratch/Tests/RegressionTests"
+python3 "$test_dir/generate-correction-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-fixtures.py" "$scratch/Tests/RegressionTests/Fixtures"
 if [[ -n "${AETHER_ZIPFOUNDATION_CHECKOUT:-}" ]]; then
   python3 - "$scratch/Package.swift" "$AETHER_ZIPFOUNDATION_CHECKOUT" <<'PY'

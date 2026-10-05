@@ -22,6 +22,7 @@ final class AppInstallationManager: ObservableObject {
 		let app: AppSnapshot
 		let method: Int
 		let serverMethod: Int
+		var requiresForegroundStart = false
 		#if DEBUG
 		var isMock = false
 		#endif
@@ -63,6 +64,7 @@ final class AppInstallationManager: ObservableObject {
 	private var _completedBackgroundInstalls = Set<UUID>()
 	private var _backgroundQueueTotal = 1
 	private var _backgroundObserver: NSObjectProtocol?
+	private var _foregroundObserver: NSObjectProtocol?
 	
 	private struct StoredInstallation: Codable {
 		let app: AppSnapshot
@@ -72,6 +74,11 @@ final class AppInstallationManager: ObservableObject {
 	private static let queueStorageKey = "Aether.pendingInstallations"
 
 	private init() {
+		_foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+			object: nil, queue: .main) { [weak self] _ in
+			Task { @MainActor in self?._startNextIfPossible() }
+		}
+
 		_backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
 			object: nil, queue: .main) { [weak self] _ in
 			Task { @MainActor in
@@ -146,8 +153,8 @@ final class AppInstallationManager: ObservableObject {
 		return false
 	}
 	
-	func startInstall(app: AppInfoPresentable) {
-		let request = InstallationRequest(
+	func startInstall(app: AppInfoPresentable, requiresForegroundStart: Bool = false) {
+		var request = InstallationRequest(
 			app: AppSnapshot(app),
 			method: UserDefaults.standard.integer(forKey: "Aether.installationMethod"),
 			serverMethod: UserDefaults.standard.object(forKey: "Aether.serverMethod") as? Int ?? 1
@@ -159,6 +166,7 @@ final class AppInstallationManager: ObservableObject {
 			)
 			return
 		}
+		request.requiresForegroundStart = requiresForegroundStart
 		_enqueue(request)
 	}
 
@@ -192,6 +200,9 @@ final class AppInstallationManager: ObservableObject {
 
 	private func _startNextIfPossible() {
 		guard currentRequest == nil, retirementTask == nil, !queuedInstalls.isEmpty else { return }
+		// Signing completed its own execution. Start this follow-up in the foreground
+		// rather than relying on a short fallback lease for a full installation.
+		if queuedInstalls[0].requiresForegroundStart, UIApplication.shared.applicationState != .active { return }
 		let request = queuedInstalls.removeFirst()
 		let generation = UUID()
 		installGeneration = generation

@@ -108,6 +108,7 @@ struct SourceAppsView: View {
 		.modifier(SearchToolbarModifier(
 			text: $_searchText, isPresented: _collectionSearchPresented,
 			focus: searchFocus, title: _navigationTitle, width: _toolbarWidth,
+			isScreenActive: router.path.last == .collection(collectionRoute),
 			searchOnLeading: false
 		) { _titleMenuActions() })
 

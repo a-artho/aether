@@ -10,6 +10,7 @@ struct SearchHeaderOverlay: UIViewRepresentable {
 	@ObservedObject var transition: SearchToolbarTransition
 	let sourceFrame: CGRect
 	let searchOnLeading: Bool
+	let isScreenActive: Bool
 	@Environment(\.layoutDirection) private var layoutDirection
 
 	func makeUIView(context: Context) -> SearchOverlayAttachmentView {
@@ -20,7 +21,8 @@ struct SearchHeaderOverlay: UIViewRepresentable {
 		view.surface = SearchOverlaySurface(text: $text, focus: focus, title: title,
 			transition: transition, layout: view.layout, sourceFrame: sourceFrame,
 			searchOnLeading: searchOnLeading, rightToLeft: layoutDirection == .rightToLeft)
-		view.acceptsSearchTouches = transition.expanded
+		view.isScreenActive = isScreenActive
+		view.acceptsSearchTouches = isScreenActive && transition.expanded
 		view.attachIfNeeded()
 	}
 
@@ -81,6 +83,10 @@ final class SearchOverlayAttachmentView: UIView {
 	private var host: UIView?
 	private weak var bar: UINavigationBar?
 	private let touchContainer = SearchOverlayTouchView()
+	// Visibility belongs to the active route, independently of the retained search session.
+	var isScreenActive = true {
+		didSet { touchContainer.isHidden = !isScreenActive }
+	}
 	var acceptsSearchTouches = false {
 		didSet { touchContainer.acceptsSearchTouches = acceptsSearchTouches }
 	}

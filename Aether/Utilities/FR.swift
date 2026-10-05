@@ -14,21 +14,35 @@ import IDeviceSwift
 
 private actor PackageProcessingGate {
 	private var isOccupied = false
-	private var waiters: [CheckedContinuation<Void, Never>] = []
+	private var waiters: [(UUID, CheckedContinuation<Void, Error>)] = []
 
-	func acquire() async {
+	func acquire() async throws {
+		try Task.checkCancellation()
 		if !isOccupied {
 			isOccupied = true
 			return
 		}
-		await withCheckedContinuation { waiters.append($0) }
+		let id = UUID()
+		try await withTaskCancellationHandler {
+			try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+				if Task.isCancelled { continuation.resume(throwing: CancellationError()) }
+				else { waiters.append((id, continuation)) }
+			}
+		} onCancel: {
+			Task { await self.cancelWaiter(id) }
+		}
+	}
+
+	private func cancelWaiter(_ id: UUID) {
+		guard let index = waiters.firstIndex(where: { $0.0 == id }) else { return }
+		waiters.remove(at: index).1.resume(throwing: CancellationError())
 	}
 
 	func release() {
 		if waiters.isEmpty {
 			isOccupied = false
 		} else {
-			waiters.removeFirst().resume()
+			waiters.removeFirst().1.resume()
 		}
 	}
 }
@@ -68,7 +82,11 @@ enum FR {
 		completion: @escaping (Error?) -> Void
 	) -> Task<Void, Never> {
 		Task.detached(priority: .utility) {
-			await packageProcessingGate.acquire()
+			do { try await packageProcessingGate.acquire() }
+			catch {
+				await MainActor.run { completion(error) }
+				return
+			}
 			defer {
 				Task { await packageProcessingGate.release() }
 			}

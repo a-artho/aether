@@ -77,7 +77,7 @@ struct ProvisioningProfileInfo {}
  func log(_ message:String,category:String,level:Level = .warning) {}
 }
 @MainActor final class Store {
- var refreshGeneration=UUID(); var apps:[AppInfo]=[]; var isLoading=false; var errorMessage:String?
+ var needsTrailingRefresh=false; var refreshGeneration=UUID(); var apps:[AppInfo]=[]; var isLoading=false; var errorMessage:String?
  func updateApplications(with apps:[AppInfo],profiles:[ProvisioningProfileInfo]) { self.apps=apps }
 ''', method(store,'func clear()'), method(store,'func refresh() async'), r'''
 }
@@ -149,6 +149,19 @@ final class LifecycleRegressionTests:XCTestCase {
   XCTAssertTrue(store.isLoading); XCTAssertTrue(store.apps.isEmpty)
   InstallationAppProxy.gate.release(2); await second.value
   XCTAssertEqual(store.apps.map(\.id),["result-2"]); XCTAssertFalse(store.isLoading)
+ }
+ @MainActor func testConcurrentRefreshRequestsCoalesceIntoOneTrailingFetch() async {
+  let initial=InstallationAppProxy.gate.count
+  DeviceConnectionManager.shared.isConnected=true
+  let store=Store(), first=Task { await store.refresh() }
+  while InstallationAppProxy.gate.count <= initial { await Task.yield() }
+  await store.refresh(); await store.refresh()
+  InstallationAppProxy.gate.release(initial+1); await first.value
+  while InstallationAppProxy.gate.count < initial+2 { await Task.yield() }
+  InstallationAppProxy.gate.release(initial+2)
+  while store.isLoading { await Task.yield() }
+  XCTAssertEqual(store.apps.map(\.id),["result-\(initial+2)"])
+  XCTAssertEqual(InstallationAppProxy.gate.count,initial+2)
  }
  @MainActor func testDisconnectedRefreshCannotPublishAnOldReply() async {
   let initial=InstallationAppProxy.gate.count

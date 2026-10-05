@@ -10,6 +10,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	let title: String
 	let width: CGFloat
 	var enabled = true
+	var isScreenActive = true
 	var searchOnLeading = true
 	var hasTitleMenu = true
 	var secondarySymbol = "plus"
@@ -89,7 +90,8 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			.background {
 				if enabled {
 					SearchHeaderOverlay(text: $text, focus: focus, title: title,
-						transition: transition, sourceFrame: searchButtonFrame, searchOnLeading: searchOnLeading)
+						transition: transition, sourceFrame: searchButtonFrame, searchOnLeading: searchOnLeading,
+						isScreenActive: isScreenActive)
 				}
 			}
 			.onAppear { transition.restore(isPresented: isPresented) }

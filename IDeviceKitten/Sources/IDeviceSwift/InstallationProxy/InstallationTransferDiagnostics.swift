@@ -112,7 +112,7 @@ final class InstallationTransferDiagnostics: @unchecked Sendable {
 		totalBytes = bytes
 		stage("upload")
 		lastSample = now()
-		log("payload bytes=\(bytes) chunkBytes=\(chunkBytes)")
+		log("payload bytes=\(bytes) chunkBytes=\(chunkBytes) progressDelivery=coalesced")
 	}
 
 	func recordPayload(_ data: Data) {
@@ -184,7 +184,7 @@ final class InstallationTransferDiagnostics: @unchecked Sendable {
 	}
 
 	private var counters: String {
-		"chunks=\(chunks) readSeconds=\(number(readSeconds)) nativeWriteSeconds=\(number(writeSeconds)) progressAwaitSeconds=\(number(progressSeconds)) maxWriteSeconds=\(number(maxWrite)) maxProgressAwaitSeconds=\(number(maxProgress)) nativePackets=\(native.packets) validReplies=\(native.replies) wireBytes=\(native.socket_bytes) runtimeQueueSeconds=\(number(native.queue_seconds)) runtimeReturnSeconds=\(number(native.return_seconds)) workerSeconds=\(number(native.worker_seconds)) copySeconds=\(number(native.copy_seconds)) serializeSeconds=\(number(native.serialize_seconds)) socketWriteSeconds=\(number(native.socket_write_seconds)) flushSeconds=\(number(native.flush_seconds)) replySeconds=\(number(native.reply_seconds)) socketPollSeconds=\(number(native.poll_seconds)) maxSocketPollSeconds=\(number(native.max_poll_seconds)) socketWritePolls=\(native.write_polls) socketPendingPolls=\(native.pending_polls) flushPolls=\(native.flush_polls) flushPendingPolls=\(native.flush_pending_polls) maxReplySeconds=\(number(maxReply)) writeBuckets=\(writeBuckets) replyBuckets=\(replyBuckets) hashSeconds=\(number(hashSeconds))"
+		"chunks=\(chunks) readSeconds=\(number(readSeconds)) nativeWriteSeconds=\(number(writeSeconds)) progressPublishSeconds=\(number(progressSeconds)) maxWriteSeconds=\(number(maxWrite)) maxProgressPublishSeconds=\(number(maxProgress)) nativePackets=\(native.packets) validReplies=\(native.replies) wireBytes=\(native.socket_bytes) runtimeQueueSeconds=\(number(native.queue_seconds)) runtimeReturnSeconds=\(number(native.return_seconds)) workerSeconds=\(number(native.worker_seconds)) copySeconds=\(number(native.copy_seconds)) serializeSeconds=\(number(native.serialize_seconds)) socketWriteSeconds=\(number(native.socket_write_seconds)) flushSeconds=\(number(native.flush_seconds)) replySeconds=\(number(native.reply_seconds)) socketPollSeconds=\(number(native.poll_seconds)) maxSocketPollSeconds=\(number(native.max_poll_seconds)) socketWritePolls=\(native.write_polls) socketPendingPolls=\(native.pending_polls) flushPolls=\(native.flush_polls) flushPendingPolls=\(native.flush_pending_polls) maxReplySeconds=\(number(maxReply)) writeBuckets=\(writeBuckets) replyBuckets=\(replyBuckets) hashSeconds=\(number(hashSeconds))"
 	}
 
 	private var networkSnapshot: String {

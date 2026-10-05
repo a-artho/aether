@@ -122,6 +122,7 @@ struct InstalledApp: Identifiable, Equatable, Hashable {
 
 @MainActor
 final class InstalledAppsStore: NSObject, ObservableObject {
+	private var needsTrailingRefresh = false
 	private var refreshGeneration = UUID()
 	@Published private(set) var apps: [InstalledApp]
 	@Published private(set) var isLoading: Bool
@@ -196,6 +197,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 	}
 
 	func clear() {
+		needsTrailingRefresh = false
 		refreshGeneration = UUID()
 		self.apps = []
 		self.errorMessage = nil
@@ -212,6 +214,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 	func refresh() async {
 		guard DeviceConnectionManager.shared.isConnected else {
 			refreshGeneration = UUID()
+			needsTrailingRefresh = false
 			isLoading = false
 			#if DEBUG
 			if !self.apps.isEmpty {
@@ -222,12 +225,27 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			self.errorMessage = nil
 			return
 		}
-		guard !isLoading else { return }
+		guard !isLoading else {
+			needsTrailingRefresh = true
+			return
+		}
 		let generation = UUID()
 		refreshGeneration = generation
 		isLoading = true
 		errorMessage = nil
-		defer { if refreshGeneration == generation { isLoading = false } }
+		defer {
+			if refreshGeneration == generation {
+				isLoading = false
+				let shouldRefresh = needsTrailingRefresh && !Task.isCancelled
+				needsTrailingRefresh = false
+				if shouldRefresh {
+					Task { [weak self] in
+						guard let self, self.refreshGeneration == generation else { return }
+						await self.refresh()
+					}
+				}
+			}
+		}
 
 		let proxy = InstallationAppProxy()
 
