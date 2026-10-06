@@ -11,8 +11,10 @@ import SwiftUI
 struct ExtendedTabbarView: View {
 	@Environment(\.horizontalSizeClass) var horizontalSizeClass
 	@AppStorage("Aether.tabCustomization") var customization = TabViewCustomization()
+	@AppStorage("Aether.hideTabBarLabels") private var hideTabBarLabels = false
 	
 	@ObservedObject private var tabManager = AppTabManager.shared
+	@ObservedObject private var installationManager = AppInstallationManager.shared
 	
 	private var _selectedTabBinding: Binding<String> {
 		Binding(
@@ -28,15 +30,21 @@ struct ExtendedTabbarView: View {
 	var body: some View {
 		TabView(selection: _selectedTabBinding) {
 			ForEach(TabEnum.defaultTabs, id: \.hashValue) { tab in
-				Tab(tab.title, systemImage: tab.icon, value: tab.rawValue) {
+				Tab(value: tab.rawValue) {
 					TabEnum.view(for: tab)
+				} label: {
+					tabLabel(for: tab)
 				}
+				.badge(tab == .installed ? installationManager.pendingInstallationCount : 0)
 			}
 			
 			ForEach(TabEnum.customizableTabs, id: \.hashValue) { tab in
-				Tab(tab.title, systemImage: tab.icon, value: tab.rawValue) {
+				Tab(value: tab.rawValue) {
 					TabEnum.view(for: tab)
+				} label: {
+					tabLabel(for: tab)
 				}
+				.badge(tab == .installed ? installationManager.pendingInstallationCount : 0)
 				.customizationID("tab.\(tab.rawValue)")
 				.defaultVisibility(.hidden, for: .tabBar)
 				.customizationBehavior(.reorderable, for: .tabBar, .sidebar)
@@ -50,4 +58,15 @@ struct ExtendedTabbarView: View {
 			SettingsView()
 		}
 	}
+
+	@ViewBuilder
+	private func tabLabel(for tab: TabEnum) -> some View {
+		if hideTabBarLabels && horizontalSizeClass == .compact {
+			Label(tab.title, systemImage: tab.icon)
+				.labelStyle(.iconOnly)
+		} else {
+			Label(tab.title, systemImage: tab.icon)
+		}
+	}
+
 }

@@ -32,7 +32,7 @@ struct InstalledAppsView: View {
 	private let loadsIcons: Bool
 
 	init() {
-		_store = StateObject(wrappedValue: InstalledAppsStore())
+		_store = StateObject(wrappedValue: InstalledAppsStore.shared)
 		self.loadsApps = true
 		self.loadsIcons = true
 	}
@@ -152,7 +152,7 @@ struct InstalledAppsView: View {
 				.animation(reduceMotion ? nil : .snappy, value: layout)
 				.refreshable {
 					guard loadsApps else { return }
-					await store.refresh()
+					await store.refresh(force: true)
 				}
 				#if DEBUG
 				.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.openAppDetail"))) { notif in
@@ -192,27 +192,6 @@ struct InstalledAppsView: View {
 				} catch is CancellationError {
 					// New installed versions or catalog revisions supersede this lookup.
 				} catch { appsWithUpdates = [] }
-			}
-			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.installedAppsRefresh"))) { _ in
-				Task {
-					guard loadsApps, connection.isConnected else { return }
-					await store.refresh()
-				}
-			}
-			.onReceive(NotificationCenter.default.publisher(for: .heartbeat)) { _ in
-				Task {
-					await connection.reconcile()
-				}
-			}
-			.onChange(of: connection.isConnected) { isConnected in
-				guard loadsApps else { return }
-				Task {
-					if isConnected {
-						await store.refresh()
-					} else {
-						store.clear()
-					}
-				}
 			}
 			.toolbar {
 				ToolbarItem(placement: .topBarLeading) {
@@ -483,7 +462,7 @@ struct InstalledAppsView: View {
 				systemImage: "iphone.slash"
 			) {
 				Button {
-					Task { await store.refresh() }
+					Task { await store.refresh(force: true) }
 				} label: {
 					NBButton(.localized("Retry"), style: .text)
 				}
@@ -597,15 +576,18 @@ struct InstalledAppIconView: View {
 		}
 		.animation(.easeIn(duration: 0.15), value: image != nil)
 		.task(id: bundleIdentifier + "|" + cacheVersion) {
-			guard loadsIcon else { return }
-			let loaded = try? await InstallationAppProxy.getAppIconCached(
-				for: bundleIdentifier,
-				cacheVersion: cacheVersion
-			)
-			withAnimation(.easeIn(duration: 0.15)) {
-				image = loaded
-			}
+			await loadIcon()
 		}
+	}
+
+	private func loadIcon() async {
+		guard loadsIcon, !Task.isCancelled else { return }
+		let loaded = try? await InstallationAppProxy.getAppIconCached(
+			for: bundleIdentifier,
+			cacheVersion: cacheVersion
+		)
+		guard !Task.isCancelled else { return }
+		withAnimation(.easeIn(duration: 0.15)) { image = loaded }
 	}
 }
 

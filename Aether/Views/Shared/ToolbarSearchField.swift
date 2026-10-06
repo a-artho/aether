@@ -19,6 +19,9 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	@ViewBuilder var titleMenu: () -> MenuContent
 	@StateObject private var transition = SearchToolbarTransition()
 	@State private var searchButtonFrame: CGRect = .zero
+	@AppStorage("Aether.searchOnRight") private var searchOnRight = false
+
+	private var usesLeadingSearch: Bool { searchOnLeading && !searchOnRight }
 
 	func body(content: Content) -> some View {
 		content
@@ -58,31 +61,20 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 						.accessibilityHidden(transition.expanded)
 					}
 					.sharedBackgroundVisibility(.hidden)
-					ToolbarItem(id: "search-action", placement: searchOnLeading ? .topBarLeading : .topBarTrailing) {
-						Button {
-							if transition.expanded && !searchOnLeading { closeSearch() }
-							else { openSearch() }
-						} label: {
-							Image(systemName: transition.expanded && !searchOnLeading ? "xmark" : "magnifyingglass")
+					if !usesLeadingSearch && secondaryAction != nil {
+						ToolbarItemGroup(placement: .topBarTrailing) {
+							if !transition.expanded { searchButton }
+							secondaryButton
 						}
-						.opacity(searchOnLeading && transition.expanded ? 0 : 1)
-						.allowsHitTesting(!searchOnLeading || !transition.expanded)
-						.accessibilityHidden(searchOnLeading && transition.expanded)
-						.accessibilityLabel(transition.expanded && !searchOnLeading ? .localized("Cancel") : .localized("Search"))
-						.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-							searchButtonFrame = frame
+					} else {
+						ToolbarItem(id: "search-action", placement: usesLeadingSearch ? .topBarLeading : .topBarTrailing) {
+							searchButton
 						}
-					}
-					.sharedBackgroundVisibility(searchOnLeading && transition.expanded ? .hidden : .automatic)
-					if searchOnLeading {
-						ToolbarItem(id: "search-secondary", placement: .topBarTrailing) {
-							Button {
-								if transition.expanded { closeSearch() }
-								else { secondaryAction?() }
-							} label: { Image(systemName: transition.expanded ? "xmark" : secondarySymbol) }
-								.accessibilityLabel(transition.expanded ? .localized("Cancel") : secondaryLabel)
-								.opacity(secondaryAction != nil || transition.expanded ? 1 : 0)
-								.allowsHitTesting(secondaryAction != nil || transition.expanded)
+						.sharedBackgroundVisibility(usesLeadingSearch && transition.expanded ? .hidden : .automatic)
+						if usesLeadingSearch {
+							ToolbarItem(id: "search-secondary", placement: .topBarTrailing) {
+								secondaryButton
+							}
 						}
 					}
 				}
@@ -90,7 +82,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			.background {
 				if enabled {
 					SearchHeaderOverlay(text: $text, focus: focus, title: title,
-						transition: transition, sourceFrame: searchButtonFrame, searchOnLeading: searchOnLeading,
+						transition: transition, sourceFrame: searchButtonFrame, searchOnLeading: usesLeadingSearch,
 						isScreenActive: isScreenActive)
 				}
 			}
@@ -100,6 +92,32 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 				if phase == .interacting { focus.wrappedValue = false }
 			}
 	}
+	private var searchButton: some View {
+		Button {
+			if transition.expanded && !usesLeadingSearch { closeSearch() }
+			else { openSearch() }
+		} label: {
+			Image(systemName: transition.expanded && !usesLeadingSearch ? "xmark" : "magnifyingglass")
+		}
+		.opacity(usesLeadingSearch && transition.expanded ? 0 : 1)
+		.allowsHitTesting(!usesLeadingSearch || !transition.expanded)
+		.accessibilityHidden(usesLeadingSearch && transition.expanded)
+		.accessibilityLabel(transition.expanded && !usesLeadingSearch ? String.localized("Cancel") : String.localized("Search"))
+		.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+			if !transition.expanded { searchButtonFrame = frame }
+		}
+	}
+
+	private var secondaryButton: some View {
+		Button {
+			if transition.expanded { closeSearch() }
+			else { secondaryAction?() }
+		} label: { Image(systemName: transition.expanded ? "xmark" : secondarySymbol) }
+			.accessibilityLabel(transition.expanded ? .localized("Cancel") : secondaryLabel)
+			.opacity(secondaryAction != nil || transition.expanded ? 1 : 0)
+			.allowsHitTesting(secondaryAction != nil || transition.expanded)
+	}
+
 	private func openSearch() {
 		focus.wrappedValue = true
 		transition.setPresented(true)

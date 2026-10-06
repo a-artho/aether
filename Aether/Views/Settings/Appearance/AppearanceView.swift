@@ -18,6 +18,15 @@ struct AppearanceView: View {
 	@AppStorage("Aether.shouldTintIcons")
 	private var _shouldTintIcons: Bool = false
 
+	@AppStorage("Aether.hideTabBarLabels")
+	private var _hideTabBarLabels: Bool = false
+
+	@AppStorage("Aether.searchOnRight")
+	private var _searchOnRight: Bool = false
+
+	@AppStorage("Aether.updateDayCards")
+	private var _updateDayCards: Bool = false
+
 	@AppStorage("Aether.controlsInHeader")
 	private var _controlsInHeader: Bool = false
 
@@ -76,6 +85,22 @@ struct AppearanceView: View {
 				}
 			}
 			
+			NBSection(.localized("Tab Bar")) {
+				Toggle(isOn: $_hideTabBarLabels) {
+					SettingsRowLabel(.localized("Hide Labels"), systemImage: "rectangle.bottomthird.inset.filled", backgroundColor: .blue)
+				}
+			} footer: {
+				Text(.localized("Show only icons in the bottom tab bar."))
+			}
+
+			NBSection(.localized("Navigation")) {
+				Toggle(isOn: $_searchOnRight) {
+					SettingsRowLabel(.localized("Search on Right"), systemImage: "magnifyingglass", backgroundColor: .blue)
+				}
+			} footer: {
+				Text(.localized("Place search on the right. When an Add button is present, search appears beside it in a shared button group."))
+			}
+
 			if #available(iOS 26, *) {
 				NBSection(.localized("Device Controls")) {
 					Toggle(isOn: $_controlsInHeader) {
@@ -88,6 +113,14 @@ struct AppearanceView: View {
 				} footer: {
 					Text(.localized("Move device and app information controls into the header. Liquid Glass Tiles applies when controls are shown as tiles."))
 				}
+			}
+
+			NBSection(.localized("Updates")) {
+				Toggle(isOn: $_updateDayCards) {
+					SettingsRowLabel(.localized("Day Group Cards"), systemImage: "rectangle.stack", backgroundColor: .indigo)
+				}
+			} footer: {
+				Text(.localized("Group available updates into a card for each day in sideloaded app details."))
 			}
 
 			NBSection(.localized("Library")) {

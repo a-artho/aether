@@ -76,7 +76,9 @@ public enum DeviceConnectionError: LocalizedError {
 public final class DeviceConnectionManager: ObservableObject {
 	public static let shared = DeviceConnectionManager()
 	public static let installationMethodKey = "Aether.installationMethod"
-	public static let autoTunnelLifecycleKey = "Aether.autoTunnelLifecycle"
+	// Preserve the existing background-disconnection preference.
+	public static let disconnectWhenIdleKey = "Aether.autoTunnelLifecycle"
+	public static let connectAutomaticallyKey = "Aether.connectAutomatically"
 	private static let unresolvedSimulationKey = "Aether.spoofing.simulationMayBeActive"
 
 	@Published public private(set) var state: DeviceConnectionState = .disconnected
@@ -84,16 +86,18 @@ public final class DeviceConnectionManager: ObservableObject {
 	@Published public private(set) var hasPairingFile: Bool = false
 	@Published public private(set) var pairingVerification = PairingVerificationState()
 	@Published public private(set) var tunnelMethod: DeviceTunnelMethod
-	@Published public private(set) var isAutoTunnelLifecycleEnabled: Bool
+	@Published public private(set) var isDisconnectWhenIdleEnabled: Bool
+	@Published public private(set) var isConnectAutomaticallyEnabled: Bool
 	@Published public private(set) var physicalNetworkState: PhysicalNetworkState = .unknown
 	@Published public private(set) var requiresInAppTunnelSetup = false
+	@Published private var connectionPreparation: UUID?
 
 	public var isConnected: Bool {
 		state == .connected
 	}
 
 	public var isUpdating: Bool {
-		state == .connecting || state == .disconnecting
+		connectionPreparation != nil || state == .connecting || state == .disconnecting
 	}
 
 	private let pathMonitor = NWPathMonitor()
@@ -106,6 +110,8 @@ public final class DeviceConnectionManager: ObservableObject {
 	private var transitionDeadline: TimeInterval = 0
 	private var reconciliationTask: Task<Void, Never>?
 	private var reconciliationPending = false
+	private var lastVerifiedAt: TimeInterval = 0
+	private var lastVerifiedRecord: PairingRecordIdentity?
 	private var pendingReconciliationForce = false
 	private var pendingCellularAssistReconciliation = false
 
@@ -114,7 +120,8 @@ public final class DeviceConnectionManager: ObservableObject {
 		tunnelMethod = DeviceTunnelMethod(
 			rawValue: UserDefaults.standard.string(forKey: "Aether.tunnelMethod") ?? ""
 		) ?? .inApp
-		isAutoTunnelLifecycleEnabled = UserDefaults.standard.bool(forKey: Self.autoTunnelLifecycleKey)
+		isDisconnectWhenIdleEnabled = UserDefaults.standard.bool(forKey: Self.disconnectWhenIdleKey)
+		isConnectAutomaticallyEnabled = UserDefaults.standard.object(forKey: Self.connectAutomaticallyKey) as? Bool ?? true
 		HeartbeatManager.shared.ipAddress = EmbeddedTunnelManager.shared.peerIPOnly
 		_syncPairingRecord()
 		_log(
@@ -155,9 +162,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 		// Restore the selected install mode's expected connection state. Server mode
 		// deliberately does not launch LocalDevVPN when Aether opens.
-		Task { @MainActor [weak self] in
-			self?._restoreInstallationMode()
-		}
+		_restoreInstallationMode()
 	}
 
 	deinit {
@@ -174,6 +179,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	// MARK: - Event Triggers
 
 	public func networkPathChanged(_ path: NWPath? = nil) {
+		lastVerifiedAt = 0
 		if let path {
 			let previousNetworkState = physicalNetworkState
 			physicalNetworkState = Self.classify(path)
@@ -195,7 +201,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	public func setTunnelMethod(_ method: DeviceTunnelMethod) {
-		guard state == .disconnected else { return }
+		guard !isUpdating, state == .disconnected else { return }
 		guard tunnelMethod != method else { return }
 		tunnelMethod = method
 		requiresInAppTunnelSetup = false
@@ -304,27 +310,36 @@ public final class DeviceConnectionManager: ObservableObject {
 		return false
 	}
 
-	public func setAutoTunnelLifecycle(_ enabled: Bool) {
-		guard isAutoTunnelLifecycleEnabled != enabled else { return }
-		isAutoTunnelLifecycleEnabled = enabled
-		UserDefaults.standard.set(enabled, forKey: Self.autoTunnelLifecycleKey)
-		_log("Auto tunnel lifecycle set to \(enabled).", category: "Tunnel", level: .notice)
+	public func setDisconnectWhenIdle(_ enabled: Bool) {
+		guard isDisconnectWhenIdleEnabled != enabled else { return }
+		isDisconnectWhenIdleEnabled = enabled
+		UserDefaults.standard.set(enabled, forKey: Self.disconnectWhenIdleKey)
+		_log("Disconnect when idle set to \(enabled).", category: "Tunnel", level: .notice)
+	}
+
+	public func setConnectAutomatically(_ enabled: Bool) {
+		guard isConnectAutomaticallyEnabled != enabled else { return }
+		isConnectAutomaticallyEnabled = enabled
+		UserDefaults.standard.set(enabled, forKey: Self.connectAutomaticallyKey)
+		_log("Connect automatically set to \(enabled).", category: "Tunnel", level: .notice)
 		if enabled && isIDeviceInstallationMode && !isConnected && !isUpdating {
 			_connectForIDeviceMode()
 		}
 	}
 
 	public func handleAppForeground() {
+		lastVerifiedAt = 0
+		EmbeddedTunnelManager.shared.invalidateConfigurationCache()
 		CellularAssistManager.shared.handleApplicationDidBecomeActive()
 		guard !CellularAssistManager.shared.isBusy else { return }
-		guard isAutoTunnelLifecycleEnabled, isIDeviceInstallationMode else { return }
+		guard isConnectAutomaticallyEnabled, isIDeviceInstallationMode else { return }
 		guard !isConnected, !isUpdating else { return }
 		_log("App foregrounded; automatically starting device tunnel.", category: "Tunnel", level: .notice)
 		_connectForIDeviceMode()
 	}
 
 	public func handleAppBackground() {
-		guard isAutoTunnelLifecycleEnabled, isIDeviceInstallationMode else { return }
+		guard isDisconnectWhenIdleEnabled, isIDeviceInstallationMode else { return }
 		if hasActiveTunnelDependencies {
 			_log(
 				"App backgrounded; keeping device tunnel active because an operation is in progress (spoofing: \(UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey)), installing: \(AppInstallationManager.shared.isInstalling), pairing: \(OnDevicePairingManager.shared.isActive), cellular assist: \(CellularAssistManager.shared.isBusy)).",
@@ -344,18 +359,32 @@ public final class DeviceConnectionManager: ObservableObject {
 			diagnostic = .tunnelUnavailable
 			return
 		}
+		guard isConnectAutomaticallyEnabled, UIApplication.shared.applicationState == .active else { return }
 		_connectForIDeviceMode()
 	}
 
 	private func _connectForIDeviceMode() {
+		guard UIApplication.shared.applicationState != .background else { return }
+		guard isIDeviceInstallationMode, !isUpdating, !isConnected else { return }
+		_syncPairingRecord()
+		guard hasPairingFile else {
+			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
+			return
+		}
+		let preparation = UUID()
+		connectionPreparation = preparation
+		diagnostic = .checking
 		Task { [weak self] in
 			guard let self else { return }
-			self._syncPairingRecord()
-			guard self.hasPairingFile else {
-				self._finishTransition(to: .disconnected, diagnostic: .pairingMissing)
+			let hasProfile = await self._hasRequiredTunnelProfile()
+			guard self.connectionPreparation == preparation else { return }
+			self.connectionPreparation = nil
+			guard self.isIDeviceInstallationMode else { return }
+			guard UIApplication.shared.applicationState != .background else {
+				self._finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 				return
 			}
-			guard await self._hasRequiredTunnelProfile() else {
+			guard hasProfile else {
 				self._finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 				return
 			}
@@ -366,6 +395,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	// MARK: - Toggle Connection
 
 	public func setConnection(enabled: Bool, force: Bool = false) {
+		if !enabled { connectionPreparation = nil }
 		guard !isUpdating else { return }
 		guard force || (enabled && state != .connected) || (!enabled && state != .disconnected) else { return }
 
@@ -471,6 +501,8 @@ public final class DeviceConnectionManager: ObservableObject {
 			break
 		}
 		if checkResult.isConnected {
+			lastVerifiedAt = CACurrentMediaTime()
+			lastVerifiedRecord = checkedRecord
 			_finishTransition(to: .connected, diagnostic: .ready)
 			CellularAssistManager.shared.connectionDidSucceed()
 			_log("Device transport and pairing were verified.", level: .notice)
@@ -518,6 +550,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _reconcile(force: Bool, cellularAssistTransaction: Bool) async {
+		guard connectionPreparation == nil else { return }
 		let reconciliationGeneration = transitionGeneration
 		let method = tunnelMethod
 		guard isIDeviceInstallationMode else {
@@ -559,6 +592,14 @@ public final class DeviceConnectionManager: ObservableObject {
 				_beginCellularAssistIfEligible() {
 				return
 			}
+		}
+
+		// Event bursts may overlap a successful check. Reuse that result only
+		// while stable; explicit actions, transitions and forced retries still probe.
+		if !force, !cellularAssistTransaction, expectedState == nil, isConnected,
+			lastVerifiedRecord == pairingVerification.record,
+			CACurrentMediaTime() - lastVerifiedAt < 1 {
+			return
 		}
 
 		// The legacy transport needs a socket preflight. RSD is verified by its
@@ -616,6 +657,8 @@ public final class DeviceConnectionManager: ObservableObject {
 		if await _discardRejectedRecord(checkResult, record: checkedRecord) != .notRejected { return }
 
 		if checkResult.isConnected {
+			lastVerifiedAt = CACurrentMediaTime()
+			lastVerifiedRecord = checkedRecord
 			if expectedState == false && !force && !isExpired {
 				// LocalDevVPN can remain reachable briefly after a disconnect request.
 				// Keep polling instead of cancelling the transition on that stale result.
@@ -649,7 +692,10 @@ public final class DeviceConnectionManager: ObservableObject {
 	private func _syncPairingRecord() -> PairingRecordIdentity? {
 		hasPairingFile = HeartbeatManager.hasPairingFile()
 		let record = hasPairingFile ? PairingRecordIdentity(fileURL: URL(fileURLWithPath: HeartbeatManager.activePairingFile())) : nil
-		if pairingVerification.record != record { pairingVerification.select(record) }
+		if pairingVerification.record != record {
+			lastVerifiedAt = 0
+			pairingVerification.select(record)
+		}
 		return record
 	}
 
@@ -683,6 +729,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _resetRSDTunnel() async {
+		lastVerifiedAt = 0
 		await Task.detached(priority: .utility) {
 			HeartbeatManager.shared.resetRSDTunnel()
 		}.value
@@ -839,6 +886,8 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _finishTransition(to newState: DeviceConnectionState, diagnostic newDiagnostic: DeviceDiagnosticStatus) {
+		connectionPreparation = nil
+		if newState != .connected { lastVerifiedAt = 0 }
 		let previousState = state
 		let previousDiagnostic = diagnostic
 		transitionGeneration = nil

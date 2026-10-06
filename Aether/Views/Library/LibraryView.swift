@@ -21,6 +21,7 @@ struct LibraryView: View {
 
 	// MARK: Selection State
 	@State private var _selectedAppUUIDs: Set<String> = []
+	@State private var _selectedDownloadIDs: Set<String> = []
 	@State private var _editMode: EditMode = .inactive
 
 	@State private var _searchText = ""
@@ -106,7 +107,7 @@ struct LibraryView: View {
 					case .downloads:
 						NBSection(.localized("Downloads")) {
 							ForEach(downloadManager.downloads) { download in
-								DownloadLibraryCellView(download: download)
+								DownloadLibraryCellView(download: download, selectedDownloadIDs: $_selectedDownloadIDs)
 							}
 						}
 
@@ -173,6 +174,7 @@ struct LibraryView: View {
 							withAnimation {
 								_editMode = .inactive
 								_selectedAppUUIDs.removeAll()
+								_selectedDownloadIDs.removeAll()
 							}
 						}
 					}
@@ -183,7 +185,7 @@ struct LibraryView: View {
 						} label: {
 							Image(systemName: "trash")
 						}
-						.disabled(_selectedAppUUIDs.isEmpty)
+						.disabled(_selectedAppUUIDs.isEmpty && _selectedDownloadIDs.isEmpty)
 						.accessibilityLabel(.localized("Delete"))
 					}
 				}
@@ -231,9 +233,14 @@ struct LibraryView: View {
 			} message: {
 				Text(.localized("This permanently removes all signed and imported apps from your library."))
 			}
+			.onChange(of: downloadManager.downloads.map(\.id)) { ids in
+				// Completed or otherwise removed transfers cannot remain selected.
+				_selectedDownloadIDs.formIntersection(ids)
+			}
 			.onChange(of: _editMode) { mode in
 				if mode == .inactive {
 					_selectedAppUUIDs.removeAll()
+					_selectedDownloadIDs.removeAll()
 				}
 			}
 		}
@@ -264,9 +271,12 @@ extension LibraryView {
 			return _selectedAppUUIDs.contains(uuid)
 		}
 
+		let selectedDownloads = downloadManager.downloads.filter { _selectedDownloadIDs.contains($0.id) }
+		for download in selectedDownloads { downloadManager.deleteDownload(download) }
 		_deleteAvailableApps(selectedApps)
 
 		_selectedAppUUIDs.removeAll()
+		_selectedDownloadIDs.removeAll()
 
 		// _editMode = .inactive
 	}
@@ -278,6 +288,7 @@ extension LibraryView {
 		_deleteAvailableApps(apps)
 
 		_selectedAppUUIDs.removeAll()
+		_selectedDownloadIDs.removeAll()
 		_editMode = .inactive
 	}
 
@@ -291,8 +302,8 @@ extension LibraryView {
 
 	private func _getAllApps() -> [AppInfoPresentable] {
 		var allApps: [AppInfoPresentable] = []
-		allApps.append(contentsOf: _filteredSignedApps)
-		allApps.append(contentsOf: _filteredImportedApps)
+		allApps.append(contentsOf: Array(_signedApps))
+		allApps.append(contentsOf: Array(_importedApps))
 		return allApps
 	}
 }

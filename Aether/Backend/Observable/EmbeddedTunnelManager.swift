@@ -84,6 +84,11 @@ public final class EmbeddedTunnelManager: ObservableObject {
 	private static let schema = 1
 	private var manager: NETunnelProviderManager?
 	private var statusObserver: NSObjectProtocol?
+	private var configurationObserver: NSObjectProtocol?
+	private var cachedManagers: [NETunnelProviderManager]?
+	private var managersLoadedAt: TimeInterval = 0
+	private var managersRevision = UUID()
+	private var managersLoad: (id: UUID, task: Task<[NETunnelProviderManager], Error>)?
 	#endif
 
 	private init() {
@@ -111,6 +116,11 @@ public final class EmbeddedTunnelManager: ObservableObject {
 				self.updateState(for: connection.status)
 			}
 		}
+		configurationObserver = NotificationCenter.default.addObserver(
+			forName: .NEVPNConfigurationChange, object: nil, queue: .main
+		) { [weak self] _ in
+			Task { @MainActor [weak self] in self?.invalidateConfigurationCache() }
+		}
 		#else
 		state = .unavailable
 		#endif
@@ -121,6 +131,7 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		if let statusObserver {
 			NotificationCenter.default.removeObserver(statusObserver)
 		}
+		if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
 		#endif
 	}
 
@@ -150,12 +161,25 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		#endif
 	}
 
+	public func invalidateConfigurationCache() {
+		#if os(iOS) && !targetEnvironment(macCatalyst)
+		cachedManagers = nil
+		managersRevision = UUID()
+		managersLoad = nil
+		#endif
+	}
+
 	public func refresh() async {
 		#if os(iOS) && !targetEnvironment(macCatalyst)
 		do {
-			_ = try await prepare()
-			guard let manager else { return }
-			updateState(for: manager.connection.status)
+			let providerIdentifier = try discoverProviderIdentifier()
+			let managers = try await loadManagers()
+			let matching = managers.filter {
+				Self.isAetherManaged($0)
+					&& ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == providerIdentifier
+			}
+			manager = matching.first(where: { $0.connection.status == .connected || $0.connection.status == .connecting }) ?? matching.first
+			updateState(for: manager?.connection.status ?? .disconnected)
 		} catch {
 			_setState(.error(error.localizedDescription))
 		}
@@ -230,9 +254,11 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		case .connecting, .reasserting:
 			state = .connecting
 		default:
-			manager.isEnabled = true
-			try await save(manager)
-			try await load(manager)
+			if !manager.isEnabled {
+				manager.isEnabled = true
+				try await save(manager)
+				try await load(manager)
+			}
 			state = .connecting
 			HeartbeatManager.shared.ipAddress = peerIPOnly
 			let options: [String: NSObject] = [
@@ -432,36 +458,72 @@ private extension EmbeddedTunnelManager {
 	}
 
 	func waitForConnected() async -> Bool {
-		for _ in 0..<40 {
-			if manager?.connection.status == .connected { return true }
-			if manager?.connection.status == .invalid { return false }
-			try? await Task.sleep(nanoseconds: 250_000_000)
-		}
-		return false
+		await waitForStatus(.connected, timeout: 10_000_000_000)
 	}
 
 	func waitForDisconnected() async -> Bool {
-		for _ in 0..<24 {
-			let status = manager?.connection.status
-			if status == .disconnected || status == .invalid { return true }
-			try? await Task.sleep(nanoseconds: 250_000_000)
+		await waitForStatus(.disconnected, timeout: 6_000_000_000)
+	}
+
+	func waitForStatus(_ desired: NEVPNStatus, timeout: UInt64) async -> Bool {
+		guard let connection = manager?.connection else { return desired == .disconnected }
+		let statuses = AsyncStream<NEVPNStatus> { continuation in
+			let observer = NotificationCenter.default.addObserver(
+				forName: .NEVPNStatusDidChange, object: connection, queue: nil
+			) { notification in
+				guard let changed = notification.object as? NEVPNConnection else { return }
+				continuation.yield(changed.status)
+			}
+			continuation.onTermination = { _ in NotificationCenter.default.removeObserver(observer) }
+			// Subscribe before reading status to cover changes during registration.
+			continuation.yield(connection.status)
 		}
-		return false
+		return await withTaskGroup(of: Bool.self) { group in
+			group.addTask {
+				for await status in statuses {
+					if status == desired { return true }
+					if status == .invalid { return desired == .disconnected }
+				}
+				return false
+			}
+			group.addTask {
+				try? await Task.sleep(nanoseconds: timeout)
+				return false
+			}
+			let result = await group.next() ?? false
+			group.cancelAll()
+			return result
+		}
 	}
 
 	func loadManagers() async throws -> [NETunnelProviderManager] {
-		try await withCheckedThrowingContinuation { continuation in
-			NETunnelProviderManager.loadAllFromPreferences { managers, error in
-				if let error {
-					continuation.resume(throwing: error)
-				} else {
-					continuation.resume(returning: managers ?? [])
+		if let cachedManagers, ProcessInfo.processInfo.systemUptime - managersLoadedAt < 2 {
+			return cachedManagers
+		}
+		if let managersLoad { return try await managersLoad.task.value }
+		let revision = managersRevision
+		let id = UUID()
+		let task = Task<[NETunnelProviderManager], Error> {
+			try await withCheckedThrowingContinuation { continuation in
+				NETunnelProviderManager.loadAllFromPreferences { managers, error in
+					if let error { continuation.resume(throwing: error) }
+					else { continuation.resume(returning: managers ?? []) }
 				}
 			}
 		}
+		managersLoad = (id, task)
+		defer { if managersLoad?.id == id { managersLoad = nil } }
+		let managers = try await task.value
+		if managersRevision == revision {
+			cachedManagers = managers
+			managersLoadedAt = ProcessInfo.processInfo.systemUptime
+		}
+		return managers
 	}
 
 	func save(_ manager: NETunnelProviderManager) async throws {
+		invalidateConfigurationCache()
+		defer { invalidateConfigurationCache() }
 		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
 			manager.saveToPreferences { error in
 				if let error {
@@ -486,6 +548,8 @@ private extension EmbeddedTunnelManager {
 	}
 
 	func remove(_ manager: NETunnelProviderManager) async throws {
+		invalidateConfigurationCache()
+		defer { invalidateConfigurationCache() }
 		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
 			manager.removeFromPreferences { error in
 				if let error {

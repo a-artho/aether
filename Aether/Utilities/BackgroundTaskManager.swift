@@ -20,7 +20,6 @@ class BackgroundTaskManager: ObservableObject {
         var title: String
         var subtitle: String
         var progress: Double
-        var indeterminateBytes: Int64?
         var onExpiration: (() -> Void)?
         init(identifier: String, title: String, subtitle: String, progress: Double, onExpiration: (() -> Void)?) {
             self.identifier = identifier; self.title = title; self.subtitle = subtitle
@@ -128,7 +127,7 @@ class BackgroundTaskManager: ObservableObject {
             }
             work.task = task
             self._endFallback(work)
-            self.applyWorkProgress(work)
+            self.applyProgress(to: task, progress: work.progress)
             task.updateTitle(work.title, subtitle: work.subtitle)
             task.expirationHandler = { [weak self, weak work, weak task] in
                 Task { @MainActor in
@@ -158,21 +157,12 @@ class BackgroundTaskManager: ObservableObject {
     }
 
     func updateProgress(for downloadId: String, progress: Double) { _updateTask(for: downloadId, progress: progress) }
-    func updateDownloadProgress(for token: String, bytesReceived: Int64, totalBytes: Int64, progress: Double) {
-        guard let work = workByToken[token] else { return }
-        work.progress = min(max(progress, 0), 1)
-        // Some repositories omit Content-Length. Report measurable bytes without
-        // inventing a percentage or leaving the native operation stuck at zero.
-        work.indeterminateBytes = totalBytes > 0 ? nil : max(0, bytesReceived)
-        applyWorkProgress(work)
-    }
     func stopTask(for downloadId: String, success: Bool) { _stopTask(for: downloadId, success: success) }
 
     private func _updateTask(for token: String, title: String? = nil, subtitle: String? = nil, progress: Double) {
         guard let work = workByToken[token] else { return }
         let previousTitle = work.title, previousSubtitle = work.subtitle
         work.progress = min(max(progress, 0), 1)
-        work.indeterminateBytes = nil
         if let title { work.title = title }; if let subtitle { work.subtitle = subtitle }
         if let task = work.task {
             applyProgress(to: task, progress: work.progress)
@@ -225,13 +215,6 @@ class BackgroundTaskManager: ObservableObject {
         guard work.fallback != .invalid else { return }
         UIApplication.shared.endBackgroundTask(work.fallback)
         work.fallback = .invalid
-    }
-    private func applyWorkProgress(_ work: Work) {
-        guard let task = work.task else { return }
-        if let bytes = work.indeterminateBytes {
-            task.progress.totalUnitCount = -1
-            task.progress.completedUnitCount = bytes
-        } else { applyProgress(to: task, progress: work.progress) }
     }
     private func applyProgress(to task: BGContinuedProcessingTask, progress: Double) {
         task.progress.totalUnitCount = progressUnits

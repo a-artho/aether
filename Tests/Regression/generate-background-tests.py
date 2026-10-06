@@ -14,6 +14,7 @@ operation=operation[operation.index('@MainActor'): ]
 parts=[r'''
 import Foundation
 import XCTest
+extension String { static func localized(_ value:String, arguments:CVarArg...) -> String { String(format:value,arguments:arguments) } }
 enum BackgroundFixture {
 protocol ObservableObject {}
 @MainActor final class BackgroundAudioManager {
@@ -23,6 +24,14 @@ protocol ObservableObject {}
 }
 
 @MainActor final class DownloadCheckpointLease { func end() {} }
+struct UNNotificationSound { static let `default`=Self() }
+final class UNMutableNotificationContent { var title="",body="";var sound:UNNotificationSound? }
+struct UNNotificationRequest { let identifier:String;let content:UNMutableNotificationContent;let trigger:String? }
+@MainActor final class UNUserNotificationCenter {
+ static let shared=UNUserNotificationCenter();var requests:[UNNotificationRequest]=[]
+ static func current()->UNUserNotificationCenter { shared }
+ func add(_ request:UNNotificationRequest) async throws { requests.append(request) }
+}
 struct UIBackgroundTaskIdentifier:Hashable { let raw:Int;static let invalid=Self(raw:-1) }
 @MainActor final class UIApplication {
  enum State:Int { case active,inactive,background }
@@ -69,7 +78,7 @@ final class Download {
  init(logicalIdentifier:String,url:URL,sourceProvenance:Provenance?) { self.sourceProvenance=sourceProvenance }
  var sourceProvenance:Provenance?;let fileName="App";let onlyArchiving=false
  var progress=0.0;var unpackageProgress=0.0
- var backgroundProgress:Double { 0.7*progress+0.3*unpackageProgress }
+ var backgroundProgress:Double { unpackageProgress }
  var waitingForForeground=false;var interruptionForegroundGeneration:UInt64=0
  var resumeData:Data?;var stagedFileName:String?;var bytesDownloaded:Int64=0;var totalBytes:Int64=0
  var lastUIProgressUpdate=0.0;var lastPersistedProgressUpdate=0.0;var lastPersistedBytes:Int64=0;var lastBackgroundProgressUpdate=0.0;var lastBackgroundDiagnosticUpdate=0.0
@@ -100,11 +109,14 @@ struct Store { func saveResumeData(_ data:Data,for id:String) throws {};func cle
  func _getDownloadTask(_ task:NetworkTask)->Download? { downloads.first { $0.task === task } }
  func _persistDownloads(immediately:Bool=true) { persists+=1 };func _releaseIdleBackgroundTunnel() {}
  func _markRestartRequired(_ download:Download,message:String) { download.state = .failed;download.task=nil;_stopContinuedTask(for:download,success:false) }
+ func _requestDownloadNotificationPermission() {}
+ func notify(_ download:Download) { _notifyDownloadCompleted(download) }
+ func notifyFailure(_ download:Download) { _notifyDownload(download,title:"Download failed",body:"Connection lost") }
  func start(_ download:Download) { downloads.append(download);_startDownloadExecution(for:download) }
  func process(_ download:Download)->Bool { download.state = .processing;return _ensureProcessingExecution(download,subtitle:"Processing") }
 ''']
 source=pathlib.Path('Aether/Backend/Observable/DownloadManager.swift')
-for start in ['func startDownload(', 'func pauseDownload(', 'func resumeDownload(', 'func restartDownload(', 'private func _requestResumeDataForPause(', 'private func _ensureOperationExecution(', 'private func _ensureProcessingExecution(', 'private func _startDownloadExecution(', 'private func _stopContinuedTask(']:
+for start in ['func startDownload(', 'func pauseDownload(', 'func resumeDownload(', 'func restartDownload(', 'private func _requestResumeDataForPause(', 'private func _ensureOperationExecution(', 'private func _ensureProcessingExecution(', 'private func _startDownloadExecution(', 'private func _stopContinuedTask(', 'private func _notifyDownloadCompleted(', 'private func _notifyDownload(']:
  parts.append(method(source,start))
 s=(repo/source).read_text();start=s.index('\tfunc urlSession(',s.index('\t\tdidWriteData')-100);end=s.index('\n\tfunc urlSession(',start+5)
 parts.append(s[start:end])
@@ -119,38 +131,59 @@ final class BackgroundOwnershipTests:XCTestCase {
  typealias Driver=BackgroundFixture.Driver
  @MainActor func reset() { UIApplication.shared.applicationState = .active;UIApplication.shared.fallbackAvailable=true;BGTaskScheduler.shared.reject=false }
  @MainActor func settle() async { for _ in 0..<8 { try? await Task.sleep(nanoseconds:1_000_000) } }
- @MainActor func testQuickLockDuringPersistenceKeepsNativeOwnership() async {
+ @MainActor func testQuickLockDuringPersistenceLeavesNetworkIndependent() async {
   reset();let driver=Driver(),before=BGTaskScheduler.shared.requests.count
   let d=await driver.startDownload(from:URL(string:"https://example.com/App.ipa")!)
-  XCTAssertEqual(BGTaskScheduler.shared.requests.count,before+1);XCTAssertTrue(d.task!.resumed)
-  let native=BGTaskScheduler.shared.launchLast()
+  XCTAssertEqual(BGTaskScheduler.shared.requests.count,before);XCTAssertTrue(d.task!.resumed)
+  XCTAssertFalse(BackgroundTaskManager.shared.hasExecution(for:d.id))
+  XCTAssertTrue(driver.process(d));XCTAssertEqual(BGTaskScheduler.shared.requests.count,before)
   XCTAssertTrue(BackgroundTaskManager.shared.hasExecution(for:d.id))
-  XCTAssertTrue(driver.process(d));XCTAssertEqual(BGTaskScheduler.shared.requests.count,before+1)
-  XCTAssertEqual(native.presentations.last,"Processing")
   BackgroundTaskManager.shared.stopTask(for:d.id,success:true)
-  XCTAssertEqual(native.completions,[true]);XCTAssertEqual(native.progress.fractionCompleted,1)
  }
- @MainActor func testBackgroundBytesUpdateNativeProgressAndProcessingSharesTask() async {
+ @MainActor func testBackgroundBytesUpdateWithoutNativeGrant() {
   reset();let driver=Driver(),d=Download(),network=BackgroundFixture.NetworkTask();d.task=network;driver.start(d)
-  let native=BGTaskScheduler.shared.launchLast();UIApplication.shared.applicationState = .background
+  UIApplication.shared.applicationState = .background
   driver.urlSession(driver._session,downloadTask:network,didWriteData:100,totalBytesWritten:500,totalBytesExpectedToWrite:1000)
-  XCTAssertEqual(d.bytesDownloaded,500);XCTAssertEqual(native.progress.fractionCompleted,0.35,accuracy:0.000001)
-  XCTAssertTrue(driver.process(d));d.progress=1;d.unpackageProgress=0.5
-  BackgroundTaskManager.shared.updateProgress(for:d.id,progress:d.backgroundProgress)
-  XCTAssertEqual(native.progress.fractionCompleted,0.85,accuracy:0.000001)
-  BackgroundTaskManager.shared.stopTask(for:d.id,success:true)
+  XCTAssertEqual(d.bytesDownloaded,500);XCTAssertEqual(d.progress,0.5)
+  XCTAssertFalse(BackgroundTaskManager.shared.hasExecution(for:d.id));XCTAssertFalse(network.cancelled)
  }
- @MainActor func testNativeExpirationPausesNetworkAndSavesResumeData() async {
-  reset();let driver=Driver(),d=Download(),network=BackgroundFixture.NetworkTask();d.task=network;d.bytesDownloaded=512;driver.start(d)
+ @MainActor func testUnrelatedGrantExpirationDoesNotPauseNetwork() async {
+  reset();let driver=Driver(),d=Download(),network=BackgroundFixture.NetworkTask();d.task=network;driver.start(d)
+  let manager=BackgroundTaskManager(),token=UUID().uuidString
+  XCTAssertTrue(manager.startWork(for:token,title:"Other",subtitle:"Processing",progress:0,onExpiration:{}))
   let native=BGTaskScheduler.shared.launchLast();UIApplication.shared.applicationState = .background
   native.expirationHandler?();await settle()
-  XCTAssertTrue(network.cancelled);XCTAssertEqual(d.state,.pausing);XCTAssertEqual(native.completions,[false])
-  network.pauseCallback?(Data([1,2,3]));await settle()
-  XCTAssertEqual(d.state,.paused);XCTAssertEqual(d.resumeData,Data([1,2,3]));XCTAssertNil(d.task)
+  XCTAssertFalse(network.cancelled);XCTAssertEqual(d.state,.downloading)
+ }
+ @MainActor func testCompletionNotificationSubmitsWhileBackgrounded() async {
+  reset();let driver=Driver(),d=Download();UIApplication.shared.applicationState = .background
+  let center=BackgroundFixture.UNUserNotificationCenter.current(),before=center.requests.count
+  driver.notify(d);await settle()
+  XCTAssertEqual(center.requests.count,before+1)
+  XCTAssertEqual(center.requests.last?.identifier,"Aether.download.result.\(d.id)")
+  XCTAssertEqual(center.requests.last?.content.title,"Download complete")
+  XCTAssertTrue(center.requests.last!.content.body.contains("finish importing"))
+ }
+ @MainActor func testFailureNotificationUsesSameResultIdentity() async {
+  reset();let driver=Driver(),d=Download();UIApplication.shared.applicationState = .background
+  let center=BackgroundFixture.UNUserNotificationCenter.current()
+  driver.notifyFailure(d);await settle()
+  XCTAssertEqual(center.requests.last?.identifier,"Aether.download.result.\(d.id)")
+  XCTAssertEqual(center.requests.last?.content.title,"Download failed")
+  XCTAssertEqual(center.requests.last?.content.body,"Connection lost")
+ }
+ @MainActor func testProcessingGrantReportsOnlyImportProgress() {
+  reset();let driver=Driver(),d=Download();d.progress=1;driver.start(d)
+  XCTAssertTrue(driver.process(d));let native=BGTaskScheduler.shared.launchLast()
+  XCTAssertEqual(native.progress.fractionCompleted,0)
+  d.unpackageProgress=0.5
+  BackgroundTaskManager.shared.updateProgress(for:d.id,progress:d.backgroundProgress)
+  XCTAssertEqual(native.progress.fractionCompleted,0.5)
+  BackgroundTaskManager.shared.stopTask(for:d.id,success:true)
  }
  @MainActor func testNativeExpirationDefersProcessingAndKeepsRecoverableState() async {
-  reset();let driver=Driver(),d=Download();driver.start(d);let native=BGTaskScheduler.shared.launchLast()
-  XCTAssertTrue(driver.process(d));UIApplication.shared.applicationState = .background
+  reset();let driver=Driver(),d=Download();driver.start(d);XCTAssertTrue(driver.process(d));let native=BGTaskScheduler.shared.launchLast()
+  UIApplication.shared.applicationState = .background
   native.expirationHandler?();await settle()
   XCTAssertEqual(d.state,.processing);XCTAssertTrue(d.waitingForForeground);XCTAssertEqual(native.completions,[false])
  }
@@ -264,32 +297,22 @@ final class BackgroundOwnershipTests:XCTestCase {
   let id=BGTaskScheduler.shared.requests.last!;manager.stopTask(for:token,success:true)
   XCTAssertEqual(BGTaskScheduler.shared.launch(id).completions,[true])
  }
- @MainActor func testUnknownLengthReportsBytesAndProcessingBecomesDeterminate() {
-  reset();let manager=BackgroundTaskManager(),token=UUID().uuidString
-  XCTAssertTrue(manager.startWork(for:token,title:"App",subtitle:"Downloading",progress:0,onExpiration:{}))
-  manager.updateDownloadProgress(for:token,bytesReceived:4096,totalBytes:-1,progress:0)
-  let task=BGTaskScheduler.shared.launchLast()
-  XCTAssertTrue(task.progress.isIndeterminate);XCTAssertEqual(task.progress.completedUnitCount,4096)
-  manager.updateWork(for:token,title:"App",subtitle:"Processing",progress:0.7)
-  XCTAssertFalse(task.progress.isIndeterminate);XCTAssertEqual(task.progress.fractionCompleted,0.7,accuracy:0.000001)
-  manager.stopTask(for:token,success:true)
- }
  @MainActor func testSmallProgressChangesRemainMeasurable() {
   reset();let manager=BackgroundTaskManager(),token=UUID().uuidString
   XCTAssertTrue(manager.startWork(for:token,title:"App",subtitle:"Downloading",progress:0,onExpiration:{}))
   let task=BGTaskScheduler.shared.launchLast();manager.updateProgress(for:token,progress:0.0007)
   XCTAssertEqual(task.progress.completedUnitCount,700);manager.stopTask(for:token,success:true)
  }
- @MainActor func testDeniedRequestDoesNotCreateCompetingCustomDisplay() async {
-  reset();BGTaskScheduler.shared.reject=true;let driver=Driver(),d=Download(),network=BackgroundFixture.NetworkTask();d.task=network;driver.start(d)
-  XCTAssertTrue(BackgroundTaskManager.shared.hasExecution(for:d.id))
-  let expiry=UIApplication.shared.fallback.values.first!;expiry();await settle()
-  XCTAssertTrue(network.cancelled);XCTAssertEqual(d.state,.pausing)
-  network.pauseCallback?(nil);await settle()
+ @MainActor func testSchedulerDenialDoesNotAffectDownload() {
+  reset();BGTaskScheduler.shared.reject=true;let driver=Driver(),d=Download(),network=BackgroundFixture.NetworkTask();d.task=network
+  let before=BGTaskScheduler.shared.requests.count;driver.start(d)
+  XCTAssertFalse(BackgroundTaskManager.shared.hasExecution(for:d.id))
+  XCTAssertEqual(BGTaskScheduler.shared.requests.count,before)
+  XCTAssertFalse(network.cancelled);XCTAssertEqual(d.state,.downloading)
  }
  @MainActor func testBackgroundRecoveryDoesNotSubmitNewUserRequest() {
   reset();UIApplication.shared.applicationState = .background
-  let before=BGTaskScheduler.shared.requests.count,d=Download(),driver=Driver();driver.start(d)
+  let before=BGTaskScheduler.shared.requests.count,d=Download(),driver=Driver();driver.start(d);XCTAssertTrue(driver.process(d))
   XCTAssertEqual(BGTaskScheduler.shared.requests.count,before);XCTAssertTrue(BackgroundTaskManager.shared.hasExecution(for:d.id))
   BackgroundTaskManager.shared.stopTask(for:d.id,success:true)
  }

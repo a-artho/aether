@@ -1,8 +1,8 @@
 #if !targetEnvironment(macCatalyst)
 import UIKit
 
-/// Brief execution only for saving a state transition or resume token.
-/// This never replaces the continued task that owns the download operation.
+/// Brief execution for persisting download state or submitting a completion notification.
+/// Network transfers remain owned by the background URLSession.
 @MainActor
 final class DownloadCheckpointLease {
     private var identifier: UIBackgroundTaskIdentifier = .invalid

@@ -270,6 +270,7 @@ extension HeartbeatManager {
 	}
 
 	private func _invalidateRSDTunnelLocked() {
+		rsdGeneration &+= 1
 		if let rsdHandshake {
 			rsd_handshake_free(rsdHandshake)
 		}

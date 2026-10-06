@@ -14,6 +14,16 @@ public enum AppInstallationProvenance: Equatable, Sendable {
 public enum AppInstallationProvenanceClassifier {
 	private static let appStoreSigner = "Apple iPhone OS Application Signing"
 
+	/// Profiles can only resolve apps with signing entitlements and no known origin.
+	public static func needsProvisioningProfile(_ app: AppInfo) -> Bool {
+		guard app.IsAppClip != true, app.IsDemotedApp != true,
+			app.CFBundleIdentifier != nil, classify(app) == .unknown else {
+			return false
+		}
+		return app.Entitlements?["com.apple.developer.team-identifier"]?.value as? String != nil
+			|| app.Entitlements?["application-identifier"]?.value as? String != nil
+	}
+
 	public static func classify(
 		_ app: AppInfo,
 		profiles: [ProvisioningProfileInfo] = [],

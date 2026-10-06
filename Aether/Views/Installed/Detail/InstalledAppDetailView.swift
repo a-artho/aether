@@ -9,6 +9,8 @@ import NimbleViews
 
 struct InstalledAppDetailView: View {
 	@AppStorage("Aether.controlsInHeader") private var controlsInHeader = false
+	@AppStorage("Aether.updateDayCards") private var updateDayCards = false
+	@AppStorage("Aether.storeCellAppearance") private var storeCellAppearance = 0
 	@Environment(\.dismiss) private var dismiss
 	let app: InstalledApp
 	@ObservedObject var store: InstalledAppsStore
@@ -132,14 +134,21 @@ struct InstalledAppDetailView: View {
 		if hasCheckedUpdates && !updates.isEmpty {
 			NBSection(.localized("Updates"), trailing: { updateRefreshStatus }) {
 				ForEach(InstalledAppUpdateCandidate.groupedByDate(updates)) { group in
-					SourceAppDateChip(title: updateDateTitle(group.date))
-						.padding(.vertical, 4)
-						.listRowSeparator(.hidden)
-						.listRowBackground(Color.clear)
-					ForEach(group.updates) { update in
-						SourceAppsCellView(sourceURL: update.sourceURL, source: update.repository, app: update.app,
-							showSourceBadge: true, onSelect: { selectedUpdate = update })
+					if updateDayCards {
+						updateDayCard(group)
+					} else {
+						SourceAppDateChip(title: updateDateTitle(group.date))
+							.padding(.vertical, 4)
+							.listRowSeparator(.hidden)
+							.listRowBackground(Color.clear)
+						ForEach(group.updates) { update in
+							SourceAppsCellView(sourceURL: update.sourceURL, source: update.repository, app: update.app,
+								showSourceBadge: true, onSelect: { selectedUpdate = update })
 							.accessibilityHint(update.repository.name ?? update.sourceURL.host ?? "")
+							.alignmentGuide(.listRowSeparatorLeading) { dimensions in
+								storeCellAppearance == 0 ? dimensions[.listRowSeparatorLeading] : dimensions[.leading]
+							}
+						}
 					}
 				}
 			}
@@ -167,6 +176,33 @@ struct InstalledAppDetailView: View {
 		}
 	}
 
+	private func updateDayCard(_ group: InstalledAppUpdateDateGroup) -> some View {
+		VStack(spacing: 0) {
+			Text(updateDateTitle(group.date))
+				.font(.caption.weight(.medium))
+				.foregroundStyle(.secondary)
+				.frame(maxWidth: .infinity)
+				.padding(.top, 12)
+				.padding(.bottom, 4)
+				.accessibilityAddTraits(.isHeader)
+
+			ForEach(group.updates) { update in
+				SourceAppsCellView(sourceURL: update.sourceURL, source: update.repository, app: update.app,
+					showSourceBadge: true, onSelect: { selectedUpdate = update })
+					.accessibilityHint(update.repository.name ?? update.sourceURL.host ?? "")
+					.padding(.horizontal, 16)
+					.padding(.vertical, 12)
+				if update.id != group.updates.last?.id {
+					Divider().padding(.leading, storeCellAppearance == 0 ? 84 : 16).padding(.trailing, 16)
+				}
+			}
+		}
+		.background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+		.listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+		.listRowSeparator(.hidden)
+		.listRowBackground(Color.clear)
+	}
+
 	private var updateRefreshStatus: some View {
 		SourceRefreshStatusView(
 			lastUpdated: sourcesViewModel.lastUpdated,
@@ -191,8 +227,9 @@ struct InstalledAppDetailView: View {
 			HapticManager.shared.impact()
 			selectedInformationPage = page
 		} label: {
-			Image(systemName: systemImage).foregroundStyle(.secondary)
+			Image(systemName: systemImage)
 		}
+		.tint(.primary)
 		.accessibilityLabel(page.title)
 	}
 

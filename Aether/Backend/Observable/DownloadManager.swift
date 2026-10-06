@@ -6,6 +6,7 @@
 import Combine
 import Foundation
 import UIKit
+import UserNotifications
 
 class Download: ObservableObject, Identifiable, @unchecked Sendable {
 	enum FailureAction: String, Codable, Equatable, Sendable {
@@ -30,7 +31,8 @@ class Download: ObservableObject, Identifiable, @unchecked Sendable {
 	@Published var state: State
 
 	var backgroundProgress: Double {
-		return overallProgress
+		// Native execution now represents only the local import stage.
+		return unpackageProgress
 	}
 
 	var overallProgress: Double {
@@ -43,7 +45,6 @@ class Download: ObservableObject, Identifiable, @unchecked Sendable {
 	var resumeData: Data?
 	var stagedFileName: String?
 	var lastUIProgressUpdate: TimeInterval = 0
-	var lastBackgroundProgressUpdate: TimeInterval = 0
 	var lastBackgroundDiagnosticUpdate: TimeInterval = 0
 	var lastPersistedProgressUpdate: TimeInterval = 0
 	var lastPersistedBytes: Int64 = 0
@@ -683,7 +684,10 @@ class DownloadManager: NSObject, ObservableObject {
 		}
 
 		_stopContinuedTask(for: download, success: false)
-		_persistDownloads()
+		_persistDownloads(immediately: true)
+		let name = download.sourceProvenance?.sourceAppName ?? download.fileName
+		_notifyDownload(download, title: .localized("Download failed"),
+			body: "\(name): \(error.localizedDescription)")
 	}
 
 	private func _failProcessing(_ download: Download, error: Error) {
@@ -693,7 +697,10 @@ class DownloadManager: NSObject, ObservableObject {
 		_store.removeResumeData(for: download.id)
 		download.state = .failed(error.localizedDescription, .retryProcessing)
 		_stopContinuedTask(for: download, success: false)
-		_persistDownloads()
+		_persistDownloads(immediately: true)
+		let name = download.sourceProvenance?.sourceAppName ?? download.fileName
+		_notifyDownload(download, title: .localized("Import failed"),
+			body: "\(name): \(error.localizedDescription)")
 	}
 
 	private func _failResumeAttempt(
@@ -716,7 +723,10 @@ class DownloadManager: NSObject, ObservableObject {
 		if download.resumeData != nil {
 			download.state = .failed(error.localizedDescription, .resume)
 			_stopContinuedTask(for: download, success: false)
-			_persistDownloads()
+			_persistDownloads(immediately: true)
+			let name = download.sourceProvenance?.sourceAppName ?? download.fileName
+			_notifyDownload(download, title: .localized("Download failed"),
+				body: "\(name): \(error.localizedDescription)")
 		} else {
 			_markRestartRequired(
 				download,
@@ -732,7 +742,9 @@ class DownloadManager: NSObject, ObservableObject {
 		_store.removeResumeData(for: download.id)
 		download.state = .failed(message, .restart)
 		_stopContinuedTask(for: download, success: false)
-		_persistDownloads()
+		_persistDownloads(immediately: true)
+		let name = download.sourceProvenance?.sourceAppName ?? download.fileName
+		_notifyDownload(download, title: .localized("Download failed"), body: "\(name): \(message)")
 	}
 
 	private func _confirmResume(
@@ -814,8 +826,7 @@ class DownloadManager: NSObject, ObservableObject {
 		return true
 	}
 
-	/// One foreground user request owns execution through download and processing.
-	/// On expiration the operation checkpoints and pauses; the native UI never tracks an orphan transfer.
+	/// Execution grants cover local processing only. URLSession owns network transfers.
 	@discardableResult
 	private func _ensureOperationExecution(_ download: Download, subtitle: String) -> Bool {
 		#if !targetEnvironment(macCatalyst)
@@ -823,13 +834,7 @@ class DownloadManager: NSObject, ObservableObject {
 			title: download.sourceProvenance?.sourceAppName ?? download.fileName,
 			subtitle: subtitle, progress: download.backgroundProgress) { [weak self, weak download] in
 			guard let self, let download, self._isCurrent(download) else { return }
-			guard case .processing = download.state else {
-				// Expiration includes cancellation from the native system display.
-				// Pause the transfer too, preserving the same operation state everywhere.
-				self.pauseDownload(download)
-				DebugLogManager.shared.log("Download interrupted; saving its resume position.", category: "Background", level: .notice)
-				return
-			}
+			guard case .processing = download.state else { return }
 			download.waitingForForeground = true
 			download.interruptionForegroundGeneration = self._foregroundGeneration
 			self._processingTasks[download.id]?.cancel()
@@ -857,7 +862,54 @@ class DownloadManager: NSObject, ObservableObject {
 			return
 		}
 		#if !targetEnvironment(macCatalyst)
-		_ = _ensureOperationExecution(download, subtitle: .localized("Downloading"))
+		_requestDownloadNotificationPermission()
+		#endif
+	}
+
+	#if !targetEnvironment(macCatalyst)
+	private var requestingNotificationPermission = false
+
+	private func _requestDownloadNotificationPermission() {
+		guard UIApplication.shared.applicationState == .active, !requestingNotificationPermission else { return }
+		requestingNotificationPermission = true
+		Task {
+			defer { requestingNotificationPermission = false }
+			let center = UNUserNotificationCenter.current()
+			let settings = await center.notificationSettings()
+			guard settings.authorizationStatus == .notDetermined,
+				UIApplication.shared.applicationState == .active else { return }
+			do {
+				_ = try await center.requestAuthorization(options: [.alert, .sound])
+			} catch {
+				DebugLogManager.shared.log("Download notification permission failed: \(error.localizedDescription)", category: "Download", level: .notice)
+			}
+		}
+	}
+	#endif
+
+	private func _notifyDownloadCompleted(_ download: Download) {
+		let name = download.sourceProvenance?.sourceAppName ?? download.fileName
+		_notifyDownload(download, title: .localized("Download complete"),
+			body: .localized("%@ has downloaded. Open Aether to view or finish importing it.", arguments: name))
+	}
+
+	private func _notifyDownload(_ download: Download, title: String, body: String) {
+		#if !targetEnvironment(macCatalyst)
+		let content = UNMutableNotificationContent()
+		content.title = title
+		content.body = body
+		content.sound = .default
+		let request = UNNotificationRequest(identifier: "Aether.download.result.\(download.id)", content: content, trigger: nil)
+		let checkpoint = DownloadCheckpointLease()
+		Task {
+			defer { checkpoint.end() }
+			do {
+				try await UNUserNotificationCenter.current().add(request)
+				DebugLogManager.shared.log("Download result notification submitted id=\(download.id) title=\(title).", category: "Download", level: .info)
+			} catch {
+				DebugLogManager.shared.log("Download result notification failed id=\(download.id): \(error.localizedDescription)", category: "Download", level: .notice)
+			}
+		}
 		#endif
 	}
 
@@ -920,7 +972,9 @@ extension DownloadManager: @preconcurrency URLSessionDownloadDelegate {
 			}
 			download.stagedFileName = destinationURL.lastPathComponent
 			_store.removeResumeData(for: download.id)
-			_persistDownloads()
+			download.state = .processing
+			_persistDownloads(immediately: true)
+			_notifyDownloadCompleted(download)
 			_startProcessing(download, sourceURL: destinationURL, sourceIsStable: true)
 		} catch {
 			_failTransfer(download, error: error, resumeData: nil)
@@ -960,11 +1014,6 @@ extension DownloadManager: @preconcurrency URLSessionDownloadDelegate {
 		}
 
 		#if !targetEnvironment(macCatalyst)
-		if now - download.lastBackgroundProgressUpdate >= 1 || totalBytesWritten == totalBytesExpectedToWrite {
-			download.lastBackgroundProgressUpdate = now
-			BackgroundTaskManager.shared.updateDownloadProgress(for: download.id, bytesReceived: totalBytesWritten,
-				totalBytes: totalBytesExpectedToWrite, progress: download.backgroundProgress)
-		}
 		if now - download.lastBackgroundDiagnosticUpdate >= 10 || totalBytesWritten == totalBytesExpectedToWrite {
 			download.lastBackgroundDiagnosticUpdate = now
 			DebugLogManager.shared.log("Download progress id=\(download.id) bytes=\(totalBytesWritten)/\(totalBytesExpectedToWrite) state=\(UIApplication.shared.applicationState.rawValue) native=\(BackgroundTaskManager.shared.hasNativeTask(for: download.id)) execution=\(BackgroundTaskManager.shared.hasExecution(for: download.id)).", category: "Download", level: .info)

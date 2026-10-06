@@ -10,10 +10,13 @@ import Nuke
 import IDeviceSwift
 import NimbleExtensions
 import OSLog
+import UserNotifications
 
 @main
 struct AetherApp: App {
 	@UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+	@StateObject private var installedApps = InstalledAppsStore.shared
+	@ObservedObject private var deviceConnection = DeviceConnectionManager.shared
 
 	let heartbeat = HeartbeatManager.shared
 
@@ -24,6 +27,25 @@ struct AetherApp: App {
 			VariedTabbarView()
 				.environment(\.managedObjectContext, storage.context)
 				.onOpenURL(perform: _handleURL)
+				.task(id: deviceConnection.isConnected) {
+					if deviceConnection.isConnected {
+						await installedApps.load()
+					} else {
+						installedApps.clear()
+					}
+				}
+				.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.installedAppsRefresh"))) { _ in
+					Task {
+						guard deviceConnection.isConnected else { return }
+						await installedApps.refresh(force: true)
+					}
+				}
+				.onReceive(NotificationCenter.default.publisher(for: .heartbeat)) { _ in
+					Task { await deviceConnection.reconcile() }
+				}
+				.onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+					Task { await installedApps.refreshOnForeground() }
+				}
 			.onReceive(NotificationCenter.default.publisher(for: .heartbeatInvalidHost)) { _ in
 				DispatchQueue.main.async {
 					UIAlertController.showAlertWithOk(
@@ -306,11 +328,12 @@ struct AetherApp: App {
 	}
 }
 
-class AppDelegate: NSObject, UIApplicationDelegate {
+class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
 	func application(
 		_ application: UIApplication,
 		didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
 	) -> Bool {
+		UNUserNotificationCenter.current().delegate = self
 		_createPipeline()
 		_createDocumentsDirectories()
 		ResetView.clearWorkCache()
@@ -330,6 +353,17 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 		}
 
 		DownloadManager.shared.setBackgroundEventsCompletionHandler(completionHandler)
+	}
+
+	func userNotificationCenter(
+		_ center: UNUserNotificationCenter,
+		didReceive response: UNNotificationResponse
+	) async {
+		guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+			response.notification.request.identifier.hasPrefix("Aether.download.result.") else { return }
+		await MainActor.run {
+			AppTabManager.shared.switchTo(.library)
+		}
 	}
 
 	private func _createPipeline() {

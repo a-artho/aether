@@ -9,9 +9,29 @@ import SwiftUI
 struct DownloadLibraryCellView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@ObservedObject var download: Download
+	@Environment(\.editMode) private var editMode
+	@Binding var selectedDownloadIDs: Set<String>
+
+	private var isEditing: Bool { editMode?.wrappedValue.isEditing == true }
+	private var isSelected: Bool { selectedDownloadIDs.contains(download.id) }
+
+	private func toggleSelection() {
+		if isSelected { selectedDownloadIDs.remove(download.id) }
+		else { selectedDownloadIDs.insert(download.id) }
+	}
 
 	var body: some View {
 		HStack(spacing: 18) {
+			if isEditing {
+				Button { toggleSelection() } label: {
+					Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+						.foregroundColor(isSelected ? .accentColor : .secondary)
+						.font(.title2)
+				}
+				.buttonStyle(.borderless)
+				.accessibilityLabel(String.localized("Select %@", arguments: _title))
+				.accessibilityValue(isSelected ? String.localized("Selected") : String.localized("Not Selected"))
+			}
 			_icon
 
 			LibraryRowDetails(
@@ -22,18 +42,22 @@ struct DownloadLibraryCellView: View {
 				isFailed: _isFailed
 			)
 
-			DownloadProgressButton(download: download)
+			if !isEditing { DownloadProgressButton(download: download) }
 		}
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
 			if horizontalSizeClass != .compact {
 				RoundedRectangle(cornerRadius: 18, style: .continuous)
-					.fill(Color(.quaternarySystemFill))
+					.fill(isSelected && isEditing ? Color.accentColor.opacity(0.1) : Color(.quaternarySystemFill))
 			}
 		}
+		.contentShape(Rectangle())
+		.onTapGesture { if isEditing { toggleSelection() } }
 		.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-			Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
-				DownloadManager.shared.deleteDownload(download)
+			if !isEditing {
+				Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
+					DownloadManager.shared.deleteDownload(download)
+				}
 			}
 		}
 	}

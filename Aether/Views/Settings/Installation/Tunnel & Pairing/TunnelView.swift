@@ -36,10 +36,10 @@ struct TunnelView: View {
 						backgroundColor: .green
 					)
 				}
-				.disabled(connection.state != .disconnected)
+				.disabled(connection.state != .disconnected || connection.isUpdating)
 			} footer: {
 				Text(
-					connection.state == .disconnected
+					connection.state == .disconnected && !connection.isUpdating
 						? .localized("Choose how Aether reaches this device.")
 						: .localized("Disconnect the device tunnel before changing providers.")
 				)
@@ -88,7 +88,7 @@ struct TunnelView: View {
 					.textInputAutocapitalization(.never)
 					.keyboardType(.numbersAndPunctuation)
 					.onChange(of: draftInterfaceIP) { _ in _validate() }
-					.disabled(connection.state != .disconnected)
+					.disabled(connection.state != .disconnected || connection.isUpdating)
 			}
 
 			HStack {
@@ -100,14 +100,14 @@ struct TunnelView: View {
 					.textInputAutocapitalization(.never)
 					.keyboardType(.numbersAndPunctuation)
 					.onChange(of: draftPeerIP) { _ in _validate() }
-					.disabled(connection.state != .disconnected)
+					.disabled(connection.state != .disconnected || connection.isUpdating)
 			}
 
 			Toggle(isOn: $draftAllowIntermediate) {
 				SettingsRowLabel(.localized("Allow Intermediate Addresses"), systemImage: "arrow.triangle.branch", backgroundColor: .teal)
 			}
 			.onChange(of: draftAllowIntermediate) { _ in _validate() }
-			.disabled(connection.state != .disconnected)
+			.disabled(connection.state != .disconnected || connection.isUpdating)
 
 			if let validationError {
 				Text(validationError)
@@ -132,7 +132,7 @@ struct TunnelView: View {
 						Spacer()
 					}
 				}
-				.disabled(!_isValid || isSaving || connection.state != .disconnected)
+				.disabled(!_isValid || isSaving || connection.state != .disconnected || connection.isUpdating)
 			}
 		} header: {
 			Text(.localized("Network Configuration"))
@@ -181,15 +181,21 @@ struct TunnelView: View {
 	private var _automationControls: some View {
 		Section {
 			Toggle(isOn: Binding(
-				get: { connection.isAutoTunnelLifecycleEnabled },
-				set: { connection.setAutoTunnelLifecycle($0) }
+				get: { connection.isConnectAutomaticallyEnabled },
+				set: { connection.setConnectAutomatically($0) }
 			)) {
-				SettingsRowLabel(.localized("Tunnel Lifecycle"), systemImage: "bolt.badge.automatic", backgroundColor: .blue)
+				SettingsRowLabel(.localized("Connect Automatically"), systemImage: "bolt.badge.automatic", backgroundColor: .blue)
+			}
+			Toggle(isOn: Binding(
+				get: { connection.isDisconnectWhenIdleEnabled },
+				set: { connection.setDisconnectWhenIdle($0) }
+			)) {
+				SettingsRowLabel(.localized("Disconnect When Idle"), systemImage: "moon", backgroundColor: .indigo)
 			}
 		} header: {
 			Text(.localized("Automation"))
 		} footer: {
-			Text(.localized("Turns off the tunnel in the background when no device activity needs it. (In Local mode, Aether starts the tunnel on launch regardless of this setting.)"))
+			Text(.localized("Connect Automatically connects when Aether opens or returns to the foreground in iDevice mode. Disconnect When Idle disconnects when Aether enters the background and no device operation needs the tunnel."))
 		}
 
 		Section {

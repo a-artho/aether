@@ -283,4 +283,39 @@ final class DownloadDeletionRegressionTests:XCTestCase {
  }
 }
 """)
+parts.extend([r"""
+@MainActor private final class BadgeFixture {
+ struct Request { let installRequested:Bool }
+ enum Failure:Error { case interrupted }
+ enum Status { case signing,installing,broken,completed(Result<Void,Failure>) }
+ final class Model { var status:Status = .installing }
+ var currentRequest:Request?;var queuedInstalls:[Request]=[];var viewModel:Model?=Model()
+""", method(pathlib.Path('Aether/Backend/Observable/AppInstallationManager.swift'),'private var hasCompletedSuccessfully:'),
+method(pathlib.Path('Aether/Backend/Observable/AppInstallationManager.swift'),'var pendingInstallationCount:'),r"""
+}
+final class DeviceTabBadgeTests:XCTestCase {
+ @MainActor func testPendingCountTracksQueueFailureAndCompletion() {
+  let manager=BadgeFixture()
+  XCTAssertEqual(manager.pendingInstallationCount,0)
+  manager.currentRequest = .init(installRequested:true)
+  manager.queuedInstalls=[.init(installRequested:true),.init(installRequested:true),.init(installRequested:false)]
+  XCTAssertEqual(manager.pendingInstallationCount,3)
+  manager.viewModel?.status = .broken
+  XCTAssertEqual(manager.pendingInstallationCount,3)
+  manager.viewModel?.status = .completed(.success(()))
+  XCTAssertEqual(manager.pendingInstallationCount,2)
+  manager.queuedInstalls=[]
+  XCTAssertEqual(manager.pendingInstallationCount,0)
+ }
+ @MainActor func testSignOnlyWorkDoesNotBadgeDevice() {
+  let manager=BadgeFixture()
+  manager.currentRequest = .init(installRequested:false)
+  manager.viewModel?.status = .signing
+  manager.queuedInstalls=[.init(installRequested:false)]
+  XCTAssertEqual(manager.pendingInstallationCount,0)
+  manager.queuedInstalls.append(.init(installRequested:true))
+  XCTAssertEqual(manager.pendingInstallationCount,1)
+ }
+}
+"""])
 (out/'OperationRegressionTests.swift').write_text('\n'.join(parts))

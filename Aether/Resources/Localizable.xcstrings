@@ -1,6 +1,39 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Day Group Cards" : {
+      "extractionState" : "manual"
+    },
+    "Group available updates into a card for each day in sideloaded app details." : {
+      "extractionState" : "manual"
+    },
+    "Navigation" : {
+      "extractionState" : "manual"
+    },
+    "Search on Right" : {
+      "extractionState" : "manual"
+    },
+    "Place search on the right. When an Add button is present, search appears beside it in a shared button group." : {
+      "extractionState" : "manual"
+    },
+    "Tab Bar" : {
+      "extractionState" : "manual"
+    },
+    "Hide Labels" : {
+      "extractionState" : "manual"
+    },
+    "Show only icons in the bottom tab bar." : {
+      "extractionState" : "manual"
+    },
+    "Connect Automatically" : {
+      "extractionState" : "manual"
+    },
+    "Disconnect When Idle" : {
+      "extractionState" : "manual"
+    },
+    "Connect Automatically connects when Aether opens or returns to the foreground in iDevice mode. Disconnect When Idle disconnects when Aether enters the background and no device operation needs the tunnel." : {
+      "extractionState" : "manual"
+    },
     "On-device pairing verified" : {
       "comment" : "Pairing record verification status; saved does not imply accepted by iOS.",
       "extractionState" : "manual"

@@ -8,6 +8,7 @@
 import Foundation
 import IDevice
 import UIKit
+import CryptoKit
 
 public class InstallationAppProxy: NSObject {
 	private let _heartbeat = HeartbeatManager.shared
@@ -216,90 +217,191 @@ public class InstallationAppProxy: NSObject {
 
 extension InstallationAppProxy {
 	private static let iconCache = InstalledIconCache()
-	private static var iconRequests: [String: Task<UIImage?, Error>] = [:]
+	private static let iconDiskCache = InstalledIconDiskCache()
+	private static let iconConnection = InstalledIconConnection()
+	private static var iconRequests: [String: (id: UUID, task: Task<UIImage?, Error>)] = [:]
 	private static let iconCacheQueue = DispatchQueue(label: "InstallationAppProxy.iconCache")
-	private static let iconRequestGate = InstalledIconRequestGate(limit: 3)
 
-	static public func getAppIconCached(
-		for id: String,
-		cacheVersion: String? = nil
-	) async throws -> UIImage? {
-		let cacheKey = cacheVersion.map { "\(id)|\($0)" } ?? id
-		if let cached = iconCache.image(for: cacheKey) {
-			return cached
-		}
+	static public func iconCacheRevision(for id: String) -> String {
+		UserDefaults.standard.string(forKey: "InstalledIconRevision." + id) ?? ""
+	}
 
-		let request = iconCacheQueue.sync { () -> Task<UIImage?, Error> in
-			if let existing = iconRequests[cacheKey] {
-				return existing
-			}
-			let request = Task.detached(priority: .userInitiated) {
-				try await getAppIcon(for: id)
-			}
+	static public func invalidateAppIcon(for id: String) {
+		UserDefaults.standard.set(UUID().uuidString, forKey: "InstalledIconRevision." + id)
+	}
+
+	static public func getAppIconCached(for id: String, cacheVersion: String? = nil) async throws -> UIImage? {
+		// File I/O and identity hashing never run on the UI thread.
+		let scope = await Task.detached(priority: .userInitiated) {
+			iconDiskCache.deviceScope()
+		}.value
+		let cacheKey = "\(scope)|\(id)|\(cacheVersion ?? "")|\(iconCacheRevision(for: id))"
+		if let cached = iconCache.image(for: cacheKey) { return cached }
+		let request = iconCacheQueue.sync { () -> (id: UUID, task: Task<UIImage?, Error>) in
+			if let existing = iconRequests[cacheKey] { return existing }
+			let request = (id: UUID(), task: Task.detached(priority: .userInitiated) { () throws -> UIImage? in
+				if let image = iconDiskCache.image(for: cacheKey) {
+					iconCache.insert(image, for: cacheKey)
+					return image
+				}
+				let data = try await iconConnection.iconData(for: id, scope: scope)
+				guard let image = UIImage(data: data) else { return nil }
+				iconDiskCache.store(data, for: cacheKey)
+				iconCache.insert(image, for: cacheKey)
+				return image
+			})
 			iconRequests[cacheKey] = request
 			return request
 		}
-
-		do {
-			let image = try await request.value
+		defer {
 			iconCacheQueue.sync {
-				iconRequests[cacheKey] = nil
+				if iconRequests[cacheKey]?.id == request.id { iconRequests[cacheKey] = nil }
 			}
-			if let image { iconCache.insert(image, for: cacheKey) }
-			return image
-		} catch {
-			_ = iconCacheQueue.sync { iconRequests.removeValue(forKey: cacheKey) }
-			throw error
 		}
+		return try await request.task.value
 	}
 
 	static public func getAppIcon(for id: String) async throws -> UIImage? {
-		try await Task.detached(priority: .userInitiated) {
-			await iconRequestGate.acquire()
-			defer { Task { await iconRequestGate.release() } }
+		let scope = await Task.detached { iconDiskCache.deviceScope() }.value
+		return UIImage(data: try await iconConnection.iconData(for: id, scope: scope))
+	}
+}
 
-			let heartbeat = HeartbeatManager.shared
-			var springServices: SpringBoardServicesClientHandle?
+/// SpringBoard requests are serial on one short-lived connection. Native handles
+/// are created, used and freed exclusively on this queue.
+private final class InstalledIconConnection: @unchecked Sendable {
+	private let queue = DispatchQueue(label: "InstallationAppProxy.icons", qos: .userInitiated)
+	private var client: OpaquePointer?
+	private var scope: String?
+	private var generation: UInt64?
+	private var idleClose: DispatchWorkItem?
+	private var backgroundObserver: NSObjectProtocol?
 
-			if heartbeat.isRsd {
+	init() {
+		backgroundObserver = NotificationCenter.default.addObserver(
+			forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
+		) { [weak self] _ in
+			self?.queue.async { [weak self] in self?.close() }
+		}
+	}
+
+	deinit {
+		if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+		idleClose?.cancel()
+		if let client { springboard_services_free(client) }
+	}
+
+	func iconData(for id: String, scope: String) async throws -> Data {
+		try await withCheckedThrowingContinuation { continuation in
+			queue.async {
+				self.idleClose?.cancel()
 				do {
-					try heartbeat.withRSDServiceConnection { adapter, handshake in
-						springboard_services_connect_rsd(adapter, handshake, &springServices)
+					let heartbeat = HeartbeatManager.shared
+					if self.scope != scope || self.generation != heartbeat.serviceConnectionGeneration { self.close() }
+					if self.client == nil {
+						if heartbeat.isRsd {
+							try heartbeat.withRSDServiceConnection { adapter, handshake in
+								let error = springboard_services_connect_rsd(adapter, handshake, &self.client)
+								if error == nil { self.generation = heartbeat.rsdGeneration }
+								return error
+							}
+						} else {
+							guard let provider = heartbeat.provider else { throw IDeviceConnectionError.tcpProviderUnavailable }
+							if let error = springboard_services_connect(provider, &self.client) { throw IDeviceSwiftError(error) }
+						}
+						self.scope = scope
+						if !heartbeat.isRsd { self.generation = heartbeat.serviceConnectionGeneration }
 					}
+					var bytes: UnsafeMutableRawPointer?
+					var length = 0
+					if let error = springboard_services_get_icon(self.client, id, &bytes, &length) { throw IDeviceSwiftError(error) }
+					guard let bytes else { throw IDeviceSwiftError(message: "SpringBoard returned an empty icon buffer.") }
+					defer { idevice_data_free(bytes.assumingMemoryBound(to: UInt8.self), UInt(length)) }
+					continuation.resume(returning: Data(bytes: bytes, count: length))
+					let close = DispatchWorkItem { [weak self] in self?.close() }
+					self.idleClose = close
+					self.queue.asyncAfter(deadline: .now() + 2, execute: close)
 				} catch {
-					throw IDeviceConnectionError.springboardServicesConnectionFailed(
-						error.localizedDescription
-					)
-				}
-			} else {
-				guard let provider = heartbeat.provider else {
-					throw IDeviceConnectionError.tcpProviderUnavailable
-				}
-				if let error = springboard_services_connect(provider, &springServices) {
-					let reason = IDeviceSwiftError(error).localizedDescription
-					throw IDeviceConnectionError.springboardServicesConnectionFailed(reason)
+					self.close()
+					continuation.resume(throwing: error)
 				}
 			}
-			defer { springboard_services_free(springServices) }
+		}
+	}
 
-			var outResult: UnsafeMutableRawPointer?
-			var outResultLen = 0
-			if let error = springboard_services_get_icon(
-				springServices,
-				id,
-				&outResult,
-				&outResultLen
-			) {
-				throw IDeviceSwiftError(error)
-			}
+	private func close() {
+		idleClose?.cancel()
+		idleClose = nil
+		if let client { springboard_services_free(client) }
+		client = nil
+		scope = nil
+		generation = nil
+	}
+}
 
-			guard let iconPointer = outResult else {
-				throw IDeviceSwiftError(message: "SpringBoard returned an empty icon buffer.")
+/// A disposable, bounded cache of original icon bytes, scoped to the pairing
+/// identity, endpoint and installed version/build.
+private final class InstalledIconDiskCache: @unchecked Sendable {
+	private let queue = DispatchQueue(label: "InstallationAppProxy.iconDiskCache")
+	private let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+		.appendingPathComponent("InstalledAppIcons", isDirectory: true)
+	private var identityStamp = ""
+	private var identityDigest = ""
+	private var writes = 0
+
+	func deviceScope() -> String {
+		queue.sync {
+			let path = HeartbeatManager.activePairingFile()
+			let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+			let stamp = "\(path)|\(attributes?[.modificationDate] ?? "")|\(attributes?[.creationDate] ?? "")|\(attributes?[.size] ?? "")"
+			if stamp != identityStamp {
+				identityDigest = (try? Data(contentsOf: URL(fileURLWithPath: path))).map(Self.digest) ?? UUID().uuidString
+				identityStamp = stamp
 			}
-			let bytes = iconPointer.assumingMemoryBound(to: UInt8.self)
-			defer { idevice_data_free(bytes, UInt(outResultLen)) }
-			return UIImage(data: Data(bytes: bytes, count: outResultLen))
-		}.value
+			return "\(identityDigest)|\(HeartbeatManager.shared.ipAddress)"
+		}
+	}
+
+	func image(for key: String) -> UIImage? {
+		queue.sync {
+			let url = directory.appendingPathComponent(Self.digest(Data(key.utf8)))
+			guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
+				let date = values.contentModificationDate, Date().timeIntervalSince(date) < 30 * 86400,
+				let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return nil }
+			return image
+		}
+	}
+
+	func store(_ data: Data, for key: String) {
+		queue.sync {
+			do {
+				try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+				try data.write(to: directory.appendingPathComponent(Self.digest(Data(key.utf8))), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+				// Prune once per batch, rather than scanning the directory per icon.
+				if writes % 32 == 0 { prune() }
+				writes += 1
+			} catch { /* Cache failures must not prevent displaying a fetched icon. */ }
+		}
+	}
+
+	private func prune() {
+		let files = ((try? FileManager.default.contentsOfDirectory(at: directory,
+			includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey])) ?? [])
+			.compactMap { url -> (URL, Date, Int)? in
+				guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return nil }
+				return (url, values.contentModificationDate ?? .distantPast, values.fileSize ?? 0)
+			}.sorted { $0.1 > $1.1 }
+		var bytes = 0
+		for (index, file) in files.enumerated() {
+			bytes += file.2
+			if index >= 256 || bytes > 16 * 1024 * 1024 || Date().timeIntervalSince(file.1) >= 30 * 86400 {
+				try? FileManager.default.removeItem(at: file.0)
+			}
+		}
+	}
+
+	private static func digest(_ data: Data) -> String {
+		SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 	}
 }
 
@@ -333,31 +435,5 @@ private final class InstalledIconCache: NSObject, @unchecked Sendable {
 
 	@objc private func clear() {
 		cache.removeAllObjects()
-	}
-}
-
-private actor InstalledIconRequestGate {
-	private let limit: Int
-	private var active = 0
-	private var waiters: [CheckedContinuation<Void, Never>] = []
-
-	init(limit: Int) {
-		self.limit = max(1, limit)
-	}
-
-	func acquire() async {
-		if active < limit {
-			active += 1
-			return
-		}
-		await withCheckedContinuation { waiters.append($0) }
-	}
-
-	func release() {
-		if waiters.isEmpty {
-			active = max(0, active - 1)
-		} else {
-			waiters.removeFirst().resume()
-		}
 	}
 }

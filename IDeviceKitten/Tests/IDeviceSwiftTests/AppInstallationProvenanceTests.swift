@@ -3,6 +3,35 @@ import Foundation
 import XCTest
 
 final class AppInstallationProvenanceTests: XCTestCase {
+	func testProfilesOnlyNeededForUnresolvedAppsWithSigningEvidence() throws {
+		let identity = ["application-identifier": "TEAM123456.com.example.aether"]
+		XCTAssertTrue(AppInstallationProvenanceClassifier.needsProvisioningProfile(try appInfo(entitlements: identity)))
+		XCTAssertTrue(AppInstallationProvenanceClassifier.needsProvisioningProfile(try appInfo(
+			entitlements: ["com.apple.developer.team-identifier": "TEAM123456"]
+		)))
+		XCTAssertFalse(AppInstallationProvenanceClassifier.needsProvisioningProfile(try appInfo()))
+		XCTAssertFalse(AppInstallationProvenanceClassifier.needsProvisioningProfile(try appInfo(signer: "Apple Distribution: Example", entitlements: identity)))
+		XCTAssertFalse(AppInstallationProvenanceClassifier.needsProvisioningProfile(try appInfo(signer: "Apple iPhone OS Application Signing", entitlements: identity)))
+		XCTAssertFalse(AppInstallationProvenanceClassifier.needsProvisioningProfile(try appInfo(hasSINF: true, entitlements: identity)))
+	}
+
+	func testExcludedAppsDoNotTriggerProfileFetching() throws {
+		for flags: [String: Any] in [
+			["IsAppClip": true], ["IsDemotedApp": true], ["CFBundleIdentifier": NSNull()]
+		] {
+			var plist: [String: Any] = [
+				"CFBundleIdentifier": "com.example.aether",
+				"Entitlements": ["application-identifier": "TEAM123456.com.example.aether"]
+			]
+			for (key, value) in flags {
+				if value is NSNull { plist.removeValue(forKey: key) } else { plist[key] = value }
+			}
+			let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
+			let app = try PropertyListDecoder().decode(AppInfo.self, from: data)
+			XCTAssertFalse(AppInstallationProvenanceClassifier.needsProvisioningProfile(app))
+		}
+	}
+
 	func testAppStoreSignerIsAppStore() throws {
 		let app = try appInfo(signer: "Apple iPhone OS Application Signing")
 		XCTAssertEqual(classify(app), .appStore)

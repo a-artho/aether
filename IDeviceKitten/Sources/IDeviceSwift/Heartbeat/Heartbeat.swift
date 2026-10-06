@@ -44,6 +44,12 @@ public class HeartbeatManager {
 	public var firstRun = false
 
 	let rsdConnectionLock = NSLock()
+	var rsdGeneration: UInt64 = 0
+	var serviceConnectionGeneration: UInt64 {
+		rsdConnectionLock.lock()
+		defer { rsdConnectionLock.unlock() }
+		return rsdGeneration
+	}
 	var rsdAdapter: AdapterHandle?
 	var rsdHandshake: RsdHandshakeHandle?
 	var lastSuccessfulRSDPort: UInt16?

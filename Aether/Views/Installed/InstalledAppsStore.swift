@@ -29,7 +29,7 @@ struct InstalledApp: Identifiable, Equatable, Hashable {
 	}
 
 	var id: String { bundleIdentifier }
-	var iconCacheVersion: String { "\(version ?? "")|\(build ?? "")" }
+	var iconCacheVersion: String { "\(version ?? "")|\(build ?? "")|\(InstallationAppProxy.iconCacheRevision(for: bundleIdentifier))" }
 
 	static func == (lhs: InstalledApp, rhs: InstalledApp) -> Bool {
 		lhs.bundleIdentifier == rhs.bundleIdentifier
@@ -122,8 +122,11 @@ struct InstalledApp: Identifiable, Equatable, Hashable {
 
 @MainActor
 final class InstalledAppsStore: NSObject, ObservableObject {
+	static let shared = InstalledAppsStore()
+	private var hasLoadedApps = false
 	private var needsTrailingRefresh = false
 	private var refreshGeneration = UUID()
+	private var iconPrefetchTask: Task<Void, Never>?
 	@Published private(set) var apps: [InstalledApp]
 	@Published private(set) var isLoading: Bool
 	@Published private(set) var errorMessage: String?
@@ -193,10 +196,19 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 	}
 
 	func load() async {
+		guard !hasLoadedApps else { return }
+		await refresh()
+	}
+
+	func refreshOnForeground() async {
+		guard DeviceConnectionManager.shared.isConnected else { return }
 		await refresh()
 	}
 
 	func clear() {
+		hasLoadedApps = false
+		iconPrefetchTask?.cancel()
+		iconPrefetchTask = nil
 		needsTrailingRefresh = false
 		refreshGeneration = UUID()
 		self.apps = []
@@ -211,8 +223,9 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		}
 	}
 
-	func refresh() async {
+	func refresh(force: Bool = false) async {
 		guard DeviceConnectionManager.shared.isConnected else {
+			hasLoadedApps = false
 			refreshGeneration = UUID()
 			needsTrailingRefresh = false
 			isLoading = false
@@ -226,7 +239,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			return
 		}
 		guard !isLoading else {
-			needsTrailingRefresh = true
+			needsTrailingRefresh = needsTrailingRefresh || force
 			return
 		}
 		let generation = UUID()
@@ -252,23 +265,52 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		do {
 			let installedApps = try await proxy.fetchApps(applicationType: "User")
 			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
+			// Start the first screen's icons while any fallback profiles are loading.
+			// The list never waits for this work; row requests share the same cache/task.
+			iconPrefetchTask?.cancel()
+			let confirmedApps: [AppInfo] = installedApps.filter {
+				AppInstallationProvenanceClassifier.classify($0) == .sideloaded
+			}
+			let sortedApps = confirmedApps.sorted { lhs, rhs in
+				let leftName = lhs.CFBundleDisplayName ?? lhs.CFBundleName ?? lhs.CFBundleIdentifier ?? ""
+				let rightName = rhs.CFBundleDisplayName ?? rhs.CFBundleName ?? rhs.CFBundleIdentifier ?? ""
+				return leftName.localizedCaseInsensitiveCompare(rightName) == .orderedAscending
+			}
+			let visibleCandidates = sortedApps.prefix(8)
+			iconPrefetchTask = Task {
+				for app in visibleCandidates {
+					guard !Task.isCancelled, let id = app.CFBundleIdentifier else { return }
+					_ = try? await InstallationAppProxy.getAppIconCached(
+						for: id, cacheVersion: "\(app.CFBundleShortVersionString ?? "")|\(app.CFBundleVersion ?? "")|\(InstallationAppProxy.iconCacheRevision(for: id))"
+					)
+				}
+			}
 			let profiles: [ProvisioningProfileInfo]
-			do {
-				profiles = try await proxy.provisioningProfiles()
-				DebugLogManager.shared.log(
-					"Loaded \(profiles.count) provisioning profile\(profiles.count == 1 ? "" : "s") from the device.",
-					category: "Device"
-				)
-			} catch {
+			if installedApps.contains(where: AppInstallationProvenanceClassifier.needsProvisioningProfile) {
+				do {
+					profiles = try await proxy.provisioningProfiles()
+					DebugLogManager.shared.log(
+						"Loaded \(profiles.count) provisioning profile\(profiles.count == 1 ? "" : "s") from the device.",
+						category: "Device"
+					)
+				} catch {
+					profiles = []
+					DebugLogManager.shared.log(
+						"Could not load provisioning profiles: \(error.localizedDescription)",
+						category: "Device",
+						level: .error
+					)
+				}
+			} else {
 				profiles = []
 				DebugLogManager.shared.log(
-					"Could not load provisioning profiles: \(error.localizedDescription)",
-					category: "Device",
-					level: .error
+					"Skipped provisioning profiles: no installed apps need profile-based classification.",
+					category: "Device"
 				)
 			}
 			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
 			updateApplications(with: installedApps, profiles: profiles)
+			hasLoadedApps = true
 			DebugLogManager.shared.log(
 				"Loaded \(apps.count) sideloaded app\(apps.count == 1 ? "" : "s") from the device.",
 				category: "Device"

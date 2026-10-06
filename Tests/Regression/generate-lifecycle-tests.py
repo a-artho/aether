@@ -59,17 +59,28 @@ struct Keeper { func start() {} }
 ''', method(spoof,'func stop() async'), method(spoof,'private func apply('), r'''
 }
 @MainActor final class DeviceConnectionManager { static let shared=DeviceConnectionManager(); var isConnected=true }
-struct AppInfo { var id:String }
+struct AppInfo {
+ var id:String
+ var CFBundleIdentifier:String? { id }; var CFBundleDisplayName:String? { id }
+ var CFBundleName:String? { id }; var CFBundleShortVersionString:String? { nil }; var CFBundleVersion:String? { nil }
+}
+enum AppInstallationProvenance { case unknown, sideloaded }
+enum AppInstallationProvenanceClassifier {
+ static func needsProvisioningProfile(_ app:AppInfo) -> Bool { false }
+ static func classify(_ app:AppInfo) -> AppInstallationProvenance { .unknown }
+}
 struct ProvisioningProfileInfo {}
 @MainActor final class InstallationAppProxy {
- static let gate=Gate(); static var count=0
+ static let gate=Gate(); static var count=0; static var profileCount=0
+ static func iconCacheRevision(for id:String) -> String { "" }
+ static func getAppIconCached(for id:String,cacheVersion:String?) async throws -> Data? { nil }
  func fetchApps(applicationType:String) async throws -> [AppInfo] {
   Self.count += 1; let n=Self.count
   let good=await Self.gate.wait()
   if !good { throw Failure() }
   return [AppInfo(id: "result-\(n)")]
  }
- func provisioningProfiles() async throws -> [ProvisioningProfileInfo] { [] }
+ func provisioningProfiles() async throws -> [ProvisioningProfileInfo] { Self.profileCount += 1; return [] }
 }
 @MainActor final class DebugLogManager {
  enum Level { case error, warning }
@@ -77,9 +88,10 @@ struct ProvisioningProfileInfo {}
  func log(_ message:String,category:String,level:Level = .warning) {}
 }
 @MainActor final class Store {
- var needsTrailingRefresh=false; var refreshGeneration=UUID(); var apps:[AppInfo]=[]; var isLoading=false; var errorMessage:String?
+	var hasLoadedApps=false
+ var iconPrefetchTask:Task<Void,Never>?; var needsTrailingRefresh=false; var refreshGeneration=UUID(); var apps:[AppInfo]=[]; var isLoading=false; var errorMessage:String?
  func updateApplications(with apps:[AppInfo],profiles:[ProvisioningProfileInfo]) { self.apps=apps }
-''', method(store,'func clear()'), method(store,'func refresh() async'), r'''
+''', method(store,'func load() async'), method(store,'func refreshOnForeground() async'), method(store,'func clear()'), method(store,'func refresh(force:'), r'''
 }
 @MainActor final class Cellular {
  enum State:Equatable { case idle, checkingSetup, waitingForDataOff, restoringData, establishingTransport }
@@ -155,13 +167,56 @@ final class LifecycleRegressionTests:XCTestCase {
   DeviceConnectionManager.shared.isConnected=true
   let store=Store(), first=Task { await store.refresh() }
   while InstallationAppProxy.gate.count <= initial { await Task.yield() }
-  await store.refresh(); await store.refresh()
+  await store.refresh(force:true); await store.refresh(force:true)
   InstallationAppProxy.gate.release(initial+1); await first.value
   while InstallationAppProxy.gate.count < initial+2 { await Task.yield() }
   InstallationAppProxy.gate.release(initial+2)
   while store.isLoading { await Task.yield() }
   XCTAssertEqual(store.apps.map(\.id),["result-\(initial+2)"])
   XCTAssertEqual(InstallationAppProxy.gate.count,initial+2)
+ }
+ @MainActor func testOrdinaryOverlappingRefreshesDoNotRepeatTheFetch() async {
+  let initial=InstallationAppProxy.gate.count, profiles=InstallationAppProxy.profileCount
+  DeviceConnectionManager.shared.isConnected=true
+  let store=Store(), task=Task { await store.refresh() }
+  while InstallationAppProxy.gate.count <= initial { await Task.yield() }
+  await store.refresh(); await store.refresh()
+  InstallationAppProxy.gate.release(initial+1); await task.value
+  for _ in 0..<10 { await Task.yield() }
+  XCTAssertEqual(InstallationAppProxy.gate.count,initial+1)
+  XCTAssertEqual(InstallationAppProxy.profileCount,profiles)
+  XCTAssertFalse(store.isLoading)
+ }
+ @MainActor func testLaunchLoadIsReusedUntilDisconnectEvenForAnEmptyList() async {
+  let initial=InstallationAppProxy.gate.count
+  DeviceConnectionManager.shared.isConnected=true
+  let store=Store(), launch=Task { await store.load() }
+  while InstallationAppProxy.gate.count <= initial { await Task.yield() }
+  await store.load()
+  InstallationAppProxy.gate.release(initial+1); await launch.value
+  XCTAssertTrue(store.hasLoadedApps)
+  store.apps=[]
+  await store.load()
+  XCTAssertEqual(InstallationAppProxy.gate.count,initial+1)
+  store.clear()
+  XCTAssertFalse(store.hasLoadedApps)
+  let reconnect=Task { await store.load() }
+  while InstallationAppProxy.gate.count <= initial+1 { await Task.yield() }
+  InstallationAppProxy.gate.release(initial+2); await reconnect.value
+  XCTAssertEqual(store.apps.map(\.id),["result-\(initial+2)"])
+ }
+ @MainActor func testForegroundRefreshRechecksCachedAppsAndSkipsDisconnectedDevice() async {
+  let initial=InstallationAppProxy.gate.count
+  let store=Store();store.hasLoadedApps=true;store.apps=[AppInfo(id:"old")]
+  DeviceConnectionManager.shared.isConnected=false
+  await store.refreshOnForeground();XCTAssertEqual(InstallationAppProxy.gate.count,initial)
+  DeviceConnectionManager.shared.isConnected=true
+  let task=Task { await store.refreshOnForeground() }
+  while InstallationAppProxy.gate.count <= initial { await Task.yield() }
+  await store.refreshOnForeground()
+  InstallationAppProxy.gate.release(initial+1);await task.value
+  XCTAssertEqual(store.apps.map(\.id),["result-\(initial+1)"])
+  XCTAssertEqual(InstallationAppProxy.gate.count,initial+1)
  }
  @MainActor func testDisconnectedRefreshCannotPublishAnOldReply() async {
   let initial=InstallationAppProxy.gate.count

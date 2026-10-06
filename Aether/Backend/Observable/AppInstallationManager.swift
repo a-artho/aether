@@ -50,6 +50,14 @@ final class AppInstallationManager: ObservableObject {
 		currentRequest.map { [$0] + queuedInstalls } ?? queuedInstalls
 	}
 	
+	/// Pending installation work, including a paused job awaiting Retry/Cancel.
+	/// Completed cards and sign-only jobs do not contribute to the Device badge.
+	var pendingInstallationCount: Int {
+		let queued = queuedInstalls.filter { $0.installRequested }.count
+		let current = currentRequest?.installRequested == true && !hasCompletedSuccessfully ? 1 : 0
+		return queued + current
+	}
+
 	@Published var activeApp: AppInfoPresentable?
 	@Published var viewModel: InstallerStatusViewModel?
 	@Published var installer: ServerInstaller?
@@ -148,7 +156,9 @@ final class AppInstallationManager: ObservableObject {
 		}
 	}
 
-	var hasPendingInstalls: Bool { isInstalling || !queuedInstalls.isEmpty }
+	var hasPendingInstalls: Bool {
+		isInstalling || !queuedInstalls.isEmpty || (currentRequest != nil && !hasCompletedSuccessfully)
+	}
 
 	func containsInstallation(for app: AppInfoPresentable) -> Bool {
 		let key = InstallationRequest.appKey(for: app)
@@ -540,6 +550,7 @@ final class AppInstallationManager: ObservableObject {
 			progressTask?.cancel()
 			progressTask = nil
 			if currentRequest?.installRequested == true {
+				if let id = app.identifier { InstallationAppProxy.invalidateAppIcon(for: id) }
 				NotificationCenter.default.post(name: Notification.Name("Aether.installedAppsRefresh"), object: nil)
 			}
 			_finishCompletedInstall(generation: generation)
