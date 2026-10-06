@@ -46,11 +46,6 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	}
 	
 	func prepare(copySource: Bool) async throws {
-		// Open-in-place imports retain their Files-provider scope until the private
-		// snapshot is complete; extraction then uses only Aether's own copy.
-		let source = _ipa
-		let accessing = source.startAccessingSecurityScopedResource()
-		defer { if accessing { source.stopAccessingSecurityScopedResource() } }
 		// Reserve enough room before duplicating a large archive. This avoids a
 		// needless full IPA copy only to fail during extraction.
 		try _inspectArchiveIfNeeded()

@@ -46,7 +46,9 @@ struct LibraryCellView: View {
 		if installationManager.containsInstallation(for: app) {
 			AppTabManager.shared.showInstallQueue()
 		} else {
-			installationManager.startInstall(app: app)
+			if installationManager.startInstall(app: app) {
+				HapticManager.shared.impact()
+			}
 		}
 	}
 

@@ -82,8 +82,21 @@ enum FR {
 		completion: @escaping (Error?) -> Void
 	) -> Task<Void, Never> {
 		Task.detached(priority: .utility) {
+			let diagnosticID = transactionIdentifier ?? download?.importIdentifier ?? UUID().uuidString
+			let diagnosticsEnabled = await MainActor.run { DebugLogManager.shared.isLoggingEnabled }
+			let started = Date()
+			var stage = "processing queue"
+			func log(_ message: String, level: DebugLogItem.Level = .info) async {
+				guard diagnosticsEnabled else { return }
+				await MainActor.run {
+					DebugLogManager.shared.log("[\(diagnosticID)] \(message); elapsed=\(Date().timeIntervalSince(started)), appState=\(UIApplication.shared.applicationState.rawValue).", category: "Import", level: level)
+				}
+			}
+			await log("Import requested: \(ipa.lastPathComponent); waiting for processing queue")
 			do { try await packageProcessingGate.acquire() }
 			catch {
+				let detail = error as NSError
+				await log("Import failed at \(stage): domain=\(detail.domain), code=\(detail.code), \(detail.localizedDescription)", level: .error)
 				await MainActor.run { completion(error) }
 				return
 			}
@@ -99,6 +112,8 @@ enum FR {
 			)
 			
 			do {
+				stage = "recovery"
+				await log("Processing queue acquired; checking committed import")
 				try Task.checkCancellation()
 				if try await handler.recoverCommittedImport() {
 					await MainActor.run {
@@ -106,19 +121,32 @@ enum FR {
 					}
 					return
 				}
+				stage = "prepare"
+				await log("Preparing private working copy")
 				try await handler.prepare(copySource: copySource)
 				try Task.checkCancellation()
+				stage = "extraction"
+				await log("Starting extraction")
 				try await handler.extract()
 				try Task.checkCancellation()
+				stage = "moving extracted app"
+				await log("Starting moving extracted app")
 				try await handler.move()
 				try Task.checkCancellation()
+				stage = "database commit"
+				await log("Starting database commit")
 				try await handler.addToDatabase()
 				try? await handler.clean()
+				await log("Import committed successfully")
 				await MainActor.run {
 					completion(nil)
 				}
 			} catch {
+				let detail = error as NSError
+				let underlying = detail.userInfo[NSUnderlyingErrorKey] as? NSError
+				await log("Import failed at \(stage): domain=\(detail.domain), code=\(detail.code), \(detail.localizedDescription); underlying=\(underlying.map { "\($0.domain)/\($0.code): \($0.localizedDescription)" } ?? "none")", level: .error)
 				try? await handler.clean()
+				await log("Failed import working files cleaned up")
 				await MainActor.run {
 					completion(error)
 				}

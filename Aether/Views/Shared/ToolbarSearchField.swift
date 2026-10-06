@@ -118,9 +118,10 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			.opacity(secondaryAction != nil || transition.expanded ? 1 : 0)
 			.allowsHitTesting(secondaryAction != nil || transition.expanded)
 			.highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-				guard !transition.expanded else { return }
-				secondaryURLAction?()
-			})
+				guard !transition.expanded, let secondaryURLAction else { return }
+				HapticManager.shared.impact()
+				secondaryURLAction()
+			}, including: secondaryURLAction == nil || transition.expanded ? .none : .all)
 	}
 
 	private func openSearch() {

@@ -27,6 +27,9 @@ struct AetherApp: App {
 			VariedTabbarView()
 				.environment(\.managedObjectContext, storage.context)
 				.onOpenURL(perform: _handleURL)
+				.onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+					DebugLogManager.shared.log("Aether became active; awaiting any system file handoff.", category: "Import", level: .debug)
+				}
 				.task(id: deviceConnection.isConnected) {
 					if deviceConnection.isConnected {
 						await installedApps.load()
@@ -66,6 +69,7 @@ struct AetherApp: App {
 	}
 
 	private func _handleURL(_ url: URL) {
+		DebugLogManager.shared.log("URL handoff received: scheme=\(url.scheme ?? "none"), file=\(url.isFileURL), extension=\(url.pathExtension.lowercased()), appState=\(UIApplication.shared.applicationState.rawValue).", category: "Import")
 		if url.scheme == "aether" {
 			if url.host == "cellular-assist" {
 				CellularAssistManager.shared.handleCallback(url)
@@ -296,32 +300,44 @@ struct AetherApp: App {
 				_importExternalPackage(from: url)
 				return
 			}
+			if url.isFileURL {
+				_reportExternalImportError(ExternalFileMaterializationError.unsupportedFileType)
+			}
 		}
 	}
 
+	private func _reportExternalImportError(_ error: Error) {
+		let detail = error as NSError
+		DebugLogManager.shared.log("External import failed: domain=\(detail.domain), code=\(detail.code), \(detail.localizedDescription)", category: "Import", level: .error)
+	}
+
 	private func _importExternalPackage(from externalURL: URL) {
+		AppTabManager.shared.closeSearch()
+		AppTabManager.shared.switchTo(.library)
+		let importID = UUID().uuidString
+		DebugLogManager.shared.log("[\(importID)] External package received: \(externalURL.lastPathComponent); inbox=\(externalURL.path.contains("/Inbox/")), appState=\(UIApplication.shared.applicationState.rawValue).", category: "Import")
 		Task.detached(priority: .utility) {
 			do {
 				let materializedFile = try FileManager.default.materializePackageForImport(
-					at: externalURL
-				)
-				await MainActor.run {
-					_ = FR.handlePackageFile(materializedFile.fileURL, copySource: false) { error in
-						materializedFile.cleanup()
-						if let error {
-							UIAlertController.showAlertWithOk(
-								title: .localized("Import Failed"),
-								message: error.localizedDescription
-							)
+					at: externalURL,
+					diagnostics: { message in
+						DispatchQueue.main.async {
+							DebugLogManager.shared.log("[\(importID)] \(message)", category: "Import")
 						}
 					}
+				)
+				await MainActor.run {
+					DebugLogManager.shared.log("[\(importID)] External package copied; handing off to Library processing.", category: "Import")
+					let download = DownloadManager.shared.startArchive(
+						from: materializedFile.fileURL,
+						id: "AetherManualDownload_\(importID)",
+						sourceCleanup: { materializedFile.cleanup() }
+					)
+					DownloadManager.shared.retryProcessing(download)
 				}
 			} catch {
 				await MainActor.run {
-					UIAlertController.showAlertWithOk(
-						title: .localized("Import Failed"),
-						message: error.localizedDescription
-					)
+					_reportExternalImportError(error)
 				}
 			}
 		}
@@ -334,6 +350,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 		didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
 	) -> Bool {
 		UNUserNotificationCenter.current().delegate = self
+		DebugLogManager.shared.log("App launched: bundle=\(Bundle.main.bundleIdentifier ?? "unknown"), version=\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "unknown"), launchURL=\(launchOptions?[.url] != nil).", category: "Import", level: .debug)
 		_createPipeline()
 		_createDocumentsDirectories()
 		ResetView.clearWorkCache()

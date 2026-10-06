@@ -53,7 +53,7 @@ extension FileManager {
 		return false
 	}
 
-	public func materializePackageForImport(at sourceURL: URL) throws -> MaterializedExternalFile {
+	public func materializePackageForImport(at sourceURL: URL, diagnostics: ((String) -> Void)? = nil) throws -> MaterializedExternalFile {
 		let pathExtension = sourceURL.pathExtension.lowercased()
 		guard pathExtension == "ipa" || pathExtension == "tipa" else {
 			throw ExternalFileMaterializationError.unsupportedFileType
@@ -68,6 +68,7 @@ extension FileManager {
 			: sourceURL.lastPathComponent
 		let destinationURL = directoryURL.appendingPathComponent(fileName)
 		let accessedSecurityScope = sourceURL.startAccessingSecurityScopedResource()
+		diagnostics?("Security scope acquired=\(accessedSecurityScope); an app-owned file does not require a scope.")
 		defer {
 			if accessedSecurityScope {
 				sourceURL.stopAccessingSecurityScopedResource()
@@ -79,23 +80,38 @@ extension FileManager {
 
 			var coordinationError: NSError?
 			var copyError: Error?
+			let coordinationStarted = Date()
+			diagnostics?("File coordination requested.")
 			NSFileCoordinator().coordinate(
 				readingItemAt: sourceURL,
 				options: [],
 				error: &coordinationError
 			) { readableURL in
+				diagnostics?("File coordination granted after \(Date().timeIntervalSince(coordinationStarted)) seconds; readable=\(self.isReadableFile(atPath: readableURL.path)).")
 				do {
+					let copyStarted = Date()
+					diagnostics?("Private copy started.")
 					try self.copyItem(at: readableURL, to: destinationURL)
+					diagnostics?("Private copy finished after \(Date().timeIntervalSince(copyStarted)) seconds.")
 				} catch {
 					copyError = error
 				}
 			}
 
-			if let copyError { throw copyError }
-			if let coordinationError { throw coordinationError }
+			if let copyError {
+				let error = copyError as NSError
+				diagnostics?("Private copy failed: domain=\(error.domain), code=\(error.code), \(error.localizedDescription)")
+				throw copyError
+			}
+			if let coordinationError {
+				diagnostics?("File coordination failed: domain=\(coordinationError.domain), code=\(coordinationError.code), \(coordinationError.localizedDescription)")
+				throw coordinationError
+			}
 			guard fileExists(atPath: destinationURL.path) else {
 				throw CocoaError(.fileNoSuchFile)
 			}
+			let bytes = (try? destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+			diagnostics?("Private copy verified: bytes=\(bytes).")
 			return MaterializedExternalFile(
 				fileURL: destinationURL,
 				directoryURL: directoryURL

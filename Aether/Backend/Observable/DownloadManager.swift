@@ -118,6 +118,7 @@ class DownloadManager: NSObject, ObservableObject {
 	private var _foregroundObserver: NSObjectProtocol?
 	private var _backgroundObserver: NSObjectProtocol?
 	private var _processingTasks: [String: Task<Void, Never>] = [:]
+	private var _archiveSourceCleanup: [String: @Sendable () -> Void] = [:]
 	private let _persistenceWriter = DownloadPersistenceWriter()
 	private var _persistenceRevision: UInt64 = 0
 
@@ -219,7 +220,8 @@ class DownloadManager: NSObject, ObservableObject {
 	func startArchive(
 		from url: URL,
 		id logicalIdentifier: String = UUID().uuidString,
-		sourceIsStable: Bool = true
+		sourceIsStable: Bool = true,
+		sourceCleanup: (@Sendable () -> Void)? = nil
 	) -> Download {
 		let download = Download(
 			logicalIdentifier: logicalIdentifier,
@@ -228,6 +230,7 @@ class DownloadManager: NSObject, ObservableObject {
 			sourceIsStable: sourceIsStable
 		)
 		downloads.append(download)
+		_archiveSourceCleanup[download.id] = sourceCleanup
 		_startDownloadExecution(for: download)
 		return download
 	}
@@ -326,6 +329,7 @@ class DownloadManager: NSObject, ObservableObject {
 	func deleteDownload(_ download: Download) {
 		guard _isCurrent(download) else { return }
 		let processing = _processingTasks.removeValue(forKey: download.id)
+		let sourceCleanup = _archiveSourceCleanup.removeValue(forKey: download.id)
 		processing?.cancel()
 		download.task?.cancel()
 		download.task = nil
@@ -341,6 +345,7 @@ class DownloadManager: NSObject, ObservableObject {
 		let importIdentifier = download.importIdentifier
 		Task.detached(priority: .utility) {
 			await processing?.value
+			sourceCleanup?()
 			await AppFileHandler.removeImportTransaction(
 				transactionIdentifier: importIdentifier
 			)
@@ -649,6 +654,9 @@ class DownloadManager: NSObject, ObservableObject {
 		#endif
 		_stopContinuedTask(for: download, success: true)
 		_store.cleanupArtifacts(for: download)
+		if let sourceCleanup = _archiveSourceCleanup.removeValue(forKey: download.id) {
+			Task.detached(priority: .utility) { sourceCleanup() }
+		}
 
 		if let index = downloads.firstIndex(where: { $0.id == download.id }) {
 			downloads.remove(at: index)

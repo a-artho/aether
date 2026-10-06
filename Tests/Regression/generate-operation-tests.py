@@ -253,7 +253,7 @@ parts.append(r"""
  enum AppFileHandler { static var removed:[String]=[]; static func removeImportTransaction(transactionIdentifier:String) async { removed.append(transactionIdentifier) } }
  struct Store { func cleanupArtifacts(for download:Download) {} }
  final class Manager {
-  var downloads:[Download]=[]; var _processingTasks:[String:Task<Void,Never>]=[:]; let _store=Store(); var stopped=0
+  var downloads:[Download]=[]; var _processingTasks:[String:Task<Void,Never>]=[:]; var _archiveSourceCleanup:[String:@Sendable ()->Void]=[:]; let _store=Store(); var stopped=0
   func _isCurrent(_ download:Download)->Bool { downloads.contains { $0 === download } }
   func _stopContinuedTask(for download:Download,success:Bool) { stopped+=1 }
   func _persistDownloads() {}; func _releaseIdleBackgroundTunnel() {}
@@ -261,6 +261,11 @@ parts.append(r"""
 parts.append(method(pathlib.Path('Aether/Backend/Observable/DownloadManager.swift'),'func deleteDownload('))
 parts.append(r"""
  }
+}
+private final class ImportSourceCleanupProbe: @unchecked Sendable {
+ private let lock=NSLock(); private var count=0
+ var cleanups:Int { lock.lock(); defer { lock.unlock() }; return count }
+ func cleanup() { lock.lock(); count+=1; lock.unlock() }
 }
 final class DownloadDeletionRegressionTests:XCTestCase {
  @MainActor func testDeletionWaitsForWorkerAndReleasesExecution() async {
@@ -271,14 +276,19 @@ final class DownloadDeletionRegressionTests:XCTestCase {
    let worker=Task { _=await gate.wait() }
    while gate.count==0 { await Task.yield() }
    manager._processingTasks[download.id]=worker
+   let source=ImportSourceCleanupProbe()
+   manager._archiveSourceCleanup[download.id]={ source.cleanup() }
    manager.deleteDownload(download)
    XCTAssertTrue(worker.isCancelled); XCTAssertTrue(manager.downloads.isEmpty)
    XCTAssertEqual(manager.stopped,1)
    for _ in 0..<20 { await Task.yield() }
    XCTAssertTrue(DownloadDeletionFixture.AppFileHandler.removed.isEmpty)
+   XCTAssertEqual(source.cleanups,0)
    gate.release(1); await worker.value
    while DownloadDeletionFixture.AppFileHandler.removed.isEmpty { await Task.yield() }
    XCTAssertEqual(DownloadDeletionFixture.AppFileHandler.removed,[download.importIdentifier])
+   XCTAssertEqual(source.cleanups,1)
+   XCTAssertTrue(manager._archiveSourceCleanup.isEmpty)
   }
  }
 }
