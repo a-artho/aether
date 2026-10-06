@@ -17,6 +17,8 @@ struct LibraryView: View {
 	@State private var _selectedInfoAppPresenting: AnyApp?
 	@State private var _selectedSigningAppPresenting: AnyApp?
 	@State private var _isImportingPresenting = false
+	@State private var _isDownloadingPresenting = false
+	@State private var _downloadURLText = ""
 	@State private var _isDeleteAllAlertPresented = false
 
 	// MARK: Selection State
@@ -30,6 +32,13 @@ struct LibraryView: View {
 	@ObservedObject private var tabManager = AppTabManager.shared
 
 	@Environment(\.accessibilityReduceMotion) private var _reduceMotion
+
+	private var _manualDownloadURL: URL? {
+		guard let url = URL(string: _downloadURLText.trimmingCharacters(in: .whitespacesAndNewlines)),
+			let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+			let host = url.host, !host.isEmpty else { return nil }
+		return url
+	}
 
 	private enum LibrarySection: String, Identifiable {
 		case exports, downloads, signed, imported
@@ -194,7 +203,8 @@ struct LibraryView: View {
 				text: $_searchText, isPresented: $tabManager.isLibrarySearchPresented,
 				focus: $_isSearchFocused, title: .localized("Library"), width: _toolbarWidth,
 				enabled: !_editMode.isEditing,
-				secondaryAction: { _isImportingPresenting = true }
+				secondaryAction: { _isImportingPresenting = true },
+				secondaryURLAction: { _downloadURLText = ""; _isDownloadingPresenting = true }
 			) { _titleMenuActions() })
 
 			.environment(\.editMode, $_editMode)
@@ -224,6 +234,21 @@ struct LibraryView: View {
 					}
 				)
 				.ignoresSafeArea()
+			}
+			.alert(.localized("Import from URL"), isPresented: $_isDownloadingPresenting) {
+				TextField(.localized("URL"), text: $_downloadURLText)
+					.textInputAutocapitalization(.never)
+					.autocorrectionDisabled()
+					.keyboardType(.URL)
+				Button(.localized("Cancel"), role: .cancel) { _downloadURLText = "" }
+				Button(.localized("Download")) {
+					guard let url = _manualDownloadURL else { return }
+					_downloadURLText = ""
+					Task { _ = await downloadManager.startDownload(from: url, id: "AetherManualDownload_\(UUID().uuidString)") }
+				}
+				.disabled(_manualDownloadURL == nil)
+			} message: {
+				Text(.localized("Enter a direct HTTP or HTTPS link to an IPA file."))
 			}
 			.alert(.localized("Delete All Apps?"), isPresented: $_isDeleteAllAlertPresented) {
 				Button(.localized("Cancel"), role: .cancel) {}

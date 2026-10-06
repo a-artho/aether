@@ -16,6 +16,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	var secondarySymbol = "plus"
 	var secondaryLabel = String.localized("Add")
 	var secondaryAction: (() -> Void)?
+	var secondaryURLAction: (() -> Void)? = nil
 	@ViewBuilder var titleMenu: () -> MenuContent
 	@StateObject private var transition = SearchToolbarTransition()
 	@State private var searchButtonFrame: CGRect = .zero
@@ -116,6 +117,10 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			.accessibilityLabel(transition.expanded ? .localized("Cancel") : secondaryLabel)
 			.opacity(secondaryAction != nil || transition.expanded ? 1 : 0)
 			.allowsHitTesting(secondaryAction != nil || transition.expanded)
+			.highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+				guard !transition.expanded else { return }
+				secondaryURLAction?()
+			})
 	}
 
 	private func openSearch() {

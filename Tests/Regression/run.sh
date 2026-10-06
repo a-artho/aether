@@ -6,7 +6,6 @@ scratch="$(mktemp -d "${TMPDIR:-/tmp}/aether-regression.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/Sources/Core" "$scratch/Tests/RegressionTests"
 cp "$test_dir/Package.swift" "$scratch/Package.swift"
-cp "$repo_root/Aether/Utilities/Handlers/SafeIPAArchive.swift" "$scratch/Sources/Core/"
 cp "$repo_root/Aether/Utilities/ServerInstallProgress.swift" "$scratch/Sources/Core/"
 cp "$repo_root/Aether/Extensions/FileManager+clone.swift" "$scratch/Sources/Core/"
 cp "$repo_root/Aether/Utilities/TaskCancellationRelay.swift" "$scratch/Sources/Core/"

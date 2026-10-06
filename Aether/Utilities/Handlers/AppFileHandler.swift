@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import Zip
+import ZIPFoundation
 import SwiftUI
 
 final class AppFileHandler: NSObject, @unchecked Sendable {
@@ -21,7 +23,6 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	private var _archiveInspection: ArchiveInspection?
 
 	private struct ArchiveInspection {
-		let entryCount: Int
 		let uncompressedBytes: Int64
 	}
 
@@ -45,14 +46,18 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	}
 	
 	func prepare(copySource: Bool) async throws {
+		// Open-in-place imports retain their Files-provider scope until the private
+		// snapshot is complete; extraction then uses only Aether's own copy.
+		let source = _ipa
+		let accessing = source.startAccessingSecurityScopedResource()
+		defer { if accessing { source.stopAccessingSecurityScopedResource() } }
 		// Reserve enough room before duplicating a large archive. This avoids a
 		// needless full IPA copy only to fail during extraction.
 		try _inspectArchiveIfNeeded()
 		try _checkAvailableDiskSpace()
 		try _fileManager.removeFileIfNeeded(at: _uniqueWorkDir)
 		try _fileManager.createDirectoryIfNeeded(at: _uniqueWorkDir)
-		// Snapshot even staged inputs so validation and extraction cannot observe
-		// different bytes. APFS clones keep this inexpensive.
+		// Snapshot staged inputs before extraction. APFS clones keep this inexpensive.
 		
 		let destinationURL = _uniqueWorkDir.appendingPathComponent("Input.ipa")
 
@@ -69,17 +74,20 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		try _inspectArchiveIfNeeded()
 		try _checkAvailableDiskSpace()
 
+		Zip.addCustomFileExtension("ipa")
 		let download = self._download
 		
 		let worker = Task.detached(priority: .utility) {
 			let progressLock = NSLock()
 			var lastProgressUpdate = Date.distantPast
 			var lastReportedProgress = 0.0
-			try SafeIPAArchive.extract(
+			try Zip.unzipFile(
 				self._ipa,
-				to: self._uniqueWorkDir.appendingPathComponent("Extracted"),
+				destination: self._uniqueWorkDir.appendingPathComponent("Extracted"),
+				overwrite: true,
+				password: nil,
 				progress: { progress in
-					if let download = download {
+					if let download = download, !Task.isCancelled {
 						progressLock.lock()
 						let now = Date()
 						let shouldReport = now.timeIntervalSince(lastProgressUpdate) >= 0.125
@@ -226,8 +234,15 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 
 	private func _inspectArchiveIfNeeded() throws {
 		guard _archiveInspection == nil else { return }
-		let inspection = try SafeIPAArchive.inspect(_ipa)
-		_archiveInspection = ArchiveInspection(entryCount: inspection.entries, uncompressedBytes: Int64(inspection.bytes))
+		let archive = try Archive(url: _ipa, accessMode: .read)
+		var bytes: Int64 = 0
+		for entry in archive {
+			try Task.checkCancellation()
+			let size = Int64(clamping: entry.uncompressedSize)
+			let sum = bytes.addingReportingOverflow(size)
+			bytes = sum.overflow ? Int64.max : sum.partialValue
+		}
+		_archiveInspection = ArchiveInspection(uncompressedBytes: bytes)
 	}
 
 }
@@ -236,7 +251,6 @@ private enum ImportedFileHandlerError: LocalizedError {
 	case payloadNotFound
 	case appBundleNotFound
 	case insufficientDiskSpace(required: Int64, available: Int64)
-	case unsafeArchive(String)
 
 	var errorDescription: String? {
 		switch self {
@@ -246,8 +260,6 @@ private enum ImportedFileHandlerError: LocalizedError {
 			return "The archive does not contain an application bundle."
 		case .insufficientDiskSpace(let required, let available):
 			return "Not enough free space to import this IPA. Aether needs about \(required.formattedByteCount), but \(available.formattedByteCount) is available."
-		case .unsafeArchive(let message):
-			return message
 		}
 	}
 }

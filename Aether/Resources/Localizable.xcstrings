@@ -78,9 +78,7 @@
       "comment" : "App list section for updates dated yesterday",
       "extractionState" : "manual"
     },
-    "%@%%" : {
-
-    },
+    "%@%%" : {},
     "%lld Apps" : {
       "comment" : "Repository app count",
       "extractionState" : "manual",
@@ -18063,6 +18061,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "配对文件不可用并且与设备不匹配，请导入可用的的配置文件。"
+          }
+        }
+      }
+    },
+    "Enter a direct HTTP or HTTPS link to an IPA file." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a direct HTTP or HTTPS link to an IPA file."
           }
         }
       }
