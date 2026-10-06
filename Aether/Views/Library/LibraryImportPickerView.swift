@@ -18,9 +18,9 @@ struct LibraryImportPickerView: UIViewControllerRepresentable {
 			forOpeningContentTypes: [.ipa, .tipa],
 			asCopy: true
 		)
-		DebugLogManager.shared.log("Library file picker created: copy-based import, IPA/TIPA, multiple selection.", category: "Import", level: .debug)
+		DebugLogManager.shared.log("Library file picker created: copy-based import, IPA/TIPA, single selection.", category: "Import", level: .debug)
 		picker.delegate = context.coordinator
-		picker.allowsMultipleSelection = true
+		picker.allowsMultipleSelection = false
 		return picker
 	}
 
