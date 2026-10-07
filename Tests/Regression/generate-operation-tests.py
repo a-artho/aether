@@ -227,7 +227,9 @@ enum TLSFixture {
  final class Server {
   static let env=1; let serverMethod:Int; let commonName:String?; let certificate:Int?; var parseFails=false
   init(_ method:Int,_ name:String?,_ certificate:Int?) { serverMethod=method; commonName=name; self.certificate=certificate }
-  func tls() throws -> Int? { if parseFails { throw NSError(domain:"Parse",code:1) }; return certificate }
+  struct LocalServerTLSMaterial { let certificate:Int }
+  enum LocalServerCertificates { enum Failure:Error { case setupRequired } }
+  func tls(material:LocalServerTLSMaterial) throws -> Int { if parseFails { throw NSError(domain:"Parse",code:1) }; return material.certificate }
   func readCommonName()->String? { commonName }; func sni()->String { commonName ?? "127.0.0.1" }
 """)
 parts.append(method(pathlib.Path('Aether/Backend/Server/ServerInstaller.swift'),'func getServerMethod()'))
@@ -237,18 +239,17 @@ parts.append(r"""
 }
 final class TLSRegressionTests:XCTestCase {
  func testFullyLocalFailsClosedAndSemiLocalPreservesHTTP() throws {
-  for fixture in [(nil as String?,nil as Int?), ("local.test",nil), ("",1)] {
-   TLSFixture.Application.shutdowns=0
-   XCTAssertThrowsError(try TLSFixture.Server(0,fixture.0,fixture.1).setupApp(port:1234))
-   XCTAssertEqual(TLSFixture.Application.shutdowns,1)
-  }
+  TLSFixture.Application.shutdowns=0
+  XCTAssertThrowsError(try TLSFixture.Server(0,nil,nil).setupApp(port:1234,localTLS:nil))
+  XCTAssertEqual(TLSFixture.Application.shutdowns,1)
   TLSFixture.Application.shutdowns=0
   let parse=TLSFixture.Server(0,"local.test",1); parse.parseFails=true
-  XCTAssertThrowsError(try parse.setupApp(port:1234)); XCTAssertEqual(TLSFixture.Application.shutdowns,1)
-  let secure=try TLSFixture.Server(0,"local.test",1).setupApp(port:1234)
+  let material=TLSFixture.Server.LocalServerTLSMaterial(certificate:1)
+  XCTAssertThrowsError(try parse.setupApp(port:1234,localTLS:material)); XCTAssertEqual(TLSFixture.Application.shutdowns,1)
+  let secure=try TLSFixture.Server(0,"local.test",1).setupApp(port:1234,localTLS:material)
   XCTAssertEqual(secure.http.server.configuration.tlsConfiguration,1)
   XCTAssertEqual(secure.http.server.configuration.port,1234); secure.shutdown()
-  let plain=try TLSFixture.Server(1,nil,nil).setupApp(port:1234)
+  let plain=try TLSFixture.Server(1,nil,nil).setupApp(port:1234,localTLS:nil)
   XCTAssertNil(plain.http.server.configuration.tlsConfiguration); plain.shutdown()
  }
 }
