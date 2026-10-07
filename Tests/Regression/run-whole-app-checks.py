@@ -100,10 +100,23 @@ func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
  func _log(_ text:String,level:Level){}
 '''
 s += declaration('Aether/Backend/Observable/DeviceConnectionManager.swift','private func _publishVerifiedTransport(').replace('private func','func',1)+'\n}\n'
+library = (repo/'Aether/Views/Library/LibraryView.swift').read_text()
+prelude = library[library.index('let signedApps = _filteredSignedApps'):library.index('NBNavigationView(.localized("Library")')]
+s += r'''
+struct LibrarySearchFixture {
+ enum LibrarySection {case exports,downloads,signed,imported}
+ var _searchText="query"
+ var _filteredSignedApps:[Int]=[];var _filteredImportedApps:[Int]=[];var _filteredExports:[Int]=[];var _filteredDownloads:[Int]=[]
+ func results()->(Int,Bool) {
+''' + prelude + 'return (sections.count,searchHasNoResults)\n}\n}\n'
 s += r'''
 func check(_ value:@autoclosure ()->Bool,_ message:String){precondition(value(),message)}
 @main struct Checks {
  @MainActor static func main() async throws {
+  let empty=LibrarySearchFixture().results()
+  check(empty.0==0 && empty.1,"No-results placeholder uses the filtered section membership")
+  var searched=LibrarySearchFixture();searched._filteredDownloads=[1]
+  check(!searched.results().1,"Matching download suppresses no-results placeholder")
   let readiness=ReadyDriver(), verificationID=UUID(), record=PairingRecordIdentity(id:"one")
   readiness.activeVerificationID=verificationID;readiness.currentRecord=record
   readiness._publishVerifiedTransport(verificationID:UUID(),generation:nil,record:record,cellularAssistTransaction:false,startedAt:0)

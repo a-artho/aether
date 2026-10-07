@@ -106,6 +106,7 @@ struct LibraryView: View {
 			signedApps.isEmpty ? nil : .signed,
 			importedApps.isEmpty ? nil : .imported
 		].compactMap { $0 }
+		let searchHasNoResults = !_searchText.isEmpty && sections.isEmpty
 
 		NBNavigationView(.localized("Library"), displayMode: .inline) {
 			NBListAdaptable {
