@@ -642,15 +642,16 @@ public final class DeviceConnectionManager: ObservableObject {
 		let verificationID = UUID()
 		activeVerificationID = verificationID
 		defer { if activeVerificationID == verificationID { activeVerificationID = nil } }
-		let verification = Task.detached(priority: .userInitiated) { [weak self] in
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, includeApps: includeApps, legacySocketAlreadyVerified: !isRsd, onVerified: {
-				guard includeApps else { return }
-				Task { @MainActor [weak self] in
-					self?._publishVerifiedTransport(verificationID: verificationID,
-						generation: reconciliationGeneration, record: checkedRecord,
-						cellularAssistTransaction: cellularAssistTransaction, startedAt: verificationStarted)
-				}
-			})
+		let publishReadiness: @Sendable () -> Void = { [weak self] in
+			guard includeApps, let manager = self else { return }
+			Task { @MainActor [weak manager] in
+				manager?._publishVerifiedTransport(verificationID: verificationID,
+					generation: reconciliationGeneration, record: checkedRecord,
+					cellularAssistTransaction: cellularAssistTransaction, startedAt: verificationStarted)
+			}
+		}
+		let verification = Task.detached(priority: .userInitiated) {
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, includeApps: includeApps, legacySocketAlreadyVerified: !isRsd, onVerified: publishReadiness)
 		}
 		if includeApps {
 			InstalledAppsStore.shared.stageInitialBrowse(Task { await verification.value.apps })

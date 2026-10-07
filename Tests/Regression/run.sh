@@ -40,3 +40,6 @@ p.write_text(s)
 PYZIP
 fi
 swift test --package-path "$scratch"
+for check in run-audit-fix-checks.py run-efficiency-checks.py run-device-loading-checks.py run-installed-loading-checks.py run-whole-app-checks.py; do
+  python3 "$test_dir/$check"
+done

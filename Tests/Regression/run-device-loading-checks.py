@@ -68,13 +68,26 @@ IdeviceFfiError *tunnel_create_rppairing(const idevice_sockaddr*a,socklen_t n,co
 }
 void rp_pairing_file_free(RpPairingFileHandle*p){}void rsd_handshake_free(RsdHandshakeHandle*p){}void adapter_free(AdapterHandle*p){}
 """
-swift='import Foundation\nimport NativeDevice\n'
+proxy_source=(repo/'IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/InstallationAppProxy.swift').read_text()
+# Preserve production imports that are available on macOS, so missing OSLog imports fail.
+imports='\n'.join(line for line in proxy_source.splitlines() if line.startswith('import ') and line not in ['import IDevice','import UIKit'])+'\nimport NativeDevice\n'
+header += r'''
+typedef struct MisagentClientHandle MisagentClientHandle;
+IdeviceFfiError *misagent_copy_all(MisagentClientHandle*,uint8_t***,size_t**,size_t*);
+void misagent_free_profiles(uint8_t**,size_t*,size_t);void misagent_client_free(MisagentClientHandle*);void installation_proxy_client_free(InstallationProxyClientHandle*);
+'''
+c += r'''
+IdeviceFfiError *misagent_copy_all(MisagentClientHandle*c,uint8_t***p,size_t**sizes,size_t*n){
+ if(code)return failure();*n=1;*p=malloc(sizeof(uint8_t*));(*p)[0]=malloc(length);memcpy((*p)[0],fixture,length);*sizes=malloc(sizeof(size_t));(*sizes)[0]=length;return NULL;
+}
+void misagent_free_profiles(uint8_t**p,size_t*s,size_t n){for(size_t i=0;i<n;i++)free(p[i]);free(p);free(s);}
+void misagent_client_free(MisagentClientHandle*c){}void installation_proxy_client_free(InstallationProxyClientHandle*c){}
+'''
+swift=imports
 swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/IDeviceSwiftError.swift','public struct IDeviceSwiftError')+'\n'
 swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/IDeviceSwiftError.swift','enum IDeviceConnectionError')+'\n'
 swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/Heartbeat/PairingVerification.swift','public struct DeviceConnectionCheck')+'\n'
 swift+='''public struct AppInfo: Codable { let CFBundleIdentifier: String?; let CFBundleDisplayName: String? }
-struct Log {func debug(_ s: String) {}; func error(_ s: String) {} }
-enum Logger {static let heartbeat=Log()}
 class InstallationAppProxy {
 '''
 for start in ['static func readApps(','private static func decodeApps(']: swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/InstallationAppProxy.swift',start)+'\n'
@@ -164,8 +177,46 @@ print("Device loading ABI/pairing/RSD checks passed")
 '''
 with tempfile.TemporaryDirectory(prefix='aether-device-loading-') as directory:
  root=pathlib.Path(directory)
- (root/'Device.h').write_text(header);(root/'Device.c').write_text(c);(root/'Checks.swift').write_text(swift)
+ (root/'Device.h').write_text(header);(root/'Device.c').write_text(c);(root/'main.swift').write_text(swift)
+ (root/'Logging.swift').write_text('import OSLog\nextension Logger { static let heartbeat = Logger(subsystem: "aether.regression", category: "Heartbeat") }')
  (root/'module.modulemap').write_text('module NativeDevice { header "Device.h" export * }')
  subprocess.run(['clang','-c',str(root/'Device.c'),'-o',str(root/'Device.o')],check=True)
- subprocess.run(['swiftc','-I',str(root),str(root/'Checks.swift'),str(root/'Device.o'),'-o',str(root/'checks')],check=True)
+ subprocess.run(['swiftc','-I',str(root),str(root/'main.swift'),str(root/'Logging.swift'),str(root/'Device.o'),'-o',str(root/'checks')],check=True)
  subprocess.run([str(root/'checks')],check=True)
+
+ # Compile the actual app/profile models and both detached reader workers together.
+ reader=imports+declaration('IDeviceKitten/Sources/IDeviceSwift/IDeviceSwiftError.swift','public struct IDeviceSwiftError')+'\n'
+ for model in ['InstallationProxy/Models/AppInfo.swift','InstallationProxy/Models/ProvisioningProfileInfo.swift','Utilties/AnyCodable.swift']:
+  reader+=(repo/'IDeviceKitten/Sources/IDeviceSwift'/model).read_text()+'\n'
+ reader+='class InstallationAppProxy {\n typealias InstallationProxyClientHandle=OpaquePointer; typealias MisagentClientHandle=OpaquePointer\n'
+ reader+='func _connectInstallationProxy(client: inout OpaquePointer?) throws {client=OpaquePointer(bitPattern:1)}\nfunc _connectMisagent(client: inout OpaquePointer?) throws {client=OpaquePointer(bitPattern:1)}\n'
+ reader+=declaration('IDeviceKitten/Sources/IDeviceSwift/Heartbeat/PairingVerification.swift','public struct DeviceConnectionCheck')+'\n'
+ for start in ['public func fetchApps(', 'static func readApps(', 'private static func decodeApps(', 'public func provisioningProfiles(']:
+  reader+=declaration('IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/InstallationAppProxy.swift',start)+'\n'
+ reader+='}\n'
+ reader+=r'''@main struct ReaderChecks {
+ static func main() async throws {
+  let bytes=try PropertyListSerialization.data(fromPropertyList:["CFBundleIdentifier":"fixture.app","CFBundleDisplayName":"Fixture"],format:.binary,options:0)
+  bytes.withUnsafeBytes {mock_set_fixture($0.baseAddress!.assumingMemoryBound(to:CChar.self),UInt32(bytes.count))}
+  mock_set_error(0,0)
+  let proxy=InstallationAppProxy()
+  let apps=try await proxy.fetchApps(applicationType:"User",lightweight:true)
+  precondition(apps.count==1 && apps[0].CFBundleIdentifier=="fixture.app")
+  let profile=try PropertyListSerialization.data(fromPropertyList:["Entitlements":["application-identifier":"TEAM.fixture.app"],"ExpirationDate":Date(timeIntervalSince1970:2000000000)],format:.binary,options:0)
+  profile.withUnsafeBytes {mock_set_fixture($0.baseAddress!.assumingMemoryBound(to:CChar.self),UInt32(profile.count))}
+  let profiles=try await proxy.provisioningProfiles()
+  precondition(profiles.count==1 && profiles[0].applicationIdentifier=="TEAM.fixture.app")
+  let bad=Data("malformed profile".utf8)
+  bad.withUnsafeBytes {mock_set_fixture($0.baseAddress!.assumingMemoryBound(to:CChar.self),UInt32(bad.count))}
+  let invalid=try await proxy.provisioningProfiles()
+  precondition(invalid.isEmpty)
+  mock_set_error(103,5)
+  do {_ = try await proxy.provisioningProfiles();preconditionFailure("Pair rejection swallowed")}
+  catch let error as IDeviceSwiftError {precondition(error.code==103 && error.subCode==5)}
+  print("Production native app/profile reader checks passed")
+ }
+}
+'''
+ (root/'Readers.swift').write_text(reader)
+ subprocess.run(['swiftc','-parse-as-library','-I',str(root),str(root/'Readers.swift'),str(root/'Logging.swift'),str(root/'Device.o'),'-o',str(root/'readers')],check=True)
+ subprocess.run([str(root/'readers')],check=True)

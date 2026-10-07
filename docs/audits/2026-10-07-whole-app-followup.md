@@ -91,3 +91,9 @@ All nine actionable findings above now have targeted changes:
 The obsolete package-cache diagnostic paragraph was corrected. No AFC packet sizing, acknowledgement, or encryption behavior was changed; those were measurement-dependent opportunities rather than validated defects.
 
 Validation: six focused regression scripts passed, including new restoration, cancellation, partial-browse, deletion rollback, source-index invalidation, search, and connection ownership cases. Changed Swift files passed parser checks. Full XCTest/iOS build and real-device latency, background-relaunch, and Dynamic Type rendering remain unverified on this host because Xcode/iOS SDK are unavailable. No release or push was performed.
+
+## Release preflight follow-up
+
+Two complete GitHub build logs exposed missing production logging imports/result type annotations in the native reader and a missing Library no-results binding. These are corrected. The expanded native preflight now compiles actual app/profile models and detached reader methods against OSLog and a mock C ABI, exercising valid/malformed profile responses and pairing failures. Library preflight compiles the actual section-selection prelude. The connection readiness callback also passes Swift 6 type checking with warnings treated as errors; its existing verification-generation guards remain intact.
+
+All six focused local suites pass. The existing release test entry point now runs the five expanded suites after XCTest, so these checks execute on GitHub without changing workflow permissions. Full iOS build validation remains required; local parser/fixture checks are not a substitute for it.
