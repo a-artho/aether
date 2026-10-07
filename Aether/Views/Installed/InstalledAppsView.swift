@@ -238,7 +238,6 @@ struct InstalledAppsView: View {
 	}
 
 	private var _sideloadedSection: some View {
-	case .sideloaded:
 		NBSection(
 			.localized("Sideloaded"),
 			secondary: store.apps.count.description
