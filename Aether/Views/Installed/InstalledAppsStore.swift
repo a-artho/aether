@@ -124,6 +124,9 @@ struct InstalledApp: Identifiable, Equatable, Hashable {
 final class InstalledAppsStore: NSObject, ObservableObject {
 	static let shared = InstalledAppsStore()
 	private var hasLoadedApps = false
+	private var lastLoadedAt: Date?
+	private var verifiedApps: [AppInfo]?
+	private var initialBrowse: Task<[AppInfo]?, Never>?
 	private var needsTrailingRefresh = false
 	private var refreshGeneration = UUID()
 	private var iconPrefetchTask: Task<Void, Never>?
@@ -200,12 +203,24 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		await refresh()
 	}
 
+	func stageVerifiedApps(_ apps: [AppInfo]) { verifiedApps = apps }
+
+	func stageInitialBrowse(_ task: Task<[AppInfo]?, Never>) {
+		initialBrowse?.cancel()
+		initialBrowse = task
+	}
+
 	func refreshOnForeground() async {
 		guard DeviceConnectionManager.shared.isConnected else { return }
+		guard !hasLoadedApps || Date().timeIntervalSince(lastLoadedAt ?? .distantPast) >= 60 else { return }
 		await refresh()
 	}
 
 	func clear() {
+		initialBrowse?.cancel()
+		initialBrowse = nil
+		verifiedApps = nil
+		lastLoadedAt = nil
 		hasLoadedApps = false
 		iconPrefetchTask?.cancel()
 		iconPrefetchTask = nil
@@ -218,6 +233,12 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 
 	func delete(app: InstalledApp) async throws {
 		try await AppLifecycleService.uninstallApp(bundleIdentifier: app.bundleIdentifier)
+		// A refresh may have fetched this app before the uninstall completed.
+		refreshGeneration = UUID()
+		isLoading = false
+		needsTrailingRefresh = false
+		iconPrefetchTask?.cancel()
+		iconPrefetchTask = nil
 		withAnimation(.easeOut(duration: 0.25)) {
 			self.apps.removeAll { $0.id == app.id }
 		}
@@ -263,8 +284,19 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		let proxy = InstallationAppProxy()
 
 		do {
-			let installedApps = try await proxy.fetchApps(applicationType: "User")
+			let lookupStarted = ProcessInfo.processInfo.systemUptime
+			let pending = initialBrowse
+			initialBrowse = nil
+			let pendingApps = force ? nil : await pending?.value
+			try Task.checkCancellation()
+			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected else { return }
+			let staged = verifiedApps ?? pendingApps
+			verifiedApps = nil
+			let installedApps: [AppInfo]
+			if let staged, !force { installedApps = staged }
+			else { installedApps = try await proxy.fetchApps(applicationType: "User", lightweight: true) }
 			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
+			DebugLogManager.shared.log("App lookup seconds=\(ProcessInfo.processInfo.systemUptime - lookupStarted) reusedVerification=\(staged != nil && !force) count=\(installedApps.count).", category: "Device", level: .debug)
 			// Start the first screen's icons while any fallback profiles are loading.
 			// The list never waits for this work; row requests share the same cache/task.
 			iconPrefetchTask?.cancel()
@@ -276,6 +308,10 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 				let rightName = rhs.CFBundleDisplayName ?? rhs.CFBundleName ?? rhs.CFBundleIdentifier ?? ""
 				return leftName.localizedCaseInsensitiveCompare(rightName) == .orderedAscending
 			}
+			// Publish the initial confirmed rows without waiting for profile fallback.
+			// During refresh, retain the visible list until classification completes
+			// so profile-confirmed rows do not disappear and reappear.
+			if apps.isEmpty { updateApplications(with: installedApps, profiles: []) }
 			let visibleCandidates = sortedApps.prefix(8)
 			iconPrefetchTask = Task {
 				for app in visibleCandidates {
@@ -288,7 +324,9 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			let profiles: [ProvisioningProfileInfo]
 			if installedApps.contains(where: AppInstallationProvenanceClassifier.needsProvisioningProfile) {
 				do {
+					let profilesStarted = ProcessInfo.processInfo.systemUptime
 					profiles = try await proxy.provisioningProfiles()
+					DebugLogManager.shared.log("Profile fallback seconds=\(ProcessInfo.processInfo.systemUptime - profilesStarted).", category: "Device", level: .debug)
 					DebugLogManager.shared.log(
 						"Loaded \(profiles.count) provisioning profile\(profiles.count == 1 ? "" : "s") from the device.",
 						category: "Device"
@@ -311,6 +349,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
 			updateApplications(with: installedApps, profiles: profiles)
 			hasLoadedApps = true
+			lastLoadedAt = Date()
 			DebugLogManager.shared.log(
 				"Loaded \(apps.count) sideloaded app\(apps.count == 1 ? "" : "s") from the device.",
 				category: "Device"

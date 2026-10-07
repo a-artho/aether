@@ -41,9 +41,18 @@ actor InstalledAppUpdateCatalog {
 	static let shared = InstalledAppUpdateCatalog()
 	private var signature: [String] = []
 	private var index: [String: [InstalledAppUpdateCandidate]] = [:]
+	private var removedSources = Set<String>()
+
+	func removeSource(_ key: String) {
+		removedSources.insert(key)
+		// Clear immediately, including when no update screen is currently mounted.
+		signature = []
+		index = [:]
+	}
 
 	func updates(for bundleIdentifier: String, installedVersion: String?, contexts: [SourceAppCatalogContext]) throws -> [InstalledAppUpdateCandidate] {
 		try Task.checkCancellation()
+		let contexts = contexts.filter { !removedSources.contains($0.sourceObjectURI) }
 		let nextSignature = contexts.flatMap { [$0.sourceObjectURI, $0.sourceURL?.absoluteString ?? "", $0.revision] }
 		if nextSignature != signature {
 			var nextIndex: [String: [InstalledAppUpdateCandidate]] = [:]
@@ -63,6 +72,7 @@ actor InstalledAppUpdateCatalog {
 					else { continue }
 					let id = [context.sourceObjectURI, bundleID, version, downloadURL.absoluteString].joined(separator: "\u{1F}")
 					guard seen.insert(id).inserted else { continue }
+					SourceAppBodyText.prepare(body: app.localizedDescription, subtitle: app.currentDescription)
 					nextIndex[bundleID, default: []].append(InstalledAppUpdateCandidate(
 						id: id, sourceURL: sourceURL, repository: repository, app: app
 					))

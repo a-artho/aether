@@ -193,16 +193,36 @@ extension ASRepository {
 			public var iPad: [URL]?
 
 			public init(from decoder: any Decoder) throws {
-				// theres a bunch of ways this shit can be formatted
-				// 1. an array of urls (strings)
-				// 2. an array of dictionaries that contain url, width, height.
-				// 3. a mix of 1 and 2, having urls or dictionaries
-				// 4. a dictionary with properties for iphone and ipad, which are arrays of above types
+				if let container = try? decoder.container(keyedBy: CodingKeys.self) {
+					self.iPhone = (try? container.decodeIfPresent([ScreenshotURL].self, forKey: .iPhone))?.compactMap(\.url)
+					self.iPad = (try? container.decodeIfPresent([ScreenshotURL].self, forKey: .iPad))?.compactMap(\.url)
+				} else {
+					let container = try decoder.singleValueContainer()
+					self.iPhone = (try? container.decode([ScreenshotURL].self))?.compactMap(\.url) ?? []
+					self.iPad = nil
+				}
+			}
 
-				#warning("implement screenshots decoding")
+			private struct ScreenshotURL: Decodable {
+				let url: URL?
 
-				self.iPad = []
-				self.iPhone = []
+				init(from decoder: any Decoder) throws {
+					if let value = try? decoder.singleValueContainer().decode(String.self) {
+						url = URL(string: value)
+					} else if let container = try? decoder.container(keyedBy: CodingKeys.self),
+						let value = try? container.decode(String.self, forKey: .url) {
+						url = URL(string: value)
+					} else {
+						url = nil
+					}
+				}
+			}
+
+			public func urls(forPad: Bool) -> [URL] {
+				let preferred = forPad ? iPad : iPhone
+				let fallback = forPad ? iPhone : iPad
+				if let preferred, !preferred.isEmpty { return preferred }
+				return fallback ?? []
 			}
 
 			public enum CodingKeys: String, CodingKey {

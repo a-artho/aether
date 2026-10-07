@@ -30,6 +30,7 @@ struct SourceAppRow: Sendable {
 	let bundleID: String
 	let date: Date?
 	let letter: String
+	let searchFields: [String]
 }
 
 struct PreparedSourceAppList: Sendable {
@@ -83,6 +84,7 @@ actor SourceAppListStore {
 	}
 	private let cacheDirectory: URL?
 	private var projections: [String: Projection] = [:]
+	private var removedSources = Set<String>()
 	private var prepared: [Key: PreparedSourceAppList] = [:]
 
 	init(cacheDirectory: URL? = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
@@ -95,6 +97,7 @@ actor SourceAppListStore {
 		query: String, unknownDate: String
 	) throws -> PreparedSourceAppList {
 		try Task.checkCancellation()
+		let contexts = contexts.filter { !removedSources.contains($0.sourceObjectURI) }
 		let sourceKeys = contexts.flatMap { [$0.sourceObjectURI, $0.sourceURL?.absoluteString ?? "", $0.revision] }
 		let key = Key(sources: sourceKeys, sort: sort, ascending: ascending,
 			locale: Locale.current.identifier, timeZone: TimeZone.current.identifier, unknownDate: unknownDate)
@@ -130,12 +133,11 @@ actor SourceAppListStore {
 			for (index, id) in section.rows.enumerated() {
 				if index % 256 == 0 { try Task.checkCancellation() }
 				guard let row = base.rows[id] else { continue }
-				let app = row.app
-				if app.id?.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], locale: locale) != nil
-					|| app.name?.localizedCaseInsensitiveContains(query) == true
-					|| app.description?.localizedCaseInsensitiveContains(query) == true
-					|| app.subtitle?.localizedCaseInsensitiveContains(query) == true
-					|| app.localizedDescription?.localizedCaseInsensitiveContains(query) == true {
+				if row.searchFields.enumerated().contains(where: { index, field in
+					index == 0
+						? field.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], locale: locale) != nil
+						: field.localizedCaseInsensitiveContains(query)
+				}) {
 					ids.append(id)
 					matches[id] = row
 				}
@@ -145,6 +147,12 @@ actor SourceAppListStore {
 		return PreparedSourceAppList(sections: sections, rows: matches)
 	}
 
+	func removeSource(_ source: String) {
+		removedSources.insert(source)
+		projections[source] = nil
+		prepared = prepared.filter { !$0.key.sources.enumerated().contains { $0.offset % 3 == 0 && $0.element == source } }
+	}
+
 	func changedRows(in list: PreparedSourceAppList, comparedTo previous: PreparedSourceAppList?) -> [SourceAppRowID] {
 		list.changedRows(comparedTo: previous)
 	}
@@ -152,6 +160,9 @@ actor SourceAppListStore {
 	private func projection(for context: SourceAppCatalogContext) throws -> [SourceAppRow] {
 		let key = [context.revision, context.sourceURL?.absoluteString ?? ""]
 		if let cached = projections[context.sourceObjectURI], cached.key == key { return cached.rows }
+		var repository = context.repository
+		repository.apps = []
+		repository.news = nil
 		var occurrences: [String: Int] = [:]
 		var rows: [SourceAppRow] = []
 		rows.reserveCapacity(context.repository.apps.count)
@@ -164,12 +175,14 @@ actor SourceAppListStore {
 			let occurrence = occurrences[identity, default: 0]
 			occurrences[identity] = occurrence + 1
 			let id = SourceAppRowID(source: context.sourceObjectURI, identity: identity, occurrence: occurrence)
+			SourceAppBodyText.prepare(body: app.localizedDescription, subtitle: app.currentDescription)
 			let contentRevision = contentFingerprint(app, context: context)
 			let first = app.name?.trimmingCharacters(in: .whitespacesAndNewlines).first?.uppercased() ?? "#"
 			let letter = first.unicodeScalars.contains { (65...90).contains($0.value) } ? first : "#"
 			rows.append(SourceAppRow(id: id, sourceObjectURI: context.sourceObjectURI, sourceURL: context.sourceURL,
-				source: context.repository, app: app, contentRevision: contentRevision, name: app.name ?? "",
-				bundleID: app.id ?? "", date: app.currentDate?.date, letter: letter))
+				source: repository, app: app, contentRevision: contentRevision, name: app.name ?? "",
+				bundleID: app.id ?? "", date: app.currentDate?.date, letter: letter,
+				searchFields: [app.id ?? ""] + Array(Set([app.name, app.description, app.subtitle, app.localizedDescription].compactMap { $0 }))))
 		}
 		projections[context.sourceObjectURI] = Projection(key: key, rows: rows)
 		if projections.count > 16, let victim = projections.keys.first(where: { $0 != context.sourceObjectURI }) {

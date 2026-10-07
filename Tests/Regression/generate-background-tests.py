@@ -96,7 +96,7 @@ typealias URLSessionDownloadTask=NetworkTask
 typealias URLSession=Session
 struct Store { func saveResumeData(_ data:Data,for id:String) throws {};func cleanupArtifacts(for download:Download) {} }
 @MainActor final class Driver {
- var downloads:[Download]=[];let _session=Session(),_store=Store()
+ var downloads:[Download]=[];var _restorableTransferIDs=Set<String>();var _restoringTransferIDs=Set<String>();let _session=Session(),_store=Store()
  var holdSave=false;var saveGate:CheckedContinuation<Void,Never>?
  func getDownload(from:URL,sourceProvenance:Provenance?)->Download? { nil }
  func _makeFreshTask(for download:Download)->NetworkTask { NetworkTask() }

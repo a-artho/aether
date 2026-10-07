@@ -236,7 +236,8 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		#endif
 	}
 
-	public func start() async throws {
+	public func start(shouldStart: () -> Bool = { true }) async throws {
+		guard shouldStart() else { throw CancellationError() }
 		_log("In-app tunnel start requested.", level: .notice)
 		#if targetEnvironment(simulator)
 		HeartbeatManager.shared.ipAddress = peerIPOnly
@@ -244,6 +245,7 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		return
 		#elseif os(iOS) && !targetEnvironment(macCatalyst)
 		_ = try await prepare()
+		guard shouldStart() else { throw CancellationError() }
 		guard let manager else { throw EmbeddedTunnelError.invalidConfiguration }
 
 		switch manager.connection.status {
@@ -259,16 +261,19 @@ public final class EmbeddedTunnelManager: ObservableObject {
 				try await save(manager)
 				try await load(manager)
 			}
+			guard shouldStart() else { throw CancellationError() }
 			state = .connecting
 			HeartbeatManager.shared.ipAddress = peerIPOnly
 			let options: [String: NSObject] = [
 				Self.interfaceAddressKey: interfaceAddress as NSString,
 				Self.peerAddressKey: peerAddress as NSString,
 			]
-			try await startTunnel(on: manager, options: options)
+			try await startTunnel(on: manager, options: options, shouldStart: shouldStart)
 		}
 
-		guard await waitForConnected() else {
+		let connected = await waitForConnected()
+		guard shouldStart() else { throw CancellationError() }
+		guard connected else {
 			_setState(.error(EmbeddedTunnelError.providerNotReady.localizedDescription))
 			_log("In-app tunnel did not become ready.", level: .error)
 			throw EmbeddedTunnelError.providerNotReady
@@ -497,7 +502,7 @@ private extension EmbeddedTunnelManager {
 	}
 
 	func loadManagers() async throws -> [NETunnelProviderManager] {
-		if let cachedManagers, ProcessInfo.processInfo.systemUptime - managersLoadedAt < 2 {
+		if let cachedManagers, ProcessInfo.processInfo.systemUptime - managersLoadedAt < 60 {
 			return cachedManagers
 		}
 		if let managersLoad { return try await managersLoad.task.value }
@@ -561,15 +566,19 @@ private extension EmbeddedTunnelManager {
 		}
 	}
 
-	func startTunnel(on manager: NETunnelProviderManager, options: [String: NSObject]) async throws {
+	func startTunnel(on manager: NETunnelProviderManager, options: [String: NSObject], shouldStart: () -> Bool) async throws {
+		guard shouldStart() else { throw CancellationError() }
 		do {
 			try manager.connection.startVPNTunnel(options: options)
 		} catch {
+			guard shouldStart() else { throw CancellationError() }
 			// A re-signed update can leave an old provider identifier in the
 			// preferences. Repair only Aether's marked configuration, then retry.
 			_log("Repairing the in-app tunnel configuration after a start failure.", level: .warning)
 			await resetConfiguration()
+			guard shouldStart() else { throw CancellationError() }
 			_ = try await prepare()
+			guard shouldStart() else { throw CancellationError() }
 			guard let repairedManager = self.manager else { throw error }
 			try repairedManager.connection.startVPNTunnel(options: options)
 		}

@@ -1,5 +1,20 @@
 # Aether regression checks
 
+Focused checks runnable with macOS Command Line Tools:
+
+```sh
+python3 Tests/Regression/run-release-checks.py
+python3 Tests/Regression/run-audit-fix-checks.py
+python3 Tests/Regression/run-efficiency-checks.py
+python3 Tests/Regression/run-device-loading-checks.py
+python3 Tests/Regression/run-installed-loading-checks.py
+python3 Tests/Regression/run-whole-app-checks.py
+```
+
+Efficiency checks exercise catalog deletion during a request, stale projection prevention, search semantics, cached-icon/render ownership, lightweight browse with binary plist decoding through a mock C ABI, pairing rejection, RSD discovery/reuse/retry ownership, progressive installed-row loading, and explicit versus foreground refresh. Device transport mocks do not verify iPhone latency or firmware behaviour.
+
+The whole-app checks cover restored-task adoption before enumeration, stale callback rejection, fresh-task persistence barriers, catalogue cancellation, native-worker cancellation, and Library search matching. The audit checks cover deletion rollback and active export ownership with real Core Data, tunnel transition ownership with transport doubles, uninstall/refresh invalidation, certificate identity, modern screenshot decoding, and concurrent export naming.
+
 From the repository root, with Xcode selected:
 
 ```sh

@@ -105,9 +105,14 @@ extension Storage {
 		completion(nil)
 	}
 
+	@MainActor
 	func deleteSource(for source: AltSource) {
+		let key = source.objectID.uriRepresentation().absoluteString
+		let url = source.sourceURL
 		context.delete(source)
-		saveContext()
+		guard saveContext() == nil else { return }
+		SourcesViewModel.shared.removeSource(key: key, url: url,
+			evictURL: !getSources().contains { $0.sourceURL == url })
 	}
 
 	func sourceExists(_ identifier: String) -> Bool {

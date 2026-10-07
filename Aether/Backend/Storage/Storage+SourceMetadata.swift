@@ -165,20 +165,12 @@ extension Storage {
 		saveContext()
 	}
 
-	func deleteSourceMetadata(for appUUID: String?) {
-		guard let appUUID else {
-			return
-		}
-
+	func deleteSourceMetadata(for appUUID: String?, deferSave: Bool = false) throws {
+		guard let appUUID else { return }
 		let request: NSFetchRequest<AppSourceMetadata> = AppSourceMetadata.fetchRequest()
 		request.predicate = NSPredicate(format: "appUUID == %@", appUUID)
-
-		do {
-			let metadata = try context.fetch(request)
-			metadata.forEach(context.delete)
-			saveContext()
-		} catch {
-		}
+		try context.fetch(request).forEach(context.delete)
+		if !deferSave, let error = saveContext() { throw error }
 	}
 
 	func deleteSourceMetadata(kind: SourceLinkedAppKind) {

@@ -46,12 +46,14 @@ public struct DeviceConnectionCheck {
 	public let error: String?
 	public let errorCode: Int32?
 	public let errorSubCode: Int32?
+	public let apps: [AppInfo]?
 
-	public init(isConnected: Bool, error: String? = nil, errorCode: Int32? = nil, errorSubCode: Int32? = nil) {
+	public init(isConnected: Bool, error: String? = nil, errorCode: Int32? = nil, errorSubCode: Int32? = nil, apps: [AppInfo]? = nil) {
 		self.isConnected = isConnected
 		self.error = error
 		self.errorCode = errorCode
 		self.errorSubCode = errorSubCode
+		self.apps = apps
 	}
 
 	/// idevice 0.1.68: InvalidHostID=18; RemotePairing=103, PairVerifyFailed=5.

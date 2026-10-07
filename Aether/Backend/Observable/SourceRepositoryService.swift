@@ -32,6 +32,8 @@ actor SourceRepositoryService {
 	private let recheckInterval: TimeInterval
 	private let fullFetchInterval: TimeInterval
 	private var entries: [URL: Entry] = [:]
+	private var accessOrder: [URL] = []
+	private var revisions: [URL: UUID] = [:]
 	private var diskReads: [URL: Task<Entry?, Never>] = [:]
 	private struct Flight {
 		let id = UUID()
@@ -95,6 +97,27 @@ actor SourceRepositoryService {
 		return try validated(await task.value, allowEmptyCatalog: allowEmptyCatalog)
 	}
 
+	func remove(_ url: URL) {
+		revisions[url] = UUID()
+		inFlight.removeValue(forKey: url)?.task.cancel()
+		diskReads.removeValue(forKey: url)?.cancel()
+		entries[url] = nil
+		accessOrder.removeAll { $0 == url }
+		if let file = cacheFile(for: url) { try? FileManager.default.removeItem(at: file) }
+	}
+
+	private func remember(_ entry: Entry, for url: URL) {
+		entries[url] = entry
+		accessOrder.removeAll { $0 == url }
+		accessOrder.append(url)
+		// Bound both catalog count and raw bytes; retain a single large source.
+		while entries.count > 8 || (entries.count > 1 && entries.values.reduce(0, { $0 + $1.stored.data.count }) > 32 * 1024 * 1024) {
+			guard let victim = accessOrder.first else { break }
+			accessOrder.removeFirst()
+			entries[victim] = nil
+		}
+	}
+
 	private func validated(_ snapshot: Snapshot, allowEmptyCatalog: Bool) throws -> Snapshot {
 		guard allowEmptyCatalog || !snapshot.repository.apps.isEmpty else {
 			throw NSError(domain: "AetherSources", code: 44521, userInfo: [
@@ -115,6 +138,7 @@ actor SourceRepositoryService {
 	}
 
 	private func performFetch(from url: URL, forceFullFetch: Bool) async throws -> Snapshot {
+		let revisionToken = revisions[url]
 		let previous = await loadEntry(for: url)
 		let fullFetchDue = previous.map {
 			Date().timeIntervalSince($0.stored.fullFetchAt) >= fullFetchInterval
@@ -139,7 +163,8 @@ actor SourceRepositoryService {
 			entry.stored.checkedAt = Date()
 			entry.stored.etag = validETag(http) ?? entry.stored.etag
 			entry.stored.lastModified = validLastModified(http) ?? entry.stored.lastModified
-			entries[url] = entry
+			guard revisions[url] == revisionToken, !Task.isCancelled else { throw CancellationError() }
+			remember(entry, for: url)
 			// Keep this check in memory; rewriting a multi-megabyte disk catalog
 			// for a bodyless response would undo much of the refresh saving.
 			return entry.snapshot
@@ -176,7 +201,8 @@ actor SourceRepositoryService {
 			url: url, data: diskData, revision: revision, etag: validETag(http), lastModified: validLastModified(http),
 			checkedAt: Date(), fullFetchAt: Date()
 		)
-		entries[url] = Entry(stored: stored, snapshot: snapshot)
+		guard revisions[url] == revisionToken, !Task.isCancelled else { throw CancellationError() }
+		remember(Entry(stored: stored, snapshot: snapshot), for: url)
 		persist(stored)
 		return snapshot
 	}
@@ -200,12 +226,15 @@ actor SourceRepositoryService {
 	}
 
 	private func loadEntry(for url: URL) async -> Entry? {
-		if let entry = entries[url] { return entry }
+		if let entry = entries[url] { remember(entry, for: url); return entry }
 		if let read = diskReads[url] {
+			let revisionToken = revisions[url]
 			let loaded = await read.value
+			guard revisions[url] == revisionToken, !read.isCancelled else { return nil }
 			return entries[url] ?? loaded
 		}
 		guard let file = cacheFile(for: url) else { return nil }
+		let revisionToken = revisions[url]
 		let read = Task.detached(priority: .userInitiated) { () -> Entry? in
 			guard let bytes = try? Data(contentsOf: file),
 			      let stored = try? PropertyListDecoder().decode(StoredCatalog.self, from: bytes),
@@ -216,9 +245,11 @@ actor SourceRepositoryService {
 		}
 		diskReads[url] = read
 		let loaded = await read.value
+		guard revisions[url] == revisionToken else { return nil }
 		diskReads[url] = nil
 		if let current = entries[url] { return current }
-		entries[url] = loaded
+		guard revisions[url] == revisionToken, !Task.isCancelled else { return nil }
+		if let loaded { remember(loaded, for: url) }
 		return loaded
 	}
 

@@ -122,7 +122,7 @@ final class ArchiveHandler: NSObject {
 
 		let name = _safeFilenameComponent(_app.name ?? _app.identifier ?? "App")
 		let version = _safeFilenameComponent(_app.version ?? "Unknown")
-		let appendingString = "\(name)_\(version)_\(Int(Date().timeIntervalSince1970)).ipa"
+		let appendingString = "\(name)_\(version)_\(Int(Date().timeIntervalSince1970))_\(_uuid).ipa"
 		let dest = _fileManager.archives.appendingPathComponent(appendingString)
 		
 		try _fileManager.moveItem(

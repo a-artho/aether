@@ -9,7 +9,41 @@
 import SwiftUI
 
 enum SourceAppBodyText {
-	static func replacingEmoji(in text: String) -> String {
+	private final class DisplayText: NSObject {
+		let cleaned: String
+		let body: String?
+		let subtitle: String?
+		init(_ raw: String) {
+			cleaned = cleanEmoji(in: raw)
+			body = cleaned.contains { !$0.isWhitespace && $0 != "·" && $0 != "•" } ? cleaned : nil
+			subtitle = body?.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+		}
+	}
+
+	private static let cache: NSCache<NSString, DisplayText> = {
+		let cache = NSCache<NSString, DisplayText>()
+		cache.countLimit = 512
+		cache.totalCostLimit = 4 * 1024 * 1024
+		return cache
+	}()
+
+	private static func displayText(_ text: String) -> DisplayText {
+		let key = text as NSString
+		if let cached = cache.object(forKey: key) { return cached }
+		let value = DisplayText(text)
+		cache.setObject(value, forKey: key, cost: (text.utf16.count + value.cleaned.utf16.count + (value.subtitle?.utf16.count ?? 0)) * 2)
+		return value
+	}
+
+	/// Catalog projections call this on their actor, before rows reach the UI.
+	static func prepare(body: String?, subtitle: String?) {
+		if let body { _ = displayText(body) }
+		if let subtitle, subtitle != body { _ = displayText(subtitle) }
+	}
+
+	static func replacingEmoji(in text: String) -> String { displayText(text).cleaned }
+
+	private static func cleanEmoji(in text: String) -> String {
 		var result = ""
 		result.reserveCapacity(text.utf8.count)
 		var whitespace = ""
@@ -56,19 +90,12 @@ enum SourceAppBodyText {
 	}
 
 	static func body(in text: String?) -> String? {
-		guard let text else { return nil }
-		let cleaned = replacingEmoji(in: text)
-		guard cleaned.contains(where: { !$0.isWhitespace && $0 != "·" && $0 != "•" }) else { return nil }
-		return cleaned
+		text.flatMap { displayText($0).body }
 	}
 
 	static func subtitle(in text: String?, followingVersion: Bool) -> String? {
-		guard let cleaned = body(in: text) else { return nil }
-		var line = cleaned.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-		// The row already supplies a separator after its version.
-		if followingVersion && (line.hasPrefix("· ") || line.hasPrefix("• ")) {
-			line.removeFirst(2)
-		}
+		guard var line = text.flatMap({ displayText($0).subtitle }) else { return nil }
+		if followingVersion && (line.hasPrefix("· ") || line.hasPrefix("• ")) { line.removeFirst(2) }
 		return line
 	}
 
@@ -87,7 +114,10 @@ struct ExpandableText: View {
 	var textStyle: Font.TextStyle = .body
 
 	@State private var expanded: Bool = false
-	@State private var truncated: Bool = false
+	@State private var constrainedHeight: CGFloat = 0
+	@State private var fullHeight: CGFloat = 0
+
+	private var truncated: Bool { fullHeight > constrainedHeight + 1 }
 
 	var body: some View {
 		let displayText = SourceAppBodyText.replacingEmoji(in: text)
@@ -97,23 +127,22 @@ struct ExpandableText: View {
 				.foregroundStyle(.secondary)
 				.lineSpacing(3)
 				.lineLimit(expanded ? nil : lineLimit)
-				.background(
+				.background {
 					Text(displayText)
 						.font(.system(textStyle))
 						.lineSpacing(3)
 						.lineLimit(lineLimit)
-						.background(GeometryReader { proxy in
-							Color.clear
-								.onAppear {
-									let totalHeight = proxy.size.height
-									let lineHeight = UIFont.preferredFont(
-										forTextStyle: textStyle == .subheadline ? .subheadline : .body
-									).lineHeight
-									truncated = totalHeight > lineHeight * CGFloat(lineLimit)
-								}
-						})
+						.fixedSize(horizontal: false, vertical: true)
+						.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { constrainedHeight = $0 }
 						.hidden()
-				)
+					Text(displayText)
+						.font(.system(textStyle))
+						.lineSpacing(3)
+						.lineLimit(nil)
+						.fixedSize(horizontal: false, vertical: true)
+						.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
+						.hidden()
+				}
 				.onTapGesture {
 					withAnimation {
 						expanded.toggle()

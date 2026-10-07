@@ -13,19 +13,21 @@ extension HeartbeatManager {
 	/// Verifies that Aether can reach the paired device's Installation Proxy service.
 	/// Unlike a raw TCP probe, this validates the active transport and pairing flow.
 	public func checkDeviceConnection(
-		timeoutInSeconds: Double = 2.0
+		timeoutInSeconds: Double = 2.0, includeApps: Bool = false, legacySocketAlreadyVerified: Bool = false, onVerified: (@Sendable () -> Void)? = nil
 	) -> DeviceConnectionCheck {
 		if isRsd {
 			// The packet tunnel can be usable to the native Remote Pairing client
 			// before a generic POSIX TCP probe to its virtual address succeeds.
 			// Let the handshake below verify the real transport instead of rejecting
 			// it based on that duplicate preflight.
-			return _checkRSDDeviceConnection(timeoutInSeconds: timeoutInSeconds)
+			return _checkRSDDeviceConnection(timeoutInSeconds: timeoutInSeconds, includeApps: includeApps, onVerified: onVerified)
 		}
 
-		let socketConnection = checkSocketConnection(timeoutInSeconds: timeoutInSeconds)
-		guard socketConnection.isConnected else {
-			return .init(isConnected: false, error: socketConnection.error)
+		if !legacySocketAlreadyVerified {
+			let socketConnection = checkSocketConnection(timeoutInSeconds: timeoutInSeconds)
+			guard socketConnection.isConnected else {
+				return .init(isConnected: false, error: socketConnection.error)
+			}
 		}
 
 		guard let provider else {
@@ -38,10 +40,25 @@ extension HeartbeatManager {
 			let swiftError = IDeviceSwiftError(error)
 			return .init(isConnected: false, error: swiftError.localizedDescription, errorCode: swiftError.code, errorSubCode: swiftError.subCode)
 		}
-		return .init(isConnected: client != nil, error: client == nil ? "Installation Proxy unavailable" : nil)
+		return verifiedClient(client, includeApps: includeApps, onVerified: onVerified)
 	}
 
-	private func _checkRSDDeviceConnection(timeoutInSeconds: Double) -> DeviceConnectionCheck {
+	private func verifiedClient(_ client: OpaquePointer?, includeApps: Bool, onVerified: (@Sendable () -> Void)? = nil) -> DeviceConnectionCheck {
+		guard client != nil else { return .init(isConnected: false, error: "Installation Proxy unavailable") }
+		if !Task.isCancelled { onVerified?() }
+		guard !Task.isCancelled else { return .init(isConnected: true) }
+		guard includeApps else { return .init(isConnected: true) }
+		do {
+			let apps = try InstallationAppProxy.readApps(client: client, applicationType: "User", lightweight: true)
+			return .init(isConnected: true, apps: apps)
+		} catch let error as IDeviceSwiftError {
+			let check = DeviceConnectionCheck(isConnected: false, error: error.localizedDescription, errorCode: error.code, errorSubCode: error.subCode)
+			if check.rejectsPairingRecord { return check }
+			return .init(isConnected: true)
+		} catch { return .init(isConnected: true) }
+	}
+
+	private func _checkRSDDeviceConnection(timeoutInSeconds: Double, includeApps: Bool, onVerified: (@Sendable () -> Void)?) -> DeviceConnectionCheck {
 		var client: OpaquePointer?
 		defer { installation_proxy_client_free(client) }
 
@@ -49,7 +66,7 @@ extension HeartbeatManager {
 			try withRSDServiceConnection(discoveryTimeout: timeoutInSeconds) { adapter, handshake in
 				installation_proxy_connect_rsd(adapter, handshake, &client)
 			}
-			return .init(isConnected: client != nil, error: client == nil ? "Installation Proxy unavailable" : nil)
+			return verifiedClient(client, includeApps: includeApps, onVerified: onVerified)
 		} catch let error as IDeviceSwiftError {
 			return .init(isConnected: false, error: error.localizedDescription, errorCode: error.code, errorSubCode: error.subCode)
 		} catch {

@@ -41,7 +41,9 @@ struct SourceAppsDetailView: View {
 			VStack(alignment: .leading, spacing: 28) {
 				_metadataStrip()
 
-				if let screenshotURLs = app.screenshotURLs, !screenshotURLs.isEmpty {
+				let modernScreenshots = app.screenshots?.urls(forPad: UIDevice.current.userInterfaceIdiom == .pad) ?? []
+				let screenshotURLs = modernScreenshots.isEmpty ? (app.screenshotURLs ?? []) : modernScreenshots
+				if !screenshotURLs.isEmpty {
 					_detailSection(.localized("Screenshots")) {
 						_screenshots(screenshotURLs: screenshotURLs)
 					}

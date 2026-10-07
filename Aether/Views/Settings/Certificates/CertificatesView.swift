@@ -11,6 +11,7 @@ import NimbleViews
 // MARK: - View
 struct CertificatesView: View {
 	@AppStorage("aether.selectedCert") private var _storedSelectedCert: Int = 0
+	@AppStorage("aether.selectedCertUUID") private var _selectedCertUUID: String = ""
 	
 	@State private var _isAddingPresenting = false
 	@State private var _isRenamingPresenting = false
@@ -110,7 +111,7 @@ extension CertificatesView {
 			.overlay(
 				RoundedRectangle(cornerRadius: cornerRadius)
 					.strokeBorder(
-						_selectedCertBinding.wrappedValue == index ? Color.accentColor : Color.clear,
+						_isSelected(cert, at: index) ? Color.accentColor : Color.clear,
 						lineWidth: 2
 					)
 			)
@@ -121,9 +122,16 @@ extension CertificatesView {
 					_actions(for: cert)
 				}
 			}
-			.animation(.spring(response: 0.25, dampingFraction: 0.7), value: _selectedCertBinding.wrappedValue)
+			.animation(.spring(response: 0.25, dampingFraction: 0.7), value: _isSelected(cert, at: index))
 		}
 		.buttonStyle(.plain)
+	}
+
+	private func _isSelected(_ cert: CertificatePair, at index: Int) -> Bool {
+		if !_selectedCertUUID.isEmpty, _certificates.contains(where: { $0.uuid == _selectedCertUUID }) {
+			return cert.uuid == _selectedCertUUID
+		}
+		return _selectedCertBinding.wrappedValue == index
 	}
 	
 	@ViewBuilder

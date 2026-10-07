@@ -112,6 +112,8 @@ class DownloadManager: NSObject, ObservableObject {
 
 	private let _store = DownloadStore()
 	private var _session: URLSession!
+	private var _restorableTransferIDs = Set<String>()
+	private var _restoringTransferIDs = Set<String>()
 	private var _backgroundEventsCompletionHandler: (() -> Void)?
 	private var _finishedEventsBeforeHandler = false
 	private var _foregroundGeneration: UInt64 = 0
@@ -125,6 +127,8 @@ class DownloadManager: NSObject, ObservableObject {
 	override init() {
 		super.init()
 		downloads = _store.loadDownloads()
+		_restorableTransferIDs = Set(downloads.filter { $0.state == .downloading || $0.state == .pausing || $0.state == .resuming }.map(\.id))
+		_restoringTransferIDs = _restorableTransferIDs
 		#if !targetEnvironment(macCatalyst)
 		retireLegacyDownloadActivities()
 		#endif
@@ -245,6 +249,8 @@ class DownloadManager: NSObject, ObservableObject {
 
 	func resumeDownload(_ download: Download) async {
 		guard _isCurrent(download), case .paused = download.state else { return }
+		_restorableTransferIDs.remove(download.id)
+		_restoringTransferIDs.remove(download.id)
 		guard let resumeData = download.resumeData else {
 			if download.bytesDownloaded == 0 { await restartDownload(download); return }
 			_markRestartRequired(
@@ -269,6 +275,8 @@ class DownloadManager: NSObject, ObservableObject {
 
 	func restartDownload(_ download: Download) async {
 		guard _isCurrent(download) else { return }
+		_restorableTransferIDs.remove(download.id)
+		_restoringTransferIDs.remove(download.id)
 		download.task?.cancel()
 		download.task = nil
 		_store.cleanupArtifacts(for: download)
@@ -384,6 +392,11 @@ class DownloadManager: NSObject, ObservableObject {
 	private func _getDownloadTask(_ task: URLSessionDownloadTask) -> Download? {
 		if let transferIdentifier = task.taskDescription,
 		   let download = _getDownload(transferIdentifier: transferIdentifier) {
+			// Only a transfer saved at launch may adopt an early system callback.
+			// Retries remove this permission before creating a replacement task.
+			if download.task == nil, _restorableTransferIDs.remove(download.id) != nil {
+				download.task = task
+			}
 			return download
 		}
 		return downloads.first(where: { $0.task === task })
@@ -501,7 +514,8 @@ class DownloadManager: NSObject, ObservableObject {
 		_session.getAllTasks { [weak self] tasks in
 			DispatchQueue.main.async {
 				guard let self else { return }
-				var restoredIDs = Set<String>()
+				var restoredIDs = Set(self.downloads.filter { $0.task != nil }.map(\.id))
+				defer { self._restorableTransferIDs.removeAll(); self._restoringTransferIDs.removeAll() }
 				var downloadsToPause: [Download] = []
 
 				for task in tasks {
@@ -522,6 +536,9 @@ class DownloadManager: NSObject, ObservableObject {
 						continue
 					}
 
+					// Do not overwrite a task adopted by a callback or a newer retry.
+					if let attached = download.task, attached !== task { task.cancel(); continue }
+					guard self._restoringTransferIDs.contains(download.id) else { continue }
 					switch download.state {
 					case .downloading, .pausing, .resuming:
 						break
@@ -563,9 +580,9 @@ class DownloadManager: NSObject, ObservableObject {
 				var downloadsToProcess: [(Download, URL)] = []
 				for download in self.downloads {
 					switch download.state {
-					case .downloading where !restoredIDs.contains(download.id):
+					case .downloading where self._restorableTransferIDs.contains(download.id) && !restoredIDs.contains(download.id):
 						self._restoreMissingTransfer(download)
-					case .pausing where !restoredIDs.contains(download.id):
+					case .pausing where self._restorableTransferIDs.contains(download.id) && !restoredIDs.contains(download.id):
 						if download.resumeData != nil {
 							download.state = .paused
 						} else {
@@ -574,7 +591,7 @@ class DownloadManager: NSObject, ObservableObject {
 								message: .localized("The app closed before pausing completed. Restart the download.")
 							)
 						}
-					case .resuming where !restoredIDs.contains(download.id):
+					case .resuming where self._restorableTransferIDs.contains(download.id) && !restoredIDs.contains(download.id):
 						if download.resumeData != nil {
 							download.state = .paused
 						} else {

@@ -26,78 +26,99 @@ public class InstallationAppProxy: NSObject {
 		}
 	}
 
-	public func fetchApps(applicationType: String? = nil) async throws -> [AppInfo] {
-		try await Task.detached(priority: .userInitiated) {
-			var installproxy: InstallationProxyClientHandle?
-			try self._connectInstallationProxy(client: &installproxy)
-			defer { installation_proxy_client_free(installproxy) }
+	public func fetchApps(applicationType: String? = nil, lightweight: Bool = false, bundleIdentifier: String? = nil) async throws -> [AppInfo] {
+		let worker = Task.detached(priority: .userInitiated) {
+			try Task.checkCancellation()
+			var client: InstallationProxyClientHandle?
+			try self._connectInstallationProxy(client: &client)
+			defer { installation_proxy_client_free(client) }
+			try Task.checkCancellation()
+			return try Self.readApps(client: client, applicationType: applicationType, lightweight: lightweight, bundleIdentifier: bundleIdentifier)
+		}
+		return try await withTaskCancellationHandler {
+			try Task.checkCancellation()
+			let result = try await worker.value
+			try Task.checkCancellation()
+			return result
+		} onCancel: { worker.cancel() }
+	}
 
-			var outResult: UnsafeMutableRawPointer?
-			var outResultLen: Int = 0
-			let getAppsError: UnsafeMutablePointer<IdeviceFfiError>?
-			if let applicationType {
-				getAppsError = applicationType.withCString { type in
-					installation_proxy_get_apps(
-						installproxy,
-						type,
-						nil,
-						0,
-						&outResult,
-						&outResultLen
-					)
-				}
+	/// The initial browse contains row/classification fields only. Full Lookup
+	/// remains available for details and as a compatibility fallback.
+	static func readApps(client: OpaquePointer?, applicationType: String? = nil, lightweight: Bool = false, bundleIdentifier: String? = nil) throws -> [AppInfo] {
+		try Task.checkCancellation()
+		if lightweight {
+			let options = plist_new_dict()
+			defer { plist_free(options) }
+			plist_dict_set_item(options, "ApplicationType", plist_new_string(applicationType ?? "Any"))
+			let attributes = plist_new_array()
+			for field in ["CFBundleIdentifier", "CFBundleName", "CFBundleDisplayName", "CFBundleShortVersionString", "CFBundleVersion", "SignerIdentity", "IsAppClip", "IsDemotedApp", "Entitlements", "ApplicationDSID", "ApplicationSINF", "iTunesMetadata"] {
+				plist_array_append_item(attributes, plist_new_string(field))
+			}
+			plist_dict_set_item(options, "ReturnAttributes", attributes)
+			var results: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
+			var count = 0
+			if let error = installation_proxy_browse(client, options, &results, &count) {
+				let failure = IDeviceSwiftError(error)
+				if DeviceConnectionCheck(isConnected: false, errorCode: failure.code, errorSubCode: failure.subCode).rejectsPairingRecord { throw failure }
+				Logger.heartbeat.debug("Lightweight browse unavailable; using full app lookup: \(failure.localizedDescription)")
 			} else {
-				getAppsError = installation_proxy_get_apps(
-					installproxy,
-					nil,
-					nil,
-					0,
-					&outResult,
-					&outResultLen
-				)
+				let apps = decodeApps(results, count: count)
+				if apps.count == count, !apps.isEmpty, apps.allSatisfy({ !($0.CFBundleIdentifier ?? "").isEmpty }) { return apps }
 			}
-			if let getAppsError {
-				throw IDeviceSwiftError(getAppsError)
-			}
-
-			guard let outResult else { return [] }
-			let plistBuffer = outResult.bindMemory(
-				to: UnsafeMutableRawPointer?.self,
-				capacity: outResultLen
-			)
-			defer {
-				idevice_plist_array_free(plistBuffer, UInt(outResultLen))
-				idevice_outer_slice_free(outResult, UInt(outResultLen))
-			}
-
-			let decoder = PropertyListDecoder()
-			return UnsafeBufferPointer(start: plistBuffer, count: outResultLen).compactMap { plist in
-				guard let plist else { return nil }
-
-				var xml: UnsafeMutablePointer<CChar>?
-				var length: UInt32 = 0
-				plist_to_xml(plist, &xml, &length)
-				guard let xml else { return nil }
-				defer { free(xml) }
-
-				do {
-					return try decoder.decode(
-						AppInfo.self,
-						from: Data(bytes: xml, count: Int(length))
-					)
-				} catch {
-					print("Failed to decode AppInfo plist: \(error)")
-					return nil
+		}
+		try Task.checkCancellation()
+		var result: UnsafeMutableRawPointer?
+		var count = 0
+		let lookup: (UnsafePointer<CChar>?) -> UnsafeMutablePointer<IdeviceFfiError>? = { type in
+			if let bundleIdentifier {
+				return bundleIdentifier.withCString { id in
+					var idPointer: UnsafePointer<CChar>? = id
+					return withUnsafePointer(to: &idPointer) { ids in
+						installation_proxy_get_apps(client, type, ids, 1, &result, &count)
+					}
 				}
 			}
-		}.value
+			return installation_proxy_get_apps(client, type, nil, 0, &result, &count)
+		}
+		let error: UnsafeMutablePointer<IdeviceFfiError>?
+		if let applicationType { error = applicationType.withCString(lookup) }
+		else { error = lookup(nil) }
+
+		if let error { throw IDeviceSwiftError(error) }
+		let apps = decodeApps(result?.bindMemory(to: UnsafeMutableRawPointer?.self, capacity: count), count: count)
+		guard apps.count == count, apps.allSatisfy({ !($0.CFBundleIdentifier ?? "").isEmpty }) else {
+			throw NSError(domain: "AetherDeviceApps", code: 1, userInfo: [NSLocalizedDescriptionKey: "The device returned an incomplete app list. Please retry."])
+		}
+		return apps
+	}
+
+	private static func decodeApps(_ results: UnsafeMutablePointer<UnsafeMutableRawPointer?>?, count: Int) -> [AppInfo] {
+		guard let results else { return [] }
+		defer {
+			idevice_plist_array_free(results, UInt(count))
+			idevice_outer_slice_free(UnsafeMutableRawPointer(results), UInt(count))
+		}
+		let decoder = PropertyListDecoder()
+		return UnsafeBufferPointer(start: results, count: count).compactMap { plist in
+			guard let plist else { return nil }
+			var bytes: UnsafeMutablePointer<CChar>?
+			var length: UInt32 = 0
+			plist_to_bin(plist, &bytes, &length)
+			guard let bytes else { return nil }
+			defer { free(bytes) }
+			do { return try decoder.decode(AppInfo.self, from: Data(bytes: bytes, count: Int(length))) }
+			catch { Logger.heartbeat.error("Failed to decode installed app: \(error.localizedDescription)"); return nil }
+		}
 	}
 
 	public func provisioningProfiles() async throws -> [ProvisioningProfileInfo] {
-		try await Task.detached(priority: .userInitiated) {
+		let worker = Task.detached(priority: .userInitiated) {
+			try Task.checkCancellation()
 			var client: MisagentClientHandle?
 			try self._connectMisagent(client: &client)
 			defer { misagent_client_free(client) }
+			try Task.checkCancellation()
 
 			var profilePointers: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>?
 			var profileLengths: UnsafeMutablePointer<Int>?
@@ -113,6 +134,7 @@ public class InstallationAppProxy: NSObject {
 
 			guard let profilePointers, let profileLengths else { return [] }
 			defer { misagent_free_profiles(profilePointers, profileLengths, profileCount) }
+			try Task.checkCancellation()
 
 			return (0..<profileCount).compactMap { index in
 				guard let bytes = profilePointers[index] else { return nil }
@@ -120,7 +142,13 @@ public class InstallationAppProxy: NSObject {
 					data: Data(bytes: bytes, count: profileLengths[index])
 				)
 			}
-		}.value
+		}
+		return try await withTaskCancellationHandler {
+			try Task.checkCancellation()
+			let result = try await worker.value
+			try Task.checkCancellation()
+			return result
+		} onCancel: { worker.cancel() }
 	}
 
 	static public func deleteApp(for id: String) async throws {
@@ -219,8 +247,16 @@ extension InstallationAppProxy {
 	private static let iconCache = InstalledIconCache()
 	private static let iconDiskCache = InstalledIconDiskCache()
 	private static let iconConnection = InstalledIconConnection()
+	private static var selectedIconScope: String?
 	private static var iconRequests: [String: (id: UUID, task: Task<UIImage?, Error>)] = [:]
 	private static let iconCacheQueue = DispatchQueue(label: "InstallationAppProxy.iconCache")
+
+	/// The connection manager already reads the selected pairing digest. Reuse that
+	/// identity instead of scheduling file metadata work for every cached icon.
+	static public func setIconDeviceScope(pairingDigest: Data?, endpoint: String) {
+		let scope = pairingDigest.map { $0.map { String(format: "%02x", $0) }.joined() + "|" + endpoint }
+		iconCacheQueue.sync { selectedIconScope = scope }
+	}
 
 	static public func iconCacheRevision(for id: String) -> String {
 		UserDefaults.standard.string(forKey: "InstalledIconRevision." + id) ?? ""
@@ -232,9 +268,9 @@ extension InstallationAppProxy {
 
 	static public func getAppIconCached(for id: String, cacheVersion: String? = nil) async throws -> UIImage? {
 		// File I/O and identity hashing never run on the UI thread.
-		let scope = await Task.detached(priority: .userInitiated) {
-			iconDiskCache.deviceScope()
-		}.value
+		let scope: String
+		if let verified = iconCacheQueue.sync(execute: { selectedIconScope }) { scope = verified }
+		else { scope = await Task.detached(priority: .userInitiated) { iconDiskCache.deviceScope() }.value }
 		let cacheKey = "\(scope)|\(id)|\(cacheVersion ?? "")|\(iconCacheRevision(for: id))"
 		if let cached = iconCache.image(for: cacheKey) { return cached }
 		let request = iconCacheQueue.sync { () -> (id: UUID, task: Task<UIImage?, Error>) in

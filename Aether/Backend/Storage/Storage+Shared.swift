@@ -25,19 +25,41 @@ extension Storage {
 	@discardableResult
 	func deleteApp(for app: AppInfoPresentable) -> Bool {
 		guard !AppInstallationManager.shared.containsInstallation(for: app),
-			!DownloadManager.shared.usesLibraryArtifact(app) else {
-			DebugLogManager.shared.log("Kept app files required by an installation or import.", category: "Library", level: .notice)
+			!DownloadManager.shared.usesLibraryArtifact(app),
+			!ExportManager.shared.usesLibraryArtifact(app) else {
+			DebugLogManager.shared.log("Kept app files required by an installation, import, or export.", category: "Library", level: .notice)
 			return false
 		}
+		var movedDirectory: (original: URL, staged: URL)?
+		var beganDeletion = false
 		do {
-			if let url = getUuidDirectory(for: app) {
-				try? FileManager.default.removeItem(at: url)
+			guard let uuid = app.uuid else { return false }
+			// Flush existing edits first: rollback below must affect only this deletion.
+			if let error = saveContext() { throw error }
+			let request = NSFetchRequest<NSManagedObject>(entityName: app.isSigned ? "Signed" : "Imported")
+			request.predicate = NSPredicate(format: "uuid == %@", uuid)
+			let objects = try context.fetch(request)
+			if let url = getUuidDirectory(for: app), FileManager.default.fileExists(atPath: url.path) {
+				let staged = url.deletingLastPathComponent().appendingPathComponent(".deleting-" + UUID().uuidString)
+				try FileManager.default.moveItem(at: url, to: staged)
+				movedDirectory = (url, staged)
 			}
-			deleteSourceMetadata(for: app.uuid)
-			if let object = app as? NSManagedObject {
-				context.delete(object)
+			beganDeletion = true
+			try deleteSourceMetadata(for: uuid, deferSave: true)
+			objects.forEach(context.delete)
+			if let error = saveContext() { throw error }
+		} catch {
+			if beganDeletion { context.rollback() }
+			if let movedDirectory {
+				do { try FileManager.default.moveItem(at: movedDirectory.staged, to: movedDirectory.original) }
+				catch { DebugLogManager.shared.log("Could not restore app files after failed deletion: \(error.localizedDescription)", category: "Library", level: .error) }
 			}
-			saveContext()
+			DebugLogManager.shared.log("Could not delete app: \(error.localizedDescription)", category: "Library", level: .error)
+			return false
+		}
+		if let movedDirectory {
+			do { try FileManager.default.removeItem(at: movedDirectory.staged) }
+			catch { DebugLogManager.shared.log("App deleted, but could not clean staged files: \(error.localizedDescription)", category: "Library", level: .error) }
 		}
 		return true
 	}

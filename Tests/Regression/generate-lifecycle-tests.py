@@ -74,7 +74,7 @@ struct ProvisioningProfileInfo {}
  static let gate=Gate(); static var count=0; static var profileCount=0
  static func iconCacheRevision(for id:String) -> String { "" }
  static func getAppIconCached(for id:String,cacheVersion:String?) async throws -> Data? { nil }
- func fetchApps(applicationType:String) async throws -> [AppInfo] {
+ func fetchApps(applicationType:String,lightweight:Bool = false) async throws -> [AppInfo] {
   Self.count += 1; let n=Self.count
   let good=await Self.gate.wait()
   if !good { throw Failure() }
@@ -83,12 +83,12 @@ struct ProvisioningProfileInfo {}
  func provisioningProfiles() async throws -> [ProvisioningProfileInfo] { Self.profileCount += 1; return [] }
 }
 @MainActor final class DebugLogManager {
- enum Level { case error, warning }
+ enum Level { case error, warning, debug }
  static let shared=DebugLogManager()
  func log(_ message:String,category:String,level:Level = .warning) {}
 }
 @MainActor final class Store {
-	var hasLoadedApps=false
+	var hasLoadedApps=false; var lastLoadedAt:Date?; var verifiedApps:[AppInfo]?
  var iconPrefetchTask:Task<Void,Never>?; var needsTrailingRefresh=false; var refreshGeneration=UUID(); var apps:[AppInfo]=[]; var isLoading=false; var errorMessage:String?
  func updateApplications(with apps:[AppInfo],profiles:[ProvisioningProfileInfo]) { self.apps=apps }
 ''', method(store,'func load() async'), method(store,'func refreshOnForeground() async'), method(store,'func clear()'), method(store,'func refresh(force:'), r'''

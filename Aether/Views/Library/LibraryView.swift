@@ -47,11 +47,22 @@ struct LibraryView: View {
 
 	@Namespace private var _namespace
 
-	// horror
+	private func matchesSearch(_ name: String?, identifier: String? = nil) -> Bool {
+		_searchText.isEmpty || [name, identifier].compactMap { $0 }.contains {
+			$0.localizedCaseInsensitiveContains(_searchText)
+		}
+	}
+
+	private var _filteredDownloads: [Download] {
+		downloadManager.downloads.filter { matchesSearch($0.sourceProvenance?.sourceAppName ?? $0.fileName, identifier: $0.sourceProvenance?.sourceAppIdentifier) }
+	}
+
+	private var _filteredExports: [AppExport] {
+		exportManager.exports.filter { matchesSearch($0.snapshot.name, identifier: $0.snapshot.identifier) }
+	}
 	private func filteredAndSortedApps<T>(from apps: FetchedResults<T>) -> [T] where T: NSManagedObject {
 		apps.filter {
-			_searchText.isEmpty ||
-				(($0.value(forKey: "name") as? String)?.localizedCaseInsensitiveContains(_searchText) ?? false)
+			matchesSearch($0.value(forKey: "name") as? String, identifier: $0.value(forKey: "identifier") as? String)
 		}
 	}
 
@@ -68,14 +79,6 @@ struct LibraryView: View {
 		downloadManager.downloads.isEmpty &&
 		_signedApps.isEmpty &&
 		_importedApps.isEmpty
-	}
-
-	private var _searchHasNoResults: Bool {
-		!_searchText.isEmpty &&
-		_filteredSignedApps.isEmpty &&
-		_filteredImportedApps.isEmpty &&
-		exportManager.exports.isEmpty &&
-		downloadManager.downloads.isEmpty
 	}
 
 	// MARK: Fetch
@@ -95,9 +98,11 @@ struct LibraryView: View {
 	var body: some View {
 		let signedApps = _filteredSignedApps
 		let importedApps = _filteredImportedApps
+		let exports = _filteredExports
+		let downloads = _filteredDownloads
 		let sections: [LibrarySection] = [
-			exportManager.exports.isEmpty ? nil : .exports,
-			downloadManager.downloads.isEmpty ? nil : .downloads,
+			exports.isEmpty ? nil : .exports,
+			downloads.isEmpty ? nil : .downloads,
 			signedApps.isEmpty ? nil : .signed,
 			importedApps.isEmpty ? nil : .imported
 		].compactMap { $0 }
@@ -108,14 +113,14 @@ struct LibraryView: View {
 					switch section {
 					case .exports:
 						NBSection(.localized("Exports")) {
-							ForEach(exportManager.exports) { export in
+							ForEach(exports) { export in
 								ExportLibraryCellView(export: export)
 							}
 						}
 
 					case .downloads:
 						NBSection(.localized("Downloads")) {
-							ForEach(downloadManager.downloads) { download in
+							ForEach(downloads) { download in
 								DownloadLibraryCellView(download: download, selectedDownloadIDs: $_selectedDownloadIDs)
 							}
 						}
@@ -166,7 +171,7 @@ struct LibraryView: View {
 						.buttonStyle(.borderless)
 					}
 					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
-				} else if _searchHasNoResults {
+				} else if searchHasNoResults {
 					TabPlaceholderView(
 						title: .localized("No Results"),
 						description: .localized("Try another search."),

@@ -36,8 +36,14 @@ final class ExportManager: ObservableObject {
 	private var handlers: [UUID: ArchiveHandler] = [:]
 	private var progressObservations: [UUID: AnyCancellable] = [:]
 	private var runIDs: [UUID: UUID] = [:]
+	private var artifactReaders: [UUID: AppSnapshot] = [:]
 
 	private init() {}
+
+	func usesLibraryArtifact(_ app: AppInfoPresentable) -> Bool {
+		guard let uuid = app.uuid else { return false }
+		return artifactReaders.values.contains { $0.uuid == uuid && $0.isSigned == app.isSigned }
+	}
 
 	func startExport(app: AppInfoPresentable) {
 		if exports.contains(where: { $0.app.uuid == app.uuid && app.uuid != nil }) {
@@ -66,6 +72,7 @@ final class ExportManager: ObservableObject {
 	private func _start(_ export: AppExport) {
 		let runID = UUID()
 		runIDs[export.id] = runID
+		artifactReaders[runID] = export.snapshot
 
 		let viewModel = InstallerStatusViewModel(isIdevice: false)
 		progressObservations[export.id] = viewModel.$packageProgress
@@ -77,7 +84,11 @@ final class ExportManager: ObservableObject {
 
 		let useShareSheet = UserDefaults.standard.bool(forKey: "Aether.useShareSheetForArchiving")
 		tasks[export.id] = Task { @MainActor [weak self, weak export] in
-			guard let self, let export else { return }
+			guard let self else { return }
+			// Keep the artifact protected until the worker actually exits, even
+			// when Cancel removes the export row before a clone finishes.
+			defer { self.artifactReaders[runID] = nil }
+			guard let export else { return }
 			let handler = ArchiveHandler(app: export.snapshot, viewModel: viewModel, purpose: .export)
 			self.handlers[export.id] = handler
 

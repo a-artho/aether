@@ -43,7 +43,7 @@ For the RSD/jktcp path, `socketWriteSeconds` measures acceptance into the adapte
 
 Packaging uses a bounded 256 KiB input buffer and checks each archive open/write/close result. Cancellation is checked between input chunks and files; incomplete output is removed. Install and export use the configured compression level. Progress publication is capped to one update per 125 ms, plus completion.
 
-Install packaging can reuse one completed IPA persisted in Caches. Its key includes sorted relative names, file modes/timestamps, file contents, link targets and compression. Directory timestamps are normalized because cloning into a fresh work directory can change them without changing app content. A checksum also verifies the cached IPA before cloning it into the private install directory. Changes, corruption or unavailable cache storage rebuild the package; exports always build fresh. Cache hashing is bounded in memory but adds a complete input read on a miss and input/package reads on a hit, so measure end-to-end packaging time rather than assuming free reuse. Cache hit/miss is logged with the existing logging toggle. No timer or background cache maintenance is added.
+Install packaging builds a fresh private IPA for each attempt, using the configured compression setting. There is no reusable install package cache. Compare packaging CPU/time and acknowledged transfer time together when evaluating compression settings.
 
 ## Archive extraction path aliases
 

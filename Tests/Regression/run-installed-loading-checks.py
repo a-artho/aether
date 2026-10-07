@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Exercise confirmed-row publication, profile fallback and foreground refresh ownership."""
+import pathlib, subprocess, tempfile
+repo=pathlib.Path(__file__).resolve().parents[2]
+def declaration(path,start):
+ s=(repo/path).read_text();begin=s.index(start);end=s.index('{',begin)+1;depth=1
+ while depth:
+  depth+=(s[end]=='{')-(s[end]=='}');end+=1
+ return s[begin:end]
+s='import Foundation\n'
+s+=(repo/'IDeviceKitten/Sources/IDeviceSwift/Utilties/AnyCodable.swift').read_text()
+s+=(repo/'IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/Models/AppInfo.swift').read_text()
+s+=(repo/'IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/Models/AppInstallationProvenance.swift').read_text()
+s+=r'''
+public struct ProvisioningProfileInfo {
+ func matches(bundleIdentifier:String,appTeamIdentifier:String?,appApplicationIdentifier:String?,now:Date) -> Bool {bundleIdentifier == "unknown"}
+}
+struct InstalledApp {
+ let bundleIdentifier:String;let name:String;let version:String?;let build:String?;let appInfo:AppInfo?
+ var id:String {bundleIdentifier}
+}
+enum Level {case error, debug}
+@MainActor final class DebugLogManager {static let shared=DebugLogManager();func log(_ s:String,category:String,level:Level?=nil) {}}
+@MainActor final class DeviceConnectionManager {static let shared=DeviceConnectionManager();var isConnected=true}
+@MainActor final class InstallationAppProxy {
+ static var fetches=0;static var profileFetches=0;static var profileWaiter:CheckedContinuation<[ProvisioningProfileInfo],Never>?
+ static var result:[AppInfo]=[]
+ func fetchApps(applicationType:String?,lightweight:Bool) async throws -> [AppInfo] {Self.fetches+=1;return Self.result}
+ func provisioningProfiles() async throws -> [ProvisioningProfileInfo] {Self.profileFetches+=1;return await withCheckedContinuation {Self.profileWaiter=$0}}
+ static func getAppIconCached(for id:String,cacheVersion:String?) async throws -> String? {nil}
+ static func iconCacheRevision(for id:String)->String {""}
+}
+@MainActor final class Store {
+ var apps:[InstalledApp]=[];var hasLoadedApps=false;var lastLoadedAt:Date?;var verifiedApps:[AppInfo]?
+ var initialBrowse:Task<[AppInfo]?,Never>?
+ var needsTrailingRefresh=false;var refreshGeneration=UUID();var iconPrefetchTask:Task<Void,Never>?
+ var isLoading=false;var errorMessage:String?
+'''
+for start in ['func stageInitialBrowse(', 'func stageVerifiedApps(', 'func load()', 'func refreshOnForeground()', 'func clear()', 'func refresh(force:', 'private func updateApplications(']:
+ s+=declaration('Aether/Views/Installed/InstalledAppsStore.swift',start)+'\n'
+s+='}\n'
+s+=r'''
+func check(_ value:@autoclosure ()->Bool,_ label:String){precondition(value(),label)}
+@main struct Checks {
+ @MainActor static func main() async throws {
+  let known=AppInfo(SignerIdentity:"Developer",CFBundleIdentifier:"known")
+  let unknown=AppInfo(Entitlements:["com.apple.developer.team-identifier":AnyCodable("TEAM")],CFBundleIdentifier:"unknown")
+  let store=Store();InstallationAppProxy.result=[known,unknown]
+  store.stageInitialBrowse(Task { [known,unknown] })
+  let load=Task {await store.load()}
+  while InstallationAppProxy.profileWaiter == nil {await Task.yield()}
+  check(store.apps.map(\.id)==["known"],"Confirmed row published before profile fallback")
+  check(InstallationAppProxy.fetches==0,"Verified initial browse avoids a second fetch")
+  InstallationAppProxy.profileWaiter?.resume(returning:[ProvisioningProfileInfo()]);InstallationAppProxy.profileWaiter=nil
+  await load.value
+  check(Set(store.apps.map(\.id))==Set(["known","unknown"]),"Fallback adds only profile-confirmed app")
+  await store.refreshOnForeground()
+  check(InstallationAppProxy.fetches==0,"Recent foreground return doesn't reload apps")
+  InstallationAppProxy.result=[known]
+  await store.refresh(force:true)
+  check(InstallationAppProxy.fetches==1 && store.apps.map(\.id)==["known"],"Explicit refresh remains authoritative")
+  store.lastLoadedAt=Date(timeIntervalSinceNow:-61)
+  await store.refreshOnForeground()
+  check(InstallationAppProxy.fetches==2,"Stale foreground list refreshed")
+  InstallationAppProxy.result=[known,unknown]
+  let stale=Task {await store.refresh()}
+  while InstallationAppProxy.profileWaiter == nil {await Task.yield()}
+  store.clear();DeviceConnectionManager.shared.isConnected=false
+  InstallationAppProxy.profileWaiter?.resume(returning:[ProvisioningProfileInfo()]);InstallationAppProxy.profileWaiter=nil
+  await stale.value
+  check(store.apps.isEmpty && !store.isLoading,"Disconnect prevents stale fallback publication")
+  print("Installed loading/foreground checks passed")
+ }
+}
+'''
+with tempfile.TemporaryDirectory(prefix='aether-installed-loading-') as directory:
+ root=pathlib.Path(directory);(root/'Checks.swift').write_text(s)
+ subprocess.run(['swiftc','-parse-as-library',str(root/'Checks.swift'),'-o',str(root/'checks')],check=True)
+ subprocess.run([str(root/'checks')],check=True)

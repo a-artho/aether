@@ -87,14 +87,18 @@ final class FRIconCache: NSObject {
 final class FRAppIconLoader: ObservableObject {
 	@Published var image: UIImage?
 	private var task: Task<Void, Never>?
+	private var generation = UUID()
 
 	func load(bundleURL: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool) {
+		task?.cancel()
+		task = nil
+		generation = UUID()
+		let generation = self.generation
 		if let cached = FRIconCache.shared.image(for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic) {
 			self.image = cached
 			return
 		}
 
-		task?.cancel()
 		task = Task.detached(priority: .userInitiated) { [weak self] in
 			await FRIconRenderGate.shared.acquire()
 			guard !Task.isCancelled else {
@@ -106,8 +110,8 @@ final class FRAppIconLoader: ObservableObject {
 			await FRIconRenderGate.shared.release()
 			guard !Task.isCancelled, let generated else { return }
 
-			await MainActor.run {
-				guard !Task.isCancelled else { return }
+			await MainActor.run { [weak self] in
+				guard !Task.isCancelled, self?.generation == generation else { return }
 				FRIconCache.shared.insert(generated, for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic)
 				self?.image = generated
 			}
@@ -115,7 +119,9 @@ final class FRAppIconLoader: ObservableObject {
 	}
 
 	func cancel() {
+		generation = UUID()
 		task?.cancel()
+		task = nil
 	}
 }
 

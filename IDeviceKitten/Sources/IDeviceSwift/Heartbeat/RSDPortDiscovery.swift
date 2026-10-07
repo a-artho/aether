@@ -4,7 +4,7 @@ import Network
 /// Resolves Remote Pairing service ports advertised on the local device network.
 /// The native pairing handshake remains the authority for choosing a valid peer.
 public enum RSDPortDiscovery {
-	public static func resolvePorts(timeout: TimeInterval = 6) -> [UInt16] {
+	public static func resolvePorts(timeout: TimeInterval = 6, stopWhen: ([UInt16]) -> Bool = { _ in false }) -> [UInt16] {
 		let queue = DispatchQueue(label: "idevice.rsd-port-discovery")
 		let deadline = DispatchTime.now() + timeout
 		// Leave at least half a second for endpoint resolution while preserving the
@@ -26,7 +26,7 @@ public enum RSDPortDiscovery {
 			browser.browseResultsChangedHandler = { results, _ in
 				guard !results.isEmpty, !browseSignaled else { return }
 				browseSignaled = true
-				queue.asyncAfter(deadline: .now() + 0.25) { browseReady.signal() }
+				browseReady.signal()
 			}
 			browser.stateUpdateHandler = { state in
 				if case .failed = state { browseReady.signal() }
@@ -47,37 +47,46 @@ public enum RSDPortDiscovery {
 
 		guard !endpoints.isEmpty else { return [] }
 
-		let resolved = DispatchSemaphore(value: 0)
-		var completed = Set<Int>()
+		let changed = DispatchSemaphore(value: 0)
 		var ports = Set<UInt16>()
+		var discovered = Set<NWEndpoint>()
 		var connections: [NWConnection] = []
+		var finished = false
 
-		for (index, endpoint) in endpoints.enumerated() {
+		// Runs only on the discovery queue. New Bonjour results remain eligible
+		// while another endpoint is resolving or being authenticated by the caller.
+		func resolve(_ endpoint: NWEndpoint) {
+			guard !finished, discovered.insert(endpoint).inserted else { return }
 			let connection = NWConnection(to: endpoint, using: .tcp)
 			connection.stateUpdateHandler = { [weak connection] state in
-				guard let connection else { return }
+				guard !finished, let connection else { return }
 				switch state {
 				case .ready:
 					let remote = connection.currentPath?.remoteEndpoint ?? connection.endpoint
-					if case let .hostPort(_, port) = remote {
-						ports.insert(port.rawValue)
-					}
-				case .failed, .cancelled:
-					break
-				default:
-					return
+					if case let .hostPort(_, port) = remote { ports.insert(port.rawValue) }
+				case .failed, .cancelled: break
+				default: return
 				}
-				guard completed.insert(index).inserted else { return }
-				if completed.count == endpoints.count { resolved.signal() }
+				changed.signal()
 			}
 			connections.append(connection)
 			connection.start(queue: queue)
 		}
-
-		_ = resolved.wait(timeout: deadline)
-		let result = queue.sync { ports.sorted() }
-		connections.forEach { $0.cancel() }
-		matchedBrowser?.cancel()
-		return result
+		queue.sync {
+			matchedBrowser?.browseResultsChangedHandler = { results, _ in
+				for result in results { resolve(result.endpoint) }
+			}
+			for endpoint in endpoints { resolve(endpoint) }
+			for result in matchedBrowser?.browseResults ?? [] { resolve(result.endpoint) }
+		}
+		while changed.wait(timeout: deadline) == .success {
+			if stopWhen(queue.sync { ports.sorted() }) { break }
+		}
+		return queue.sync {
+			finished = true
+			matchedBrowser?.cancel()
+			connections.forEach { $0.cancel() }
+			return ports.sorted()
+		}
 	}
 }

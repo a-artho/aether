@@ -106,6 +106,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	private var didEnterBackgroundObserver: NSObjectProtocol?
 	private var transitionTask: Task<Void, Never>?
 	private var transitionGeneration: UUID?
+	private var activeVerificationID: UUID?
 	private var transitionExpectedState: Bool?
 	private var transitionDeadline: TimeInterval = 0
 	private var reconciliationTask: Task<Void, Never>?
@@ -329,7 +330,6 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	public func handleAppForeground() {
 		lastVerifiedAt = 0
-		EmbeddedTunnelManager.shared.invalidateConfigurationCache()
 		CellularAssistManager.shared.handleApplicationDidBecomeActive()
 		guard !CellularAssistManager.shared.isBusy else { return }
 		guard isConnectAutomaticallyEnabled, isIDeviceInstallationMode else { return }
@@ -396,11 +396,12 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	public func setConnection(enabled: Bool, force: Bool = false) {
 		if !enabled { connectionPreparation = nil }
-		guard !isUpdating else { return }
+		guard force || !isUpdating else { return }
 		guard force || (enabled && state != .connected) || (!enabled && state != .disconnected) else { return }
 
 		let method = tunnelMethod
 		let generation = UUID()
+		activeVerificationID = nil
 		transitionGeneration = generation
 		transitionExpectedState = enabled
 		transitionDeadline = method == .inApp ? .infinity : CACurrentMediaTime() + 6.0
@@ -483,7 +484,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		let checkedRecord = _syncPairingRecord()
 		if let checkedRecord { pairingVerification.beginChecking(checkedRecord) }
 		let checkResult = await Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, legacySocketAlreadyVerified: !isRsd)
 		}.value
 
 		guard _recordStillMatches(checkedRecord) else {
@@ -636,12 +637,31 @@ public final class DeviceConnectionManager: ObservableObject {
 		// Step 2: Full Installation Proxy check (validates pairing + transport)
 		let checkedRecord = _syncPairingRecord()
 		if let checkedRecord { pairingVerification.beginChecking(checkedRecord) }
-		let checkResult = await Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
-		}.value
+		let includeApps = !isConnected && expectedState != false
+		let verificationStarted = ProcessInfo.processInfo.systemUptime
+		let verificationID = UUID()
+		activeVerificationID = verificationID
+		defer { if activeVerificationID == verificationID { activeVerificationID = nil } }
+		let verification = Task.detached(priority: .userInitiated) { [weak self] in
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, includeApps: includeApps, legacySocketAlreadyVerified: !isRsd, onVerified: {
+				guard includeApps else { return }
+				Task { @MainActor [weak self] in
+					self?._publishVerifiedTransport(verificationID: verificationID,
+						generation: reconciliationGeneration, record: checkedRecord,
+						cellularAssistTransaction: cellularAssistTransaction, startedAt: verificationStarted)
+				}
+			})
+		}
+		if includeApps {
+			InstalledAppsStore.shared.stageInitialBrowse(Task { await verification.value.apps })
+		}
+		let checkResult = await withTaskCancellationHandler {
+			await verification.value
+		} onCancel: { verification.cancel() }
 
 		guard
 			!Task.isCancelled,
+			activeVerificationID == verificationID,
 			reconciliationGeneration == transitionGeneration
 		else {
 			return
@@ -655,8 +675,10 @@ public final class DeviceConnectionManager: ObservableObject {
 			pairingVerification.finishChecking(checkedRecord, succeeded: checkResult.isConnected)
 		}
 		if await _discardRejectedRecord(checkResult, record: checkedRecord) != .notRejected { return }
+		_log("Device verification seconds=\(ProcessInfo.processInfo.systemUptime - verificationStarted) initialBrowse=\(includeApps) appCount=\(checkResult.apps?.count ?? -1).", level: .debug)
 
 		if checkResult.isConnected {
+			if !includeApps, let apps = checkResult.apps { InstalledAppsStore.shared.stageVerifiedApps(apps) }
 			lastVerifiedAt = CACurrentMediaTime()
 			lastVerifiedRecord = checkedRecord
 			if expectedState == false && !force && !isExpired {
@@ -683,6 +705,18 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	// MARK: - Private Helpers
 
+	private func _publishVerifiedTransport(verificationID: UUID, generation: UUID?, record: PairingRecordIdentity?, cellularAssistTransaction: Bool, startedAt: TimeInterval) {
+		guard activeVerificationID == verificationID, transitionGeneration == generation,
+			_recordStillMatches(record),
+			!CellularAssistManager.shared.isAutomaticRecoveryInProgress || cellularAssistTransaction else { return }
+		// Keep ownership until the same client's optional browse completes.
+		state = .connected
+		diagnostic = .ready
+		lastVerifiedAt = CACurrentMediaTime()
+		lastVerifiedRecord = record
+		_log("Authenticated transport ready seconds=\(ProcessInfo.processInfo.systemUptime - startedAt); initial app browse continues.", level: .debug)
+	}
+
 	/// Refresh stored-file status without launching a VPN or adding another probe.
 	public func refreshStoredPairingState() {
 		_syncPairingRecord()
@@ -696,6 +730,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			lastVerifiedAt = 0
 			pairingVerification.select(record)
 		}
+		InstallationAppProxy.setIconDeviceScope(pairingDigest: record?.digest, endpoint: HeartbeatManager.shared.ipAddress)
 		return record
 	}
 
@@ -819,6 +854,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		UIApplication.shared.open(url, options: [:]) { [weak self] didOpen in
 			Task { @MainActor [weak self] in
 				guard let self else { return }
+				guard self.transitionGeneration == generation else { return }
 				guard didOpen else {
 					self._cancelTransition()
 					self._log("LocalDevVPN did not accept the connection request.", category: "Tunnel", level: .error)
@@ -833,7 +869,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	private func _setEmbeddedTunnelConnection(enabled: Bool, generation: UUID) async {
 		if enabled {
 			do {
-				try await EmbeddedTunnelManager.shared.start()
+				try await EmbeddedTunnelManager.shared.start { self.transitionGeneration == generation }
 				guard transitionGeneration == generation else { return }
 				// The embedded tunnel also carries the pre-RSD legacy service.
 				HeartbeatManager.shared.start(true)
@@ -878,6 +914,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _cancelTransition() {
+		activeVerificationID = nil
 		transitionGeneration = nil
 		transitionExpectedState = nil
 		transitionDeadline = 0
@@ -886,6 +923,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _finishTransition(to newState: DeviceConnectionState, diagnostic newDiagnostic: DeviceDiagnosticStatus) {
+		activeVerificationID = nil
 		connectionPreparation = nil
 		if newState != .connected { lastVerifiedAt = 0 }
 		let previousState = state

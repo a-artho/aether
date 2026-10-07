@@ -306,12 +306,21 @@ private struct InstalledAppInformationView: View {
 		}
 	}
 
-	let app: InstalledApp
+	let summary: InstalledApp
+	@State private var detailedApp: InstalledApp?
+	@State private var metadataError: String?
+	private var app: InstalledApp { detailedApp ?? summary }
+
+	init(app: InstalledApp, page: Page) { self.summary = app; self.page = page }
 	let page: Page
 	@State private var copiedItemText: String?
 
 	var body: some View {
 		List {
+			if detailedApp == nil {
+				if let metadataError { Text(metadataError).foregroundStyle(.secondary) }
+				else { ProgressView() }
+			}
 			if page == .specifications {
 				Section(.localized("Specifications")) {
 					_detailRow(label: .localized("Signer"), value: app.signerIdentity ?? .localized("Unavailable"))
@@ -374,6 +383,17 @@ private struct InstalledAppInformationView: View {
 				}
 			}
 			entitlementsSection
+		}
+		.task(id: summary.iconCacheVersion) {
+			do {
+				let info = try await InstallationAppProxy().fetchApps(applicationType: "User", bundleIdentifier: summary.bundleIdentifier)
+				try Task.checkCancellation()
+				guard let full = info.first(where: { $0.CFBundleIdentifier == summary.bundleIdentifier }) else {
+					metadataError = .localized("App information is unavailable.")
+					return
+				}
+				detailedApp = InstalledApp(bundleIdentifier: summary.bundleIdentifier, name: summary.name, version: full.CFBundleShortVersionString, build: full.CFBundleVersion, appInfo: full)
+			} catch is CancellationError {} catch { metadataError = error.localizedDescription }
 		}
 		.listStyle(.insetGrouped)
 		.navigationTitle(page.title)
