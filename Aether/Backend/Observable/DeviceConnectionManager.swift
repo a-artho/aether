@@ -81,7 +81,9 @@ public final class DeviceConnectionManager: ObservableObject {
 	public static let connectAutomaticallyKey = "Aether.connectAutomatically"
 	private static let unresolvedSimulationKey = "Aether.spoofing.simulationMayBeActive"
 
-	@Published public private(set) var state: DeviceConnectionState = .disconnected
+	@Published public private(set) var state: DeviceConnectionState = .disconnected {
+		didSet { if state != oldValue { _signalConnectionWorkChanged() } }
+	}
 	@Published public private(set) var diagnostic: DeviceDiagnosticStatus = .tunnelUnavailable
 	@Published public private(set) var hasPairingFile: Bool = false
 	@Published public private(set) var pairingVerification = PairingVerificationState()
@@ -90,7 +92,9 @@ public final class DeviceConnectionManager: ObservableObject {
 	@Published public private(set) var isConnectAutomaticallyEnabled: Bool
 	@Published public private(set) var physicalNetworkState: PhysicalNetworkState = .unknown
 	@Published public private(set) var requiresInAppTunnelSetup = false
-	@Published private var connectionPreparation: UUID?
+	@Published private var connectionPreparation: UUID? {
+		didSet { if connectionPreparation != oldValue { _signalConnectionWorkChanged() } }
+	}
 
 	public var isConnected: Bool {
 		state == .connected
@@ -104,12 +108,18 @@ public final class DeviceConnectionManager: ObservableObject {
 	private let monitorQueue = DispatchQueue(label: "aether.network.monitor")
 	private var didBecomeActiveObserver: NSObjectProtocol?
 	private var didEnterBackgroundObserver: NSObjectProtocol?
+	private var foregroundRecoveryTask: Task<Void, Never>?
+	private var foregroundRecoveryID: UUID?
 	private var transitionTask: Task<Void, Never>?
 	private var transitionGeneration: UUID?
 	private var activeVerificationID: UUID?
+	private var connectionEpoch: UInt64 = 0
 	private var transitionExpectedState: Bool?
 	private var transitionDeadline: TimeInterval = 0
-	private var reconciliationTask: Task<Void, Never>?
+	private var connectionWorkWaiters: [UUID: AsyncStream<Void>.Continuation] = [:]
+	private var reconciliationTask: Task<Void, Never>? {
+		didSet { _signalConnectionWorkChanged() }
+	}
 	private var reconciliationPending = false
 	private var lastVerifiedAt: TimeInterval = 0
 	private var lastVerifiedRecord: PairingRecordIdentity?
@@ -146,7 +156,9 @@ public final class DeviceConnectionManager: ObservableObject {
 			Task { @MainActor [weak self] in
 				guard let self else { return }
 				self.handleAppForeground()
-				await self.reconcile()
+				if !self.isConnectAutomaticallyEnabled || !self.isIDeviceInstallationMode {
+					await self.reconcile()
+				}
 			}
 		}
 
@@ -175,6 +187,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			NotificationCenter.default.removeObserver(didEnterBackgroundObserver)
 		}
 		transitionTask?.cancel()
+		foregroundRecoveryTask?.cancel()
 	}
 
 	// MARK: - Event Triggers
@@ -204,6 +217,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	public func setTunnelMethod(_ method: DeviceTunnelMethod) {
 		guard !isUpdating, state == .disconnected else { return }
 		guard tunnelMethod != method else { return }
+		connectionEpoch &+= 1
 		tunnelMethod = method
 		requiresInAppTunnelSetup = false
 		UserDefaults.standard.set(method.rawValue, forKey: "Aether.tunnelMethod")
@@ -320,6 +334,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	public func setConnectAutomatically(_ enabled: Bool) {
 		guard isConnectAutomaticallyEnabled != enabled else { return }
+		if !enabled { _cancelForegroundRecovery() }
 		isConnectAutomaticallyEnabled = enabled
 		UserDefaults.standard.set(enabled, forKey: Self.connectAutomaticallyKey)
 		_log("Connect automatically set to \(enabled).", category: "Tunnel", level: .notice)
@@ -329,16 +344,90 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	public func handleAppForeground() {
+		guard UIApplication.shared.applicationState == .active else { return }
 		lastVerifiedAt = 0
 		CellularAssistManager.shared.handleApplicationDidBecomeActive()
 		guard !CellularAssistManager.shared.isBusy else { return }
 		guard isConnectAutomaticallyEnabled, isIDeviceInstallationMode else { return }
+		_scheduleForegroundRecovery()
 		guard !isConnected, !isUpdating else { return }
 		_log("App foregrounded; automatically starting device tunnel.", category: "Tunnel", level: .notice)
 		_connectForIDeviceMode()
 	}
 
+	/// One recovery per activation, after the background stop and verification
+	/// settle. A stale Connected value must not consume the reconnect opportunity.
+	private func _scheduleForegroundRecovery() {
+		_cancelForegroundRecovery()
+		let id = UUID()
+		foregroundRecoveryID = id
+		foregroundRecoveryTask = Task { [weak self] in
+			guard let self else { return }
+			defer {
+				if self.foregroundRecoveryID == id {
+					self.foregroundRecoveryID = nil
+					self.foregroundRecoveryTask = nil
+				}
+			}
+			let deadline = CACurrentMediaTime() + 30
+			guard await self._waitForForegroundConnectionToSettle(id: id, deadline: deadline) else { return }
+			await self.reconcile()
+			guard await self._waitForForegroundConnectionToSettle(id: id, deadline: deadline) else { return }
+			guard self.isConnectAutomaticallyEnabled, self.isIDeviceInstallationMode,
+				!self.isConnected, !CellularAssistManager.shared.isBusy else { return }
+			self._log("Foreground verification settled disconnected; automatically recovering device tunnel.", category: "Tunnel", level: .notice)
+			self._connectForIDeviceMode()
+		}
+	}
+
+	private func _signalConnectionWorkChanged() {
+		for waiter in connectionWorkWaiters.values { waiter.yield(()) }
+	}
+
+	private func _waitForForegroundConnectionToSettle(id: UUID, deadline: TimeInterval) async -> Bool {
+		guard !Task.isCancelled, foregroundRecoveryID == id,
+			UIApplication.shared.applicationState == .active,
+			isConnectAutomaticallyEnabled, isIDeviceInstallationMode else { return false }
+		if !isUpdating, reconciliationTask == nil { return true }
+		let remaining = deadline - CACurrentMediaTime()
+		guard remaining > 0 else { return false }
+
+		// Register before suspending so a transition completion cannot be missed.
+		let (changes, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+		connectionWorkWaiters[id] = continuation
+		let timeout = Task {
+			do { try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000)) }
+			catch { return }
+			continuation.finish()
+		}
+		defer {
+			timeout.cancel()
+			connectionWorkWaiters.removeValue(forKey: id)
+			continuation.finish()
+		}
+		for await _ in changes {
+			guard !Task.isCancelled, foregroundRecoveryID == id,
+				UIApplication.shared.applicationState == .active,
+				isConnectAutomaticallyEnabled, isIDeviceInstallationMode else { return false }
+			if !isUpdating, reconciliationTask == nil { return true }
+		}
+		if !Task.isCancelled, foregroundRecoveryID == id {
+			_log("Foreground recovery deferred because a connection operation is still pending.", category: "Tunnel", level: .notice)
+		}
+		return false
+	}
+
+	private func _cancelForegroundRecovery() {
+		if let id = foregroundRecoveryID { connectionWorkWaiters[id]?.finish() }
+		foregroundRecoveryID = nil
+		foregroundRecoveryTask?.cancel()
+		foregroundRecoveryTask = nil
+	}
+
 	public func handleAppBackground() {
+		// A delayed background notification must not close a resumed app's tunnel.
+		guard UIApplication.shared.applicationState == .background else { return }
+		_cancelForegroundRecovery()
 		guard isDisconnectWhenIdleEnabled, isIDeviceInstallationMode else { return }
 		if hasActiveTunnelDependencies {
 			_log(
@@ -371,6 +460,8 @@ public final class DeviceConnectionManager: ObservableObject {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
 			return
 		}
+		connectionEpoch &+= 1
+		activeVerificationID = nil
 		let preparation = UUID()
 		connectionPreparation = preparation
 		diagnostic = .checking
@@ -395,10 +486,16 @@ public final class DeviceConnectionManager: ObservableObject {
 	// MARK: - Toggle Connection
 
 	public func setConnection(enabled: Bool, force: Bool = false) {
-		if !enabled { connectionPreparation = nil }
+		if !enabled {
+			connectionEpoch &+= 1
+			activeVerificationID = nil
+			_cancelForegroundRecovery()
+			connectionPreparation = nil
+		}
 		guard force || !isUpdating else { return }
 		guard force || (enabled && state != .connected) || (!enabled && state != .disconnected) else { return }
 
+		connectionEpoch &+= 1
 		let method = tunnelMethod
 		let generation = UUID()
 		activeVerificationID = nil
@@ -433,6 +530,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	@discardableResult
 	public func ensureConnected() async throws -> Bool {
+		let epoch = connectionEpoch
 		_syncPairingRecord()
 		guard hasPairingFile else {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
@@ -442,11 +540,14 @@ public final class DeviceConnectionManager: ObservableObject {
 
 		let method = tunnelMethod
 		if method == .inApp {
-			guard await _hasRequiredTunnelProfile() else {
+			let hasProfile = await _hasRequiredTunnelProfile()
+			guard _reconciliationIsCurrent(epoch: epoch) else { throw CancellationError() }
+			guard hasProfile else {
 				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 				throw DeviceConnectionError.tunnelUnavailable("Set up the Aether VPN profile first")
 			}
 			await EmbeddedTunnelManager.shared.refresh()
+			guard _reconciliationIsCurrent(epoch: epoch) else { throw CancellationError() }
 			let embeddedReady = EmbeddedTunnelManager.shared.isConnected
 			guard embeddedReady else {
 				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
@@ -474,6 +575,7 @@ public final class DeviceConnectionManager: ObservableObject {
 				HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 1.5)
 			}.value
 
+			guard _reconciliationIsCurrent(epoch: epoch) else { throw CancellationError() }
 			guard probe.isConnected else {
 				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 				_log("Device endpoint probe failed: \(probe.error ?? "port unreachable").", level: .warning)
@@ -487,6 +589,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, legacySocketAlreadyVerified: !isRsd)
 		}.value
 
+		guard _reconciliationIsCurrent(epoch: epoch) else { throw CancellationError() }
 		guard _recordStillMatches(checkedRecord) else {
 			throw DeviceConnectionError.serviceUnavailable("Pairing record changed during verification. Retry the connection.")
 		}
@@ -501,6 +604,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		case .notRejected:
 			break
 		}
+		guard _reconciliationIsCurrent(epoch: epoch) else { throw CancellationError() }
 		if checkResult.isConnected {
 			lastVerifiedAt = CACurrentMediaTime()
 			lastVerifiedRecord = checkedRecord
@@ -510,6 +614,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			return true
 		} else {
 			await _resetRSDTunnel()
+			guard _reconciliationIsCurrent(epoch: epoch) else { throw CancellationError() }
 			if checkResult.rejectsPairingRecord {
 				_finishTransition(to: .disconnected, diagnostic: .invalidPairing)
 				_log("Device rejected the pairing record.", level: .error)
@@ -553,7 +658,11 @@ public final class DeviceConnectionManager: ObservableObject {
 	private func _reconcile(force: Bool, cellularAssistTransaction: Bool) async {
 		guard connectionPreparation == nil else { return }
 		let reconciliationGeneration = transitionGeneration
+		let epoch = connectionEpoch
 		let method = tunnelMethod
+		// The embedded stop owns completion; passive events must not finish it
+		// while stopVPNTunnel is still disconnecting. Its owner reconciles forcibly.
+		if method == .inApp, state == .disconnecting, !force { return }
 		guard isIDeviceInstallationMode else {
 			_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 			return
@@ -567,24 +676,39 @@ public final class DeviceConnectionManager: ObservableObject {
 			return
 		}
 
+		// Coalesced heartbeat events can reuse a freshly verified stable transport
+		// before repeating profile/preference work. Foreground and network events
+		// invalidate lastVerifiedAt; explicit actions and forced checks always probe.
+		if !force, !cellularAssistTransaction, transitionExpectedState == nil, isConnected,
+			lastVerifiedRecord == pairingVerification.record,
+			CACurrentMediaTime() - lastVerifiedAt < 1,
+			(method != .inApp || EmbeddedTunnelManager.shared.isConnected) {
+			return
+		}
+
 		let expectedState = transitionExpectedState
 		let now = CACurrentMediaTime()
 		let isExpired = now >= transitionDeadline
 
 		if method == .inApp {
 			HeartbeatManager.shared.ipAddress = EmbeddedTunnelManager.shared.peerIPOnly
-			guard await _hasRequiredTunnelProfile() else {
+			let hasProfile = await _hasRequiredTunnelProfile()
+			guard _reconciliationIsCurrent(epoch: epoch) else { return }
+			guard hasProfile else {
 				await _resetRSDTunnel()
+				guard _reconciliationIsCurrent(epoch: epoch) else { return }
 				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 				return
 			}
 			await EmbeddedTunnelManager.shared.refresh()
+			guard _reconciliationIsCurrent(epoch: epoch) else { return }
 			let embeddedReady = EmbeddedTunnelManager.shared.isConnected
 			guard embeddedReady else {
 				if expectedState == true && !force && !isExpired {
 					return
 				}
 				await _resetRSDTunnel()
+				guard _reconciliationIsCurrent(epoch: epoch) else { return }
 				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 				return
 			}
@@ -593,14 +717,6 @@ public final class DeviceConnectionManager: ObservableObject {
 				_beginCellularAssistIfEligible() {
 				return
 			}
-		}
-
-		// Event bursts may overlap a successful check. Reuse that result only
-		// while stable; explicit actions, transitions and forced retries still probe.
-		if !force, !cellularAssistTransaction, expectedState == nil, isConnected,
-			lastVerifiedRecord == pairingVerification.record,
-			CACurrentMediaTime() - lastVerifiedAt < 1 {
-			return
 		}
 
 		// The legacy transport needs a socket preflight. RSD is verified by its
@@ -613,7 +729,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			}.value
 
 			guard
-				!Task.isCancelled,
+				_reconciliationIsCurrent(epoch: epoch),
 				reconciliationGeneration == transitionGeneration
 			else {
 				return
@@ -629,6 +745,7 @@ public final class DeviceConnectionManager: ObservableObject {
 				}
 				if _beginCellularAssistIfEligible() { return }
 				await _resetRSDTunnel()
+				guard _reconciliationIsCurrent(epoch: epoch) else { return }
 				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
 				return
 			}
@@ -661,7 +778,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		} onCancel: { verification.cancel() }
 
 		guard
-			!Task.isCancelled,
+			_reconciliationIsCurrent(epoch: epoch),
 			activeVerificationID == verificationID,
 			reconciliationGeneration == transitionGeneration
 		else {
@@ -676,6 +793,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			pairingVerification.finishChecking(checkedRecord, succeeded: checkResult.isConnected)
 		}
 		if await _discardRejectedRecord(checkResult, record: checkedRecord) != .notRejected { return }
+		guard _reconciliationIsCurrent(epoch: epoch) else { return }
 		_log("Device verification seconds=\(ProcessInfo.processInfo.systemUptime - verificationStarted) initialBrowse=\(includeApps) appCount=\(checkResult.apps?.count ?? -1).", level: .debug)
 
 		if checkResult.isConnected {
@@ -695,6 +813,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			}
 			if !checkResult.rejectsPairingRecord, _beginCellularAssistIfEligible() { return }
 			await _resetRSDTunnel()
+			guard _reconciliationIsCurrent(epoch: epoch) else { return }
 			if checkResult.rejectsPairingRecord {
 				_finishTransition(to: .disconnected, diagnostic: .invalidPairing)
 			} else {
@@ -706,13 +825,17 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	// MARK: - Private Helpers
 
+	private func _reconciliationIsCurrent(epoch: UInt64) -> Bool {
+		!Task.isCancelled && connectionEpoch == epoch
+	}
+
 	private func _publishVerifiedTransport(verificationID: UUID, generation: UUID?, record: PairingRecordIdentity?, cellularAssistTransaction: Bool, startedAt: TimeInterval) {
 		guard activeVerificationID == verificationID, transitionGeneration == generation,
 			_recordStillMatches(record),
 			!CellularAssistManager.shared.isAutomaticRecoveryInProgress || cellularAssistTransaction else { return }
 		// Keep ownership until the same client's optional browse completes.
-		state = .connected
-		diagnostic = .ready
+		if state != .connected { state = .connected }
+		if diagnostic != .ready { diagnostic = .ready }
 		lastVerifiedAt = CACurrentMediaTime()
 		lastVerifiedRecord = record
 		_log("Authenticated transport ready seconds=\(ProcessInfo.processInfo.systemUptime - startedAt); initial app browse continues.", level: .debug)
@@ -725,7 +848,8 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	@discardableResult
 	private func _syncPairingRecord() -> PairingRecordIdentity? {
-		hasPairingFile = HeartbeatManager.hasPairingFile()
+		let fileIsPresent = HeartbeatManager.hasPairingFile()
+		if hasPairingFile != fileIsPresent { hasPairingFile = fileIsPresent }
 		let record = hasPairingFile ? PairingRecordIdentity(fileURL: URL(fileURLWithPath: HeartbeatManager.activePairingFile())) : nil
 		if pairingVerification.record != record {
 			lastVerifiedAt = 0
@@ -776,8 +900,10 @@ public final class DeviceConnectionManager: ObservableObject {
 			requiresInAppTunnelSetup = false
 			return true
 		}
+		let epoch = connectionEpoch
 		let hasProfile = await EmbeddedTunnelManager.shared.hasSavedConfiguration()
-		requiresInAppTunnelSetup = !hasProfile
+		guard _reconciliationIsCurrent(epoch: epoch), tunnelMethod == .inApp else { return false }
+		if requiresInAppTunnelSetup != !hasProfile { requiresInAppTunnelSetup = !hasProfile }
 		return hasProfile
 	}
 
@@ -915,6 +1041,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _cancelTransition() {
+		connectionEpoch &+= 1
 		activeVerificationID = nil
 		transitionGeneration = nil
 		transitionExpectedState = nil
@@ -934,8 +1061,8 @@ public final class DeviceConnectionManager: ObservableObject {
 		transitionDeadline = 0
 		transitionTask?.cancel()
 		transitionTask = nil
-		state = newState
-		diagnostic = newDiagnostic
+		if state != newState { state = newState }
+		if diagnostic != newDiagnostic { diagnostic = newDiagnostic }
 		if previousState != newState || previousDiagnostic != newDiagnostic {
 			_log("Device state is now \(_stateDescription(newState)): \(newDiagnostic.localizedDescription)")
 		}

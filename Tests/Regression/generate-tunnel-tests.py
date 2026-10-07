@@ -26,6 +26,7 @@ private enum StartupDiagnostic { case checking,pairingMissing,tunnelUnavailable 
 }
 @MainActor private final class StartupFixture {
  var isIDeviceInstallationMode=true;var isConnected=false;var hasPairingFile=true
+ var connectionEpoch:UInt64=0;var activeVerificationID:UUID?
  var connectionPreparation:UUID?;var diagnostic=StartupDiagnostic.tunnelUnavailable
  var isUpdating:Bool { connectionPreparation != nil }
  var profile=true;var starts=0;let gate=StartupGate()
@@ -140,6 +141,8 @@ private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UU
  var hasActiveTunnelDependencies=false;var starts=0;var stops=0
  enum Level { case notice }
  func _log(_ message:String,category:String,level:Level) {}
+ func _scheduleForegroundRecovery() {}
+ func _cancelForegroundRecovery() {}
  func _connectForIDeviceMode() { starts += 1 }
  func setConnection(enabled:Bool) { if !enabled { stops += 1 } }
  init() {
@@ -175,10 +178,11 @@ final class TunnelAutomationTests:XCTestCase {
    let fixture=AutomationFixture()
    fixture._restoreInstallationMode();fixture.handleAppForeground()
    XCTAssertEqual(fixture.starts,connect ? 2 : 0)
-   fixture.isConnected=true;fixture.handleAppBackground()
+   fixture.isConnected=true;TunnelApplication.shared.applicationState = .background;fixture.handleAppBackground()
    XCTAssertEqual(fixture.stops,disconnect ? 1 : 0)
    fixture.hasActiveTunnelDependencies=true;fixture.handleAppBackground()
    XCTAssertEqual(fixture.stops,disconnect ? 1 : 0)
+   TunnelApplication.shared.applicationState = .active
   }}
  }
  @MainActor func testEnablingDisconnectDoesNotConnectAndServerDoesNotAutoConnect() {

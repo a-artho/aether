@@ -63,6 +63,8 @@ guards = connection[:connection.index('\n\t\tlet method')]
 source += '''
 enum State { case connected, disconnected, connecting, disconnecting }
 final class Connection {
+ var connectionEpoch: UInt64 = 0; var activeVerificationID: UUID?
+ func _cancelForegroundRecovery() {}
  var connectionPreparation: UUID? = UUID(); var state: State = .connecting; var proceeded = false
  var isUpdating: Bool { state == .connecting || state == .disconnecting }
 '''+guards+'\n proceeded = true\n}\n}\n'
