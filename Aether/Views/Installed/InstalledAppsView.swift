@@ -61,116 +61,8 @@ struct InstalledAppsView: View {
 	}
 
 	var body: some View {
-		let cards = installationManager.installationCards
-		let sections: [DeviceSection] = [
-			cards.isEmpty ? nil : .installation,
-			store.apps.isEmpty ? nil : .sideloaded
-		].compactMap { $0 }
-		let layout = DeviceLayout(sections: sections, cards: cards.map(\.id), activeCard: installationManager.currentRequest?.id)
 		NBNavigationView(_installationMethodName, displayMode: .inline) {
-			ScrollViewReader { scrollProxy in
-				List {
-					ForEach(sections) { section in
-						switch section {
-						case .installation:
-							NBSection(.localized("Installs"), secondary: cards.count.description) {
-								ForEach(cards) { request in
-									Group {
-										if installationManager.currentRequest?.id == request.id, let vm = installationManager.viewModel {
-											ActiveInstallationRow(app: request.app, viewModel: vm)
-										} else {
-											QueuedInstallationRow(request: request) {
-												installationManager.cancelQueuedInstall(id: request.id)
-											}
-										}
-									}
-									.transition(.opacity)
-									.listRowBackground(Color.clear)
-									.id(request.id)
-									.onAppear { visibleInstallRows.insert(request.id) }
-									.onDisappear { visibleInstallRows.remove(request.id) }
-								}
-							}
-							.listSectionSeparator(.hidden)
-							.id("deviceInstalls")
-
-						case .sideloaded:
-							NBSection(
-								.localized("Sideloaded"),
-								secondary: store.apps.count.description
-							) {
-								ForEach(store.apps) { app in
-									NavigationLink(
-										destination: InstalledAppDetailView(app: app, store: store),
-										isActive: Binding(
-											get: { selectedAppBundleId == app.bundleIdentifier },
-											set: { isActive in
-												if isActive {
-													selectedAppBundleId = app.bundleIdentifier
-												} else if selectedAppBundleId == app.bundleIdentifier {
-													selectedAppBundleId = nil
-												}
-											}
-										)
-									) {
-										InstalledAppCellView(app: app, loadsIcon: loadsIcons, hasUpdate: appsWithUpdates.contains(app.bundleIdentifier))
-									}
-									.buttonStyle(.plain)
-									.id(app.id)
-								}
-							}
-						}
-					}
-				}
-				.listStyle(.plain)
-				.onAppear { isRootListVisible = true }
-				.onDisappear { isRootListVisible = false }
-				.task(id: installationFocusState) {
-					guard !Task.isCancelled, let request = tabManager.installationFocusRequest,
-						tabManager.selectedTab == .installed, let firstCard = cards.first else { return }
-					var transaction = Transaction()
-					transaction.disablesAnimations = true
-					if selectedAppBundleId != nil || isSpoofingPresented {
-						withTransaction(transaction) {
-							selectedAppBundleId = nil
-							isSpoofingPresented = false
-						}
-						return
-					}
-					guard isRootListVisible else { return }
-					withTransaction(transaction) { scrollProxy.scrollTo(firstCard.id, anchor: .top) }
-					// Appearance confirms the lazy list has materialized the target.
-					// Keep the request pending while navigation/layout catches up.
-					if visibleInstallRows.contains(firstCard.id) {
-						tabManager.consumeInstallationFocusRequest(request)
-					}
-				}
-				.overlay {
-					if cards.isEmpty && store.apps.isEmpty {
-						_placeholderContent
-							.transition(.opacity.animation(.easeInOut(duration: 0.2)))
-					}
-				}
-				.animation(reduceMotion ? nil : .snappy, value: layout)
-				.refreshable {
-					guard loadsApps else { return }
-					await store.refresh(force: true)
-				}
-				#if DEBUG
-				.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.openAppDetail"))) { notif in
-					if let id = notif.object as? String {
-						selectedAppBundleId = id
-					} else {
-						selectedAppBundleId = store.apps.first?.bundleIdentifier
-					}
-				}
-				.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.testScrollDevice"))) { _ in
-					withAnimation {
-						scrollProxy.scrollTo("com.example.app15", anchor: .top)
-					}
-				}
-				#endif
-			}
+			_deviceList
 			.modifier(DeviceControlsBar(controls: _deviceControlsCard, isEnabled: !controlsInHeader))
 			.task(id: installationMethod.description + ":" + serverMethod.description) {
 				if installationMethod == 0 && serverMethod == 0 { await localServer.refresh() }
@@ -184,25 +76,7 @@ struct InstalledAppsView: View {
 				guard loadsApps else { return }
 				await store.load()
 			}
-			.task(id: updateIndicatorRequest) {
-				guard loadsApps, !store.apps.isEmpty else { appsWithUpdates = []; return }
-				await sourcesViewModel.ensureSourcesLoaded(Array(sources))
-				let versions = store.apps.reduce(into: [String: String]()) { result, app in
-					if let version = app.version { result[app.bundleIdentifier] = version }
-				}
-				let contexts = sources.compactMap { source -> SourceAppCatalogContext? in
-					guard let repository = sourcesViewModel.repository(for: source) else { return nil }
-					return SourceAppCatalogContext(sourceObjectURI: source.objectID.uriRepresentation().absoluteString,
-						sourceURL: source.sourceURL, repository: repository, revision: sourcesViewModel.revision(for: source))
-				}
-				do {
-					let matches = try await InstalledAppUpdateCatalog.shared.bundleIdentifiersWithUpdates(installedVersions: versions, contexts: contexts)
-					try Task.checkCancellation()
-					appsWithUpdates = matches
-				} catch is CancellationError {
-					// New installed versions or catalog revisions supersede this lookup.
-				} catch { appsWithUpdates = [] }
-			}
+			.task(id: updateIndicatorRequest) { await _loadUpdateIndicators() }
 			.toolbar {
 				ToolbarItem(placement: .topBarLeading) {
 					Button {
@@ -246,6 +120,147 @@ struct InstalledAppsView: View {
 				Button(.localized("Cancel"), role: .cancel) {}
 			} message: {
 				Text(.localized("Stop the simulated location before switching to Server mode."))
+			}
+		}
+	}
+
+	private func _loadUpdateIndicators() async {
+		guard loadsApps, !store.apps.isEmpty else { appsWithUpdates = []; return }
+		await sourcesViewModel.ensureSourcesLoaded(Array(sources))
+		let versions = store.apps.reduce(into: [String: String]()) { result, app in
+			if let version = app.version { result[app.bundleIdentifier] = version }
+		}
+		let contexts = sources.compactMap { source -> SourceAppCatalogContext? in
+			guard let repository = sourcesViewModel.repository(for: source) else { return nil }
+			return SourceAppCatalogContext(sourceObjectURI: source.objectID.uriRepresentation().absoluteString,
+				sourceURL: source.sourceURL, repository: repository, revision: sourcesViewModel.revision(for: source))
+		}
+		do {
+			let matches = try await InstalledAppUpdateCatalog.shared.bundleIdentifiersWithUpdates(installedVersions: versions, contexts: contexts)
+			try Task.checkCancellation()
+			appsWithUpdates = matches
+		} catch is CancellationError {
+			// New installed versions or catalog revisions supersede this lookup.
+		} catch { appsWithUpdates = [] }
+	}
+
+	private var _deviceList: some View {
+		let cards = installationManager.installationCards
+		let sections: [DeviceSection] = [
+			cards.isEmpty ? nil : .installation,
+			store.apps.isEmpty ? nil : .sideloaded
+		].compactMap { $0 }
+		let layout = DeviceLayout(sections: sections, cards: cards.map(\.id), activeCard: installationManager.currentRequest?.id)
+
+		return ScrollViewReader { scrollProxy in
+			List {
+				ForEach(sections) { section in
+					switch section {
+					case .installation:
+						_installationSection(cards: cards)
+					case .sideloaded:
+						_sideloadedSection
+					}
+				}
+			}
+			.listStyle(.plain)
+			.onAppear { isRootListVisible = true }
+			.onDisappear { isRootListVisible = false }
+			.task(id: installationFocusState) {
+				guard !Task.isCancelled, let request = tabManager.installationFocusRequest,
+					tabManager.selectedTab == .installed, let firstCard = cards.first else { return }
+				var transaction = Transaction()
+				transaction.disablesAnimations = true
+				if selectedAppBundleId != nil || isSpoofingPresented {
+					withTransaction(transaction) {
+						selectedAppBundleId = nil
+						isSpoofingPresented = false
+					}
+					return
+				}
+				guard isRootListVisible else { return }
+				withTransaction(transaction) { scrollProxy.scrollTo(firstCard.id, anchor: .top) }
+				// Appearance confirms the lazy list has materialized the target.
+				// Keep the request pending while navigation/layout catches up.
+				if visibleInstallRows.contains(firstCard.id) {
+					tabManager.consumeInstallationFocusRequest(request)
+				}
+			}
+			.overlay {
+				if cards.isEmpty && store.apps.isEmpty {
+					_placeholderContent
+						.transition(.opacity.animation(.easeInOut(duration: 0.2)))
+				}
+			}
+			.animation(reduceMotion ? nil : .snappy, value: layout)
+			.refreshable {
+				guard loadsApps else { return }
+				await store.refresh(force: true)
+			}
+			#if DEBUG
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.openAppDetail"))) { notif in
+				if let id = notif.object as? String {
+					selectedAppBundleId = id
+				} else {
+					selectedAppBundleId = store.apps.first?.bundleIdentifier
+				}
+			}
+			.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.testScrollDevice"))) { _ in
+				withAnimation {
+					scrollProxy.scrollTo("com.example.app15", anchor: .top)
+				}
+			}
+			#endif
+		}
+	}
+
+	private func _installationSection(cards: [AppInstallationManager.InstallationRequest]) -> some View {
+		NBSection(.localized("Installs"), secondary: cards.count.description) {
+			ForEach(cards) { request in
+				Group {
+					if installationManager.currentRequest?.id == request.id, let vm = installationManager.viewModel {
+						ActiveInstallationRow(app: request.app, viewModel: vm)
+					} else {
+						QueuedInstallationRow(request: request) {
+							installationManager.cancelQueuedInstall(id: request.id)
+						}
+					}
+				}
+				.transition(.opacity)
+				.listRowBackground(Color.clear)
+				.id(request.id)
+				.onAppear { visibleInstallRows.insert(request.id) }
+				.onDisappear { visibleInstallRows.remove(request.id) }
+			}
+		}
+		.listSectionSeparator(.hidden)
+		.id("deviceInstalls")
+	}
+
+	private var _sideloadedSection: some View {
+	case .sideloaded:
+		NBSection(
+			.localized("Sideloaded"),
+			secondary: store.apps.count.description
+		) {
+			ForEach(store.apps) { app in
+				NavigationLink(
+					destination: InstalledAppDetailView(app: app, store: store),
+					isActive: Binding(
+						get: { selectedAppBundleId == app.bundleIdentifier },
+						set: { isActive in
+							if isActive {
+								selectedAppBundleId = app.bundleIdentifier
+							} else if selectedAppBundleId == app.bundleIdentifier {
+								selectedAppBundleId = nil
+							}
+						}
+					)
+				) {
+					InstalledAppCellView(app: app, loadsIcon: loadsIcons, hasUpdate: appsWithUpdates.contains(app.bundleIdentifier))
+				}
+				.buttonStyle(.plain)
+				.id(app.id)
 			}
 		}
 	}

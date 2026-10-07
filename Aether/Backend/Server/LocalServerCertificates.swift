@@ -118,7 +118,7 @@ final class LocalServerCertificates: @unchecked Sendable {
         try resourceDirectory.setResourceValues(values)
         var options: Data.WritingOptions = [.atomic]
         #if os(iOS)
-        options.insert(.completeUntilFirstUserAuthentication)
+        options.insert(.completeFileProtectionUntilFirstUserAuthentication)
         #endif
         try PropertyListEncoder().encode(identity).write(to: file, options: options)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
