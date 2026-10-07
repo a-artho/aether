@@ -15,19 +15,26 @@ import XCTest
  protocol AppInfoPresentable { var uuid:String? { get }; var isSigned:Bool { get } }
  class NSManagedObject {}
  final class App:NSManagedObject,AppInfoPresentable { let uuid:String?="fixture"; let isSigned=true }
- final class Context { var deleted=false; func delete(_ app:NSManagedObject) { deleted=true } }
+ final class NSFetchRequest<T> {var predicate:NSPredicate?;init(entityName:String){}}
+ final class Context {
+  var deleted=false
+  func delete(_ app:NSManagedObject) {deleted=true}
+  func fetch(_ request:NSFetchRequest<NSManagedObject>) throws -> [NSManagedObject] {[NSManagedObject()]}
+  func rollback(){deleted=false}
+ }
  final class AppInstallationManager {
   struct InstallationRequest { let appKey:String; static func appKey(for app:AppInfoPresentable)->String { app.uuid ?? "" } }
   static let shared=AppInstallationManager(); var currentRequest:InstallationRequest?; var queuedInstalls:[InstallationRequest]=[]; var retiringAppKey:String?
   var queued:Bool { get { currentRequest != nil } set { currentRequest = newValue ? .init(appKey:"fixture") : nil } }
 ''' ,method(pathlib.Path('Aether/Backend/Observable/AppInstallationManager.swift'),'func containsInstallation(for'),r'''
  }
+ final class ExportManager { static let shared=ExportManager();func usesLibraryArtifact(_ app:AppInfoPresentable)->Bool {false} }
  final class DownloadManager { static let shared=DownloadManager(); var active=false; func usesLibraryArtifact(_ app:AppInfoPresentable)->Bool { active } }
- final class DebugLogManager { enum Level { case notice }; static let shared=DebugLogManager(); func log(_ message:String,category:String,level:Level) {} }
+ final class DebugLogManager { enum Level { case notice,error }; static let shared=DebugLogManager(); func log(_ message:String,category:String,level:Level) {} }
  final class Storage {
   let context=Context(); var folder:URL!
   func getUuidDirectory(for app:AppInfoPresentable)->URL? { folder }
-  func deleteSourceMetadata(for uuid:String?) {}; func saveContext() {}
+  func deleteSourceMetadata(for uuid:String?,deferSave:Bool) throws {}; func saveContext() -> Error? {nil}
 ''',method(pathlib.Path('Aether/Backend/Storage/Storage+Shared.swift'),'func deleteApp('),r'''
  }
 }
