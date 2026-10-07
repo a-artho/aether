@@ -17,6 +17,10 @@ struct SigningView: View {
 	
 	@State private var _temporaryOptions: Options = OptionsManager.shared.options
 	@State private var _temporaryCertificate: Int
+	@AppStorage("aether.selectedCertUUID") private var _selectedCertificateUUID = ""
+	@State private var _profileIdentifier: String?
+	@State private var _profileIdentityError: String?
+	private let _isAether: Bool
 	@State private var _isAltPickerPresenting = false
 	@State private var _isFilePickerPresenting = false
 	@State private var _isImagePickerPresenting = false
@@ -32,7 +36,7 @@ struct SigningView: View {
 	) private var certificates: FetchedResults<CertificatePair>
 	
 	private func _selectedCert() -> CertificatePair? {
-		let storedUUID = UserDefaults.standard.string(forKey: "aether.selectedCertUUID") ?? ""
+		let storedUUID = _selectedCertificateUUID
 		if !storedUUID.isEmpty, let match = certificates.first(where: { $0.uuid == storedUUID }) {
 			return match
 		}
@@ -44,6 +48,12 @@ struct SigningView: View {
 	
 	init(app: AppInfoPresentable) {
 		self.app = app
+		if let uuid = app.uuid,
+			let path = FileManager.default.getPath(
+				in: app.isSigned ? FileManager.default.signed(uuid) : FileManager.default.unsigned(uuid), for: "app"),
+			let info = NSDictionary(contentsOf: path.appendingPathComponent("Info.plist")) {
+			_isAether = AetherSigningIdentity.isAether(info)
+		} else { _isAether = false }
 		let storedCert = UserDefaults.standard.integer(forKey: "aether.selectedCert")
 		__temporaryCertificate = State(initialValue: storedCert)
 	}
@@ -74,6 +84,7 @@ struct SigningView: View {
 					placement: .topBarTrailing
 				) {
 					_temporaryOptions = OptionsManager.shared.options
+					_temporaryOptions.matchAetherIdentityToProfile = nil
 					appIcon = nil
 				}
 			}
@@ -100,6 +111,9 @@ struct SigningView: View {
 				}
 			}
 		}
+		.onChange(of: _selectedCertificateUUID) { _ in _refreshProfileIdentity() }
+		.onChange(of: _temporaryCertificate) { _ in _refreshProfileIdentity() }
+		.onChange(of: _temporaryOptions.matchAetherIdentityToProfile) { _ in _refreshProfileIdentity() }
 		.alert(.localized("Error"), isPresented: Binding(
 			get: { scenePhase == .active && _signingError != nil },
 			set: { if !$0, scenePhase == .active { _signingError = nil } }
@@ -112,6 +126,8 @@ struct SigningView: View {
 				_temporaryCertificate = idx
 			}
 			
+			_refreshProfileIdentity()
+
 			// ppq protection
 			if
 				_optionsManager.options.ppqProtection,
@@ -187,13 +203,14 @@ extension SigningView {
 					bindingValue: $_temporaryOptions.appName
 				)
 			}
-			_infoCell(.localized("Identifier"), desc: _temporaryOptions.appIdentifier ?? app.identifier) {
+			_infoCell(.localized("Identifier"), desc: _temporaryOptions.matchAetherIdentityToProfile == true ? (_profileIdentifier ?? .localized("Unavailable")) : (_temporaryOptions.appIdentifier ?? app.identifier)) {
 				SigningPropertiesView(
 					title: .localized("Identifier"),
 					initialValue: _temporaryOptions.appIdentifier ?? (app.identifier ?? ""),
 					bindingValue: $_temporaryOptions.appIdentifier
 				)
 			}
+			.disabled(_temporaryOptions.matchAetherIdentityToProfile == true)
 			_infoCell(.localized("Version"), desc: _temporaryOptions.appVersion ?? app.version) {
 				SigningPropertiesView(
 					title: .localized("Version"),
@@ -219,6 +236,21 @@ extension SigningView {
 				Text(.localized("No Certificate"))
 					.font(.footnote)
 					.foregroundColor(.disabled())
+			}
+			if _isAether {
+				Toggle(.localized("Match Certificate Identity"), isOn: Binding(
+					get: { _temporaryOptions.matchAetherIdentityToProfile == true },
+					set: { _temporaryOptions.matchAetherIdentityToProfile = $0 }
+				))
+				if _temporaryOptions.matchAetherIdentityToProfile == true {
+					Text(_profileIdentityError ?? _profileIdentifier ?? .localized("No Certificate"))
+						.font(.footnote)
+						.foregroundStyle(.secondary)
+				}
+			}
+		} footer: {
+			if _isAether {
+				Text(.localized("Match Aether’s bundle identifier and background task declarations to the selected profile. Keeps callback schemes and existing VPN extension signing. Changing identity may create a separate installation with new data and notification permissions."))
 			}
 		}
 	}
@@ -279,6 +311,25 @@ extension SigningView {
 
 // MARK: - Extension: View (import)
 extension SigningView {
+	private func _refreshProfileIdentity() {
+		_profileIdentifier = nil
+		_profileIdentityError = nil
+		guard _temporaryOptions.matchAetherIdentityToProfile == true else { return }
+		do { _profileIdentifier = try _resolveProfileIdentity() }
+		catch { _profileIdentityError = error.localizedDescription }
+	}
+
+	private func _resolveProfileIdentity() throws -> String {
+		guard let certificate = SigningCertificateSnapshot(_selectedCert()),
+			let profile = CertificateReader(certificate.provisionURL).decoded else {
+			throw AetherSigningIdentity.Failure.invalidProfile
+		}
+		guard profile.ExpirationDate > Date() else { throw AetherSigningIdentity.Failure.expiredProfile }
+		return try AetherSigningIdentity.bundleIdentifier(
+			applicationIdentifier: profile.Entitlements?["application-identifier"]?.value as? String
+		)
+	}
+
 	private func _start() {
 		guard
 			_selectedCert() != nil || _temporaryOptions.signingOption != .default
@@ -291,11 +342,28 @@ extension SigningView {
 			return
 		}
 
+		var options = _temporaryOptions
+		if options.matchAetherIdentityToProfile == true {
+			do {
+				guard _isAether else { throw AetherSigningIdentity.Failure.notAether }
+				try AetherSigningIdentity.validateOptions(
+					signingWithCertificate: options.signingOption == .default && _selectedCert() != nil,
+					customEntitlements: options.appEntitlementsFile != nil,
+					mergeEntitlements: options.mergeEntitlements,
+					removeURLScheme: options.removeURLScheme,
+					removeProvisioning: options.removeProvisioning
+				)
+				options.appIdentifier = try _resolveProfileIdentity()
+			} catch {
+				_signingError = error.localizedDescription
+				return
+			}
+		}
 		HapticManager.shared.impact()
 		
 		if AppInstallationManager.shared.startSigning(
 			app: app,
-			options: _temporaryOptions,
+			options: options,
 			icon: appIcon,
 			certificate: _selectedCert()
 		) { dismiss() }

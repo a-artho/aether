@@ -22,22 +22,20 @@ extension ServerInstaller {
 		return env
 	}()
 	
-	func setupApp(port: Int) throws -> Application {
+	func setupApp(port: Int, localTLS: LocalServerTLSMaterial?) throws -> Application {
 		let app = Application(Self.env)
 		var configured = false
 		defer { if !configured { app.shutdown() } }
 		app.threadPool = .init(numberOfThreads: 1)
 		
-		if getServerMethod() != 1 {
-			guard let tls = try tls(), let commonName = readCommonName(), !commonName.isEmpty else {
-				throw NSError(domain: "Aether.Server", code: 1, userInfo: [NSLocalizedDescriptionKey: String.localized("Fully Local installation requires valid SSL certificates and a common name. Set them up in Server settings.")])
-			}
-			app.http.server.configuration.tlsConfiguration = tls
+		if getServerMethod() == 0 {
+			guard let localTLS else { throw LocalServerCertificates.Failure.setupRequired }
+			app.http.server.configuration.tlsConfiguration = try tls(material: localTLS)
 		}
-		
+
 		app.http.server.configuration.hostname = sni()
 		app.http.server.configuration.tcpNoDelay = true
-		app.http.server.configuration.address = .hostname("0.0.0.0", port: port)
+		app.http.server.configuration.address = .hostname(getServerMethod() == 0 ? "127.0.0.1" : "0.0.0.0", port: port)
 		app.http.server.configuration.port = port
 		app.routes.defaultMaxBodySize = "128mb"
 		app.routes.caseInsensitive = false
@@ -55,56 +53,19 @@ extension ServerInstaller {
 				? (Self.getLocalAddress() ?? localhost)
 				: localhost
 		} else {
-			return readCommonName() ?? localhost
+			return LocalServerCertificates.hostname
 		}
 	}
 	
-	func tls() throws -> TLSConfiguration? {
-		guard
-			let crt = Self.getUrl("server", ext: "crt"),
-			let pem = Self.getUrl("server", ext: "pem")
-		else {
-			return nil
-		}
-		
-		return try TLSConfiguration.makeServerConfiguration(
-			certificateChain: NIOSSLCertificate.fromPEMFile(crt.path).map {
-				NIOSSLCertificateSource.certificate($0)
-			},
-			privateKey: .privateKey(
-				try NIOSSLPrivateKey(file: pem.path, format: .pem)
-			)
+	func tls(material: LocalServerTLSMaterial) throws -> TLSConfiguration {
+		try TLSConfiguration.makeServerConfiguration(
+			certificateChain: [.certificate(try NIOSSLCertificate(bytes: Array(material.certificateDER), format: .der))],
+			privateKey: .privateKey(try NIOSSLPrivateKey(bytes: Array(material.privateKeyPEM), format: .pem))
 		)
-	}
-	
-	func readCommonName() -> String? {
-		guard let url = Self.getUrl("commonName", ext: "txt") else {
-			return nil
-		}
-		
-		return try? String(contentsOf: url, encoding: .utf8)
-			.trimmingCharacters(in: .whitespacesAndNewlines)
 	}
 }
 
 extension ServerInstaller {
-	static func getUrl(_ name: String, ext: String) -> URL? {
-		let fileManager = FileManager.default
-		
-		let documentsURL = URL.documentsDirectory.appendingPathComponent("\(name).\(ext)")
-		let bundlesURL = Bundle.main.url(forResource: name, withExtension: ext)
-		
-		if fileManager.fileExists(atPath: documentsURL.path) {
-			return documentsURL
-		}
-		
-		if let bundlesURL, fileManager.fileExists(atPath: bundlesURL.path) {
-			return bundlesURL
-		}
-		
-		return nil
-	}
-	
 	static func getLocalAddress() -> String? {
 		var address: String?
 		var ifaddr: UnsafeMutablePointer<ifaddrs>?

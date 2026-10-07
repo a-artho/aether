@@ -74,10 +74,17 @@ final class SigningHandler: NSObject {
 			throw SigningFileHandlerError.infoPlistNotFound
 		}
 		
+		if _options.matchAetherIdentityToProfile == true {
+			try _prepareAetherIdentity(in: infoDictionary)
+		}
+
 		if
 			let identifier = _options.appIdentifier,
 			let oldIdentifier = infoDictionary["CFBundleIdentifier"] as? String
 		{
+			if _options.matchAetherIdentityToProfile == true {
+				AetherSigningIdentity.updateMainDeclarations(in: infoDictionary, old: oldIdentifier, new: identifier)
+			}
 			try await _modifyPluginIdentifiers(
 				old: oldIdentifier,
 				new: identifier,
@@ -224,6 +231,26 @@ final class SigningHandler: NSObject {
 }
 
 extension SigningHandler {
+	private func _prepareAetherIdentity(in info: NSDictionary) throws {
+		guard AetherSigningIdentity.isAether(info) else { throw AetherSigningIdentity.Failure.notAether }
+		try AetherSigningIdentity.validateOptions(
+			signingWithCertificate: _options.signingOption == .default && appCertificate != nil,
+			customEntitlements: _options.appEntitlementsFile != nil,
+			mergeEntitlements: _options.mergeEntitlements,
+			removeURLScheme: _options.removeURLScheme,
+			removeProvisioning: _options.removeProvisioning
+		)
+		guard let profile = CertificateReader(appCertificate?.provisionURL).decoded else {
+			throw AetherSigningIdentity.Failure.invalidProfile
+		}
+		guard profile.ExpirationDate > Date() else { throw AetherSigningIdentity.Failure.expiredProfile }
+		let identifier = try AetherSigningIdentity.bundleIdentifier(
+			applicationIdentifier: profile.Entitlements?["application-identifier"]?.value as? String
+		)
+		_options.appIdentifier = identifier
+		Logger.signing.info("[\(self._uuid)] Matching Aether bundle identity to selected profile: \(identifier, privacy: .public). Preserving existing extension signing.")
+	}
+
 	private func _modifyDict(using infoDictionary: NSMutableDictionary, with options: Options, to app: URL) async throws {
 		if options.fileSharing { infoDictionary.setObject(true, forKey: "UISupportsDocumentBrowser" as NSCopying) }
 		if options.itunesFileSharing { infoDictionary.setObject(true, forKey: "UIFileSharingEnabled" as NSCopying) }
@@ -331,10 +358,16 @@ extension SigningHandler {
 			}
 			
 			var didChange = false
+			if _options.matchAetherIdentityToProfile == true {
+				AetherSigningIdentity.updateTaskIdentifiers(in: infoDict, old: oldIdentifier, new: newIdentifier)
+				didChange = true
+			}
 			
 			// CFBundleIdentifier
 			if let oldValue = infoDict["CFBundleIdentifier"] as? String {
-				let newValue = oldValue.replacingOccurrences(of: oldIdentifier, with: newIdentifier)
+				let newValue = _options.matchAetherIdentityToProfile == true
+					? AetherSigningIdentity.rewriteAetherNamespace(oldValue, old: oldIdentifier, new: newIdentifier)
+						: oldValue.replacingOccurrences(of: oldIdentifier, with: newIdentifier)
 				if oldValue != newValue {
 					infoDict["CFBundleIdentifier"] = newValue
 					didChange = true
@@ -343,7 +376,9 @@ extension SigningHandler {
 			
 			// WKCompanionAppBundleIdentifier
 			if let oldValue = infoDict["WKCompanionAppBundleIdentifier"] as? String {
-				let newValue = oldValue.replacingOccurrences(of: oldIdentifier, with: newIdentifier)
+				let newValue = _options.matchAetherIdentityToProfile == true
+					? AetherSigningIdentity.rewriteAetherNamespace(oldValue, old: oldIdentifier, new: newIdentifier)
+						: oldValue.replacingOccurrences(of: oldIdentifier, with: newIdentifier)
 				if oldValue != newValue {
 					infoDict["WKCompanionAppBundleIdentifier"] = newValue
 					didChange = true
@@ -355,7 +390,9 @@ extension SigningHandler {
 					let attributes = extensionDict["NSExtensionAttributes"] as? NSMutableDictionary,
 					let oldValue = attributes["WKAppBundleIdentifier"] as? String
 				{
-					let newValue = oldValue.replacingOccurrences(of: oldIdentifier, with: newIdentifier)
+					let newValue = _options.matchAetherIdentityToProfile == true
+						? AetherSigningIdentity.rewriteAetherNamespace(oldValue, old: oldIdentifier, new: newIdentifier)
+						: oldValue.replacingOccurrences(of: oldIdentifier, with: newIdentifier)
 					if oldValue != newValue {
 						attributes["WKAppBundleIdentifier"] = newValue
 						didChange = true
@@ -366,7 +403,9 @@ extension SigningHandler {
 				if
 					let oldValue = extensionDict["NSExtensionFileProviderDocumentGroup"] as? String
 				{
-					let newValue = oldValue.replacingOccurrences(of: oldIdentifier, with: newIdentifier)
+					let newValue = _options.matchAetherIdentityToProfile == true
+						? AetherSigningIdentity.rewriteAetherNamespace(oldValue, old: oldIdentifier, new: newIdentifier)
+						: oldValue.replacingOccurrences(of: oldIdentifier, with: newIdentifier)
 					if oldValue != newValue {
 						extensionDict["NSExtensionFileProviderDocumentGroup"] = newValue
 						didChange = true
@@ -377,7 +416,11 @@ extension SigningHandler {
 			}
 			
 			if didChange {
-				infoDict.write(to: infoPlistURL, atomically: true)
+				if _options.matchAetherIdentityToProfile == true {
+					try infoDict.write(to: infoPlistURL)
+				} else {
+					infoDict.write(to: infoPlistURL, atomically: true)
+				}
 			}
 		}
 	}

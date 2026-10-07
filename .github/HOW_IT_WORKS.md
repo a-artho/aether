@@ -8,7 +8,7 @@ To start off, we need a validly signed IPA. We can achieve this with Zsign, usin
 
 - Use a locally hosted server for hosting the IPA files used for installation, including other assets such as icons, etc. 
   - On iOS 18, we need a few entitlements: `Associated Domains`, `Custom Network Protocol`, `MDM Managed Associated Domains`, `Network Extensions`
-- Make sure to include valid https SSL certificates as the next URL requires a valid HTTPS connection, for us we use [*.backloop.dev](https://backloop.dev/).
+- Fully Local uses a CA generated on-device. Set it up in Settings → Server, install its profile, and enable full trust in iOS Certificate Trust Settings. Its HTTPS server binds only to 127.0.0.1; valid leaf certificates are renewed without replacing the trusted root.
 - We then use `itms-services://?action=download-manifest&url=<PLIST_URL>` to attempt to initiate an install, by using `UIApplication.open`.
 
 However, due to the changes with iOS 18 with entitlements we will need to provide an alternative way of installing. We have two options here, a way to install locally fully using the local server (the one I have just shown) or use an external HTTPS server that serves as our middle man for our `PLIST_URL`, while having the files still local to us. Lets show the latter.

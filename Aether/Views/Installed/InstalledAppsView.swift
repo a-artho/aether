@@ -16,6 +16,8 @@ struct InstalledAppsView: View {
 	@AppStorage("Aether.spoofing.simulationMayBeActive") private var isSpoofingActive = false
 	@StateObject private var store: InstalledAppsStore
 	@ObservedObject private var installationManager = AppInstallationManager.shared
+	@Environment(\.scenePhase) private var scenePhase
+	@ObservedObject private var localServer = LocalServerSetup.shared
 	@ObservedObject private var connection = DeviceConnectionManager.shared
 	@ObservedObject private var cellularAssist = CellularAssistManager.shared
 	@ObservedObject private var tabManager = AppTabManager.shared
@@ -170,6 +172,14 @@ struct InstalledAppsView: View {
 				#endif
 			}
 			.modifier(DeviceControlsBar(controls: _deviceControlsCard, isEnabled: !controlsInHeader))
+			.task(id: installationMethod.description + ":" + serverMethod.description) {
+				if installationMethod == 0 && serverMethod == 0 { await localServer.refresh() }
+			}
+			.onChange(of: scenePhase) { phase in
+				if phase == .active, installationMethod == 0, serverMethod == 0 {
+					Task { await localServer.refresh() }
+				}
+			}
 			.task {
 				guard loadsApps else { return }
 				await store.load()
@@ -265,7 +275,7 @@ struct InstalledAppsView: View {
 		.disabled(!_canOpenSpoofing)
 		.opacity((_canOpenSpoofing ? 1 : 0.6) * (installationMethod == 1 ? 1 : 0.45))
 		.accessibilityLabel("Spoofing, \(_spoofingStatus.text)")
-		.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select Local mode and connect the tunnel to open spoofing controls.")
+		.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select iDevice mode and connect the tunnel to open spoofing controls.")
 	}
 
 	private var _deviceControlsCard: some View {
@@ -295,7 +305,7 @@ struct InstalledAppsView: View {
 				}
 			)
 			.accessibilityLabel("Spoofing, \(_spoofingStatus.text)")
-			.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select Local mode and connect the tunnel to open spoofing controls.")
+			.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select iDevice mode and connect the tunnel to open spoofing controls.")
 		}
 		.opacity(installationMethod == 1 ? 1 : 0.45)
 	}
@@ -320,7 +330,7 @@ struct InstalledAppsView: View {
 
 	private var _tunnelStatus: _DeviceControlStatus {
 		guard installationMethod == 1 else {
-			return .init(text: .localized("Local required"), color: .secondary)
+			return .init(text: .localized("iDevice required"), color: .secondary)
 		}
 		if connection.isUpdating {
 			return .init(text: .localized("Connecting"), color: .orange)
@@ -339,7 +349,7 @@ struct InstalledAppsView: View {
 
 	private var _spoofingStatus: _DeviceControlStatus {
 		guard installationMethod == 1 else {
-			return .init(text: .localized("Local required"), color: .secondary)
+			return .init(text: .localized("iDevice required"), color: .secondary)
 		}
 		if isSpoofingActive {
 			return .init(text: .localized("Active"), color: .green)
@@ -351,7 +361,7 @@ struct InstalledAppsView: View {
 	}
 
 	private var _installationMethodName: String {
-		installationMethod == 1 ? .localized("Local") : .localized("Server")
+		installationMethod == 1 ? .localized("iDevice") : .localized("Server")
 	}
 
 	private var _installationMethodIsReady: Bool {
@@ -363,9 +373,7 @@ struct InstalledAppsView: View {
 			return true
 		}
 
-		return ServerInstaller.getUrl("server", ext: "crt") != nil
-			&& ServerInstaller.getUrl("server", ext: "pem") != nil
-			&& ServerInstaller.getUrl("commonName", ext: "txt") != nil
+		return localServer.state == .ready
 	}
 
 	private var _installationMethodAccessibilityLabel: String {
@@ -379,14 +387,14 @@ struct InstalledAppsView: View {
 	private var _placeholderContent: some View {
 		if installationMethod == 0 {
 			TabPlaceholderView(
-				title: .localized("Switch to Local"),
-				description: .localized("Use Local mode to view sideloaded apps or spoof your device location."),
+				title: .localized("Switch to iDevice"),
+				description: .localized("Use iDevice mode to view sideloaded apps or spoof your device location."),
 				systemImage: "iphone"
 			) {
 				Button {
 					_switchToIDeviceMode()
 				} label: {
-					NBButton(.localized("Use Local"), style: .text)
+					NBButton(.localized("Use iDevice"), style: .text)
 				}
 				.buttonStyle(.borderless)
 				.disabled(installationManager.hasPendingInstalls)

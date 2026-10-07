@@ -1,128 +1,77 @@
-//
-//  ServerView.swift
-//  Aether
-//
-//  Created by samara on 6.05.2025.
-//
-
 import SwiftUI
-import NimbleJSON
 import NimbleViews
 
-// MARK: - Extension: Model
-extension ServerView {
-	struct ServerPackModel: Decodable {
-		var cert: String
-		var ca: String
-		var key: String
-		var info: ServerPackInfo
-		
-		private enum CodingKeys: String, CodingKey {
-			case cert, ca, key1, key2, info
-		}
-		
-		init(from decoder: Decoder) throws {
-			let container = try decoder.container(keyedBy: CodingKeys.self)
-			cert = try container.decode(String.self, forKey: .cert)
-			ca = try container.decode(String.self, forKey: .ca)
-			let key1 = try container.decode(String.self, forKey: .key1)
-			let key2 = try container.decode(String.self, forKey: .key2)
-			key = key1 + key2
-			info = try container.decode(ServerPackInfo.self, forKey: .info)
-		}
-		
-		struct ServerPackInfo: Decodable {
-			var issuer: Domains
-			var domains: Domains
-		}
-		
-		struct Domains: Decodable {
-			var commonName: String
-			
-			private enum CodingKeys: String, CodingKey {
-				case commonName = "commonName"
-			}
-		}
-	}
-}
-
-// MARK: - View
 struct ServerView: View {
-	@AppStorage("Aether.ipFix") private var _ipFix: Bool = true
-	@AppStorage("Aether.serverMethod") private var _serverMethod: Int = 1
-	private let _serverMethods: [String] = [.localized("Fully Local"), .localized("Semi Local")]
-	private let _embedInList: Bool
+    @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("Aether.ipFix") private var ipFix = true
+    @AppStorage("Aether.serverMethod") private var serverMethod = 1
+    @ObservedObject private var setup = LocalServerSetup.shared
+    @ObservedObject private var installations = AppInstallationManager.shared
 
-	init(embedInList: Bool = true) {
-		self._embedInList = embedInList
-	}
-	
-	private let _dataService = NBFetchService()
-	private let _serverPackUrl = "https://backloop.dev/pack.json"
-	
-	// MARK: Body
-	var body: some View {
-		if _embedInList {
-			NBList(.localized("Server Config"), displayMode: .inline) {
-				_content
-			}
-		} else {
-			_content
-		}
-	}
+    var body: some View {
+        NBList(.localized("Server"), displayMode: .inline) {
+            Section {
+                Picker(selection: $serverMethod) {
+                    Text(.localized("Semi Local")).tag(1)
+                    Text(.localized("Fully Local")).tag(0)
+                } label: {
+                    SettingsRowLabel(.localized("Server Mode"), systemImage: "server.rack", backgroundColor: .blue)
+                }
+                .disabled(installations.hasPendingInstalls || setup.isSettingUp)
+            } footer: {
+                Text(.localized("Configures Server installation. Switch between Server and iDevice in Installation settings or from the Device tab."))
+            }
+            if serverMethod == 1 {
+                Section {
+                    Toggle(isOn: $ipFix) {
+                        SettingsRowLabel(.localized("Only use localhost address"), systemImage: "lifepreserver.fill", backgroundColor: .orange)
+                    }
+                    .disabled(installations.hasPendingInstalls)
+                } footer: {
+                    Text(.localized("Uses an online manifest service and serves the app locally over HTTP. No CA setup is required. Localhost avoids Wi-Fi address mismatches."))
+                }
+            } else {
+                Section {
+                    LabeledContent(.localized("Local Certificate")) {
+                        if setup.isSettingUp || setup.state == .checking {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text(statusText).foregroundStyle(.secondary)
+                        }
+                    }
+                    Button {
+                        HapticManager.shared.impact()
+                        Task { await setup.setUp() }
+                    } label: {
+                        SettingsRowLabel(setup.state == .setupRequired ? .localized("Set Up") : .localized("Install CA"),
+                            systemImage: "checkmark.shield.fill", backgroundColor: .green)
+                    }
+                    .disabled(installations.hasPendingInstalls || setup.isSettingUp || setup.state == .checking)
+                } footer: {
+                    Text(.localized("Hosts the manifest and app on this device over HTTPS. Set Up generates a local CA and opens your browser to download its profile. Install it under Settings → General → VPN & Device Management, then enable Aether Local Server CA under General → About → Certificate Trust Settings. Return to Aether to verify setup."))
+                }
+            }
+        }
+        .task(id: serverMethod) {
+            if serverMethod == 0 { await setup.refresh() }
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active, serverMethod == 0 { Task { await setup.refresh() } }
+        }
+        .alert(.localized("Local Server"), isPresented: Binding(
+            get: { scenePhase == .active && setup.error != nil },
+            set: { if !$0 { setup.error = nil } }
+        )) {
+            Button(.localized("OK"), role: .cancel) { setup.error = nil }
+        } message: { Text(setup.error ?? "") }
+    }
 
-	@ViewBuilder
-	private var _content: some View {
-		Section {
-				Picker(selection: $_serverMethod) {
-					ForEach(_serverMethods.indices, id: \.description) { index in
-						Text(_serverMethods[index]).tag(index)
-					}
-				} label: {
-					SettingsRowLabel(.localized("Server Type"), systemImage: "server.rack", backgroundColor: .blue)
-				}
-				Toggle(isOn: $_ipFix) {
-					SettingsRowLabel(.localized("Only use localhost address"), systemImage: "lifepreserver.fill", backgroundColor: .orange)
-				}
-				.disabled(_serverMethod != 1)
-			} footer: {
-				if _serverMethod == 1 {
-					Text(.localized("Semi Local uses an online manifest service over HTTPS and serves the application locally over HTTP. Using localhost (127.0.0.1) prevents Wi-Fi network address mismatches. No SSL certificates are required."))
-				} else {
-					Text(.localized("Fully Local hosts both the manifest and application on-device using a local HTTPS server. Requires trusted SSL certificates."))
-				}
-			}
-			
-			if _serverMethod == 0 {
-				Section {
-					Button {
-						FR.downloadSSLCertificates(from: _serverPackUrl) { success in
-							if success {
-								DispatchQueue.main.async {
-									UIAlertController.showAlertWithOk(
-										title: .localized("SSL Certificates"),
-										message: .localized("Certificates updated successfully.")
-									)
-								}
-							} else {
-								DispatchQueue.main.async {
-									UIAlertController.showAlertWithOk(
-										title: .localized("SSL Certificates"),
-										message: .localized("Failed to download, check your internet connection and try again.")
-									)
-								}
-							}
-						}
-					} label: {
-						SettingsRowLabel(
-							.localized("Update SSL Certificates"),
-							systemImage: "arrow.down.doc.fill",
-							backgroundColor: .green
-						)
-					}
-				} footer: {
-					Text(.localized("Download the local server SSL certificates and profiles needed for Fully Local HTTPS mode."))
-				}
-			}
-		}
+    private var statusText: String {
+        switch setup.state {
+        case .checking: return .localized("Checking")
+        case .setupRequired: return .localized("Setup Required")
+        case .trustRequired: return .localized("Trust Required")
+        case .ready: return .localized("Ready")
+        }
+    }
 }

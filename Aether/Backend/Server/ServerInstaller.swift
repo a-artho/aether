@@ -37,12 +37,12 @@ class ServerInstaller: Identifiable, ObservableObject {
 	@ObservedObject var viewModel: InstallerStatusViewModel
 	private var _server: Application?
 
-	init(app: AppInfoPresentable, viewModel: InstallerStatusViewModel, serverMethod: Int) throws {
+	init(app: AppInfoPresentable, viewModel: InstallerStatusViewModel, serverMethod: Int, localTLS: LocalServerTLSMaterial? = nil) throws {
 		self.app = app
 		self.serverMethod = serverMethod
 		self.viewModel = viewModel
 		do {
-			try _setup()
+			try _setup(localTLS: localTLS)
 			_needsShutdown = true
 			try _configureRoutes()
 			try _server?.server.start()
@@ -56,8 +56,8 @@ class ServerInstaller: Identifiable, ObservableObject {
 		_shutdownServer()
 	}
 	
-	private func _setup() throws {
-		self._server = try setupApp(port: port)
+	private func _setup(localTLS: LocalServerTLSMaterial?) throws {
+		self._server = try setupApp(port: port, localTLS: localTLS)
 	}
 		
 	private func _configureRoutes() throws {

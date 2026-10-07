@@ -68,6 +68,8 @@ struct Options: Codable, Equatable, Sendable {
 	var appVersion: String?
 	/// App bundle identifer
 	var appIdentifier: String?
+	/// Per-signing opt-in: align Aether with the selected profile’s explicit app ID.
+	var matchAetherIdentityToProfile: Bool?
 	/// App entitlements
 	var appEntitlementsFile: URL?
 	/// App apparence (i.e. Light/Dark/Default)

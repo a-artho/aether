@@ -60,15 +60,13 @@ struct SettingsView: View {
 					NavigationLink(destination: ConfigurationView()) {
 						SettingsRowLabel(.localized("Signing Options"), systemImage: "signature", backgroundColor: .orange)
 					}
+					NavigationLink(destination: InstallationView()) {
+						SettingsRowLabel(.localized("Installation"), systemImage: "arrow.down.app.fill", backgroundColor: .purple)
+					}
 					NavigationLink(destination: ArchiveView()) {
 						SettingsRowLabel(.localized("Archive & Compression"), systemImage: "archivebox.fill", backgroundColor: .cyan)
 					}
-					NavigationLink(destination: PairingFileView()) {
-						SettingsRowLabel(.localized("Pairing File"), systemImage: "key.fill", backgroundColor: .purple)
-					}
-					NavigationLink(destination: TunnelView()) {
-						SettingsRowLabel(.localized("Tunneling"), systemImage: "network", backgroundColor: .green)
-					}
+
 				}
 
 				Section {
@@ -118,7 +116,7 @@ struct SettingsView: View {
 					case .signing: ConfigurationView()
 					case .archive: ArchiveView()
 					case .installation: InstallationView()
-					case .serverConfig: EmptyView()
+					case .serverConfig: ServerView()
 					case .pairingFile: PairingFileView()
 					case .tunnel: TunnelView()
 					case .logs: LogsView()

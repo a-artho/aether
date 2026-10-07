@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		FEC600000000000000000001 /* AetherServerCrypto in Frameworks */ = {isa = PBXBuildFile; productRef = FEC600000000000000000003 /* AetherServerCrypto */; };
 		FEA900000000000000000003 = {isa = PBXBuildFile; productRef = FEA900000000000000000002; };
 		FEA700000000000000000001 /* AetherTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FEA700000000000000000003 /* AetherTunnel.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FEA700000000000000000002 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FEA700000000000000000004 /* NetworkExtension.framework */; };
@@ -100,6 +101,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FEC600000000000000000001 /* AetherServerCrypto in Frameworks */,
 				330F68FE2DBF7C8600D8C35D /* NimbleViews in Frameworks */,
 				330F68FC2DBF7C8600D8C35D /* NimbleExtensions in Frameworks */,
 				3346F5C22DC329A200C7D508 /* Zsign in Frameworks */,
@@ -177,6 +179,7 @@
 			);
 			name = Aether;
 			packageProductDependencies = (
+				FEC600000000000000000003 /* AetherServerCrypto */,
 				3371F7312DA9ECDD00281AC6 /* Zip */,
 				FEA900000000000000000002,
 				33CF13382DB5ACFB0021D4C5 /* SWCompression */,
@@ -258,6 +261,7 @@
 			mainGroup = 3379C1B02DA869A1004372DA;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				FEC600000000000000000002 /* XCLocalSwiftPackageReference "LocalServerCrypto" */,
 				3371F5152DA91FDC00281AC6 /* XCLocalSwiftPackageReference "Zsign" */,
 				3371F6F52DA9EBA500281AC6 /* XCRemoteSwiftPackageReference "Zip" */,
 				FEA900000000000000000001,
@@ -670,6 +674,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		FEC600000000000000000002 /* XCLocalSwiftPackageReference "LocalServerCrypto" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = LocalServerCrypto;
+		};
 		330F68FF2DC03DF400D8C35D /* XCLocalSwiftPackageReference "NimbleKit" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = NimbleKit;
@@ -725,6 +733,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		FEC600000000000000000003 /* AetherServerCrypto */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = FEC600000000000000000002 /* XCLocalSwiftPackageReference "LocalServerCrypto" */;
+			productName = AetherServerCrypto;
+		};
 		FEA900000000000000000002 = {isa = XCSwiftPackageProductDependency; package = FEA900000000000000000001; productName = ZIPFoundation; };
 		3305BBAB2DB8944200660D45 /* Vapor */ = {
 			isa = XCSwiftPackageProductDependency;
