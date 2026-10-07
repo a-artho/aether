@@ -9,6 +9,7 @@ import Foundation
 import IDevice
 import UIKit
 import CryptoKit
+import OSLog
 
 public class InstallationAppProxy: NSObject {
 	private let _heartbeat = HeartbeatManager.shared
@@ -27,7 +28,7 @@ public class InstallationAppProxy: NSObject {
 	}
 
 	public func fetchApps(applicationType: String? = nil, lightweight: Bool = false, bundleIdentifier: String? = nil) async throws -> [AppInfo] {
-		let worker = Task.detached(priority: .userInitiated) {
+		let worker = Task.detached(priority: .userInitiated) { () throws -> [AppInfo] in
 			try Task.checkCancellation()
 			var client: InstallationProxyClientHandle?
 			try self._connectInstallationProxy(client: &client)
@@ -100,7 +101,7 @@ public class InstallationAppProxy: NSObject {
 			idevice_outer_slice_free(UnsafeMutableRawPointer(results), UInt(count))
 		}
 		let decoder = PropertyListDecoder()
-		return UnsafeBufferPointer(start: results, count: count).compactMap { plist in
+		return UnsafeBufferPointer(start: results, count: count).compactMap { plist -> AppInfo? in
 			guard let plist else { return nil }
 			var bytes: UnsafeMutablePointer<CChar>?
 			var length: UInt32 = 0
@@ -113,7 +114,7 @@ public class InstallationAppProxy: NSObject {
 	}
 
 	public func provisioningProfiles() async throws -> [ProvisioningProfileInfo] {
-		let worker = Task.detached(priority: .userInitiated) {
+		let worker = Task.detached(priority: .userInitiated) { () throws -> [ProvisioningProfileInfo] in
 			try Task.checkCancellation()
 			var client: MisagentClientHandle?
 			try self._connectMisagent(client: &client)
@@ -136,7 +137,7 @@ public class InstallationAppProxy: NSObject {
 			defer { misagent_free_profiles(profilePointers, profileLengths, profileCount) }
 			try Task.checkCancellation()
 
-			return (0..<profileCount).compactMap { index in
+			return (0..<profileCount).compactMap { index -> ProvisioningProfileInfo? in
 				guard let bytes = profilePointers[index] else { return nil }
 				return ProvisioningProfileInfo(
 					data: Data(bytes: bytes, count: profileLengths[index])
