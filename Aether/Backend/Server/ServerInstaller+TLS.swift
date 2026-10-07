@@ -122,7 +122,12 @@ extension ServerInstaller {
 							if getnameinfo(ifaAddr, socklen_t(ifaAddr.pointee.sa_len),
 							               &hostname, socklen_t(hostname.count),
 							               nil, socklen_t(0), NI_NUMERICHOST) == 0 {
-								address = String(cString: hostname)
+								let candidate = String(cString: hostname)
+								if name == "en0" {
+									address = candidate
+									break
+								}
+								if address == nil { address = candidate }
 							}
 						}
 					}

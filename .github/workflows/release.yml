@@ -6,20 +6,30 @@ on:
       - v*
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: 'true'
+          submodules: true
 
-      - name: Prepare dependencies (Xcode)
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.3.0.app
+
+      - name: Regression checks
         run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.0.app
+          python3 Tests/Regression/run-release-checks.py
+          bash Tests/Regression/run.sh
 
       - name: Prepare native pairing library
+        env:
+          AETHER_NATIVE_IOS_ONLY: '1'
         run: |
           if ! command -v rustup >/dev/null; then
             curl -fsSL https://sh.rustup.rs -o "$RUNNER_TEMP/aether-rustup-init.sh"
@@ -29,27 +39,36 @@ jobs:
           rustup toolchain install stable --profile minimal
           RUSTUP_TOOLCHAIN=stable make native
 
-      - name: Build
-        run: | 
-          agvtool new-version -all $(git rev-parse HEAD)
-          make
-
-      - name: Get Version
-        id: get_version
+      - name: Build fresh unsigned iPhone app
         run: |
-          VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" _build/Payload/*.app/Info.plist)
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          make deps
+          xcodebuild -project Aether.xcodeproj -scheme Aether \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/AetherRelease" -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= DEPLOYMENT_LOCATION=NO CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" build
+          cp deps/* "$RUNNER_TEMP/AetherRelease/Build/Products/Release-iphoneos/Aether.app/"
 
-      - name: Create Release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v3.0.2
-        with:
-          name: Aether v${{ env.VERSION }}
-          tag_name: v${{ env.VERSION }}
-          files: |
-            packages/*
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          draft: true
+      - name: Package and verify unsigned IPA
+        run: |
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/AetherRelease/Build/Products/Release-iphoneos/Aether.app/Info.plist")
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          python3 scripts/package-unsigned.py \
+            "$RUNNER_TEMP/AetherRelease/Build/Products/Release-iphoneos/Aether.app" \
+            packages/Aether.ipa --version "$VERSION"
+
+      - name: Publish release
         env:
-          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$VERSION"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "$TAG" ]]; then
+            echo 'Release tag does not match app version' >&2
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" packages/Aether.ipa --clobber
+          else
+            gh release create "$TAG" packages/Aether.ipa --target "$GITHUB_SHA" \
+              --title "Aether $VERSION" --notes-file "docs/releases/$VERSION.md"
+          fi

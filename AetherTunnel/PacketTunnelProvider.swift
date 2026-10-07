@@ -67,11 +67,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 			for index in reflectedPackets.indices where protocols[index].int32Value == AF_INET {
 				guard reflectedPackets[index].count >= 20 else { continue }
 				reflectedPackets[index].withUnsafeMutableBytes { rawBuffer in
-					guard let ptr = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt32.self) else { return }
-					let src = ptr[3]
-					let dst = ptr[4]
-					ptr[3] = dst
-					ptr[4] = src
+					// IPv4 addresses are four network-order bytes; avoid typed alignment assumptions.
+					for byte in 0..<4 {
+						let source = rawBuffer[12 + byte]
+						rawBuffer[12 + byte] = rawBuffer[16 + byte]
+						rawBuffer[16 + byte] = source
+					}
 				}
 			}
 

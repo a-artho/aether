@@ -71,7 +71,11 @@ extension Storage {
 			p12Password: cert.password ?? ""
 		) { (status, _, _) in
 			if status == 1 {
-				DispatchQueue.main.async {
+				self.context.perform {
+					guard !cert.isDeleted, cert.managedObjectContext === self.context else {
+						DebugLogManager.shared.log("Ignored revocation result for a removed certificate.", category: "Certificate", level: .debug)
+						return
+					}
 					cert.revoked = true
 					self.saveContext()
 				}

@@ -54,8 +54,20 @@ final class Storage: ObservableObject {
 	
 	func clearContext<T: NSManagedObject>(request: NSFetchRequest<T>) {
 		guard let fetchRequest = request as? NSFetchRequest<NSFetchRequestResult> else { return }
-		let deleteRequest = NSBatchDeleteRequest(fetchRequest: fetchRequest)
-		_ = try? context.execute(deleteRequest)
+		context.performAndWait {
+			let deleteRequest = NSBatchDeleteRequest(fetchRequest: fetchRequest)
+			deleteRequest.resultType = .resultTypeObjectIDs
+			do {
+				let result = try context.execute(deleteRequest) as? NSBatchDeleteResult
+				if let ids = result?.result as? [NSManagedObjectID] {
+					NSManagedObjectContext.mergeChanges(
+						fromRemoteContextSave: [NSDeletedObjectsKey: ids], into: [context]
+					)
+				}
+			} catch {
+				DebugLogManager.shared.log("Metadata reset failed: \(error.localizedDescription)", category: "Storage", level: .error)
+			}
+		}
 	}
 	
 	func countContent<T: NSManagedObject>(for type: T.Type) -> String {

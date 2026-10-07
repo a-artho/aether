@@ -29,6 +29,9 @@ export MACOSX_DEPLOYMENT_TARGET=12.0
 export CARGO_PROFILE_RELEASE_DEBUG=0
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
 targets=(aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios-macabi x86_64-apple-ios-macabi)
+if [[ "${AETHER_NATIVE_IOS_ONLY:-0}" == 1 ]]; then
+  targets=(aarch64-apple-ios)
+fi
 rustup target add "${targets[@]}"
 cd "$source_dir"
 # aes 0.8 requires this opt-in to compile its ARMv8 backend. Its
@@ -68,17 +71,23 @@ module IDevice {
     export *
 }
 MAP
+output="$work_dir/IDevice.xcframework"
+rm -rf "$output"
+if [[ "${AETHER_NATIVE_IOS_ONLY:-0}" == 1 ]]; then
+  xcodebuild -create-xcframework \
+    -library "$CARGO_TARGET_DIR/aarch64-apple-ios/release/libidevice_ffi.a" -headers "$headers" \
+    -output "$output"
+else
 xcrun lipo -create "$CARGO_TARGET_DIR/aarch64-apple-ios-sim/release/libidevice_ffi.a" "$CARGO_TARGET_DIR/x86_64-apple-ios/release/libidevice_ffi.a" -output "$work_dir/idevice-ios-sim.a"
 xcrun lipo -create "$CARGO_TARGET_DIR/aarch64-apple-darwin/release/libidevice_ffi.a" "$CARGO_TARGET_DIR/x86_64-apple-darwin/release/libidevice_ffi.a" -output "$work_dir/idevice-macos.a"
 xcrun lipo -create "$CARGO_TARGET_DIR/aarch64-apple-ios-macabi/release/libidevice_ffi.a" "$CARGO_TARGET_DIR/x86_64-apple-ios-macabi/release/libidevice_ffi.a" -output "$work_dir/idevice-maccatalyst.a"
-output="$work_dir/IDevice.xcframework"
-rm -rf "$output"
 xcodebuild -create-xcframework \
   -library "$CARGO_TARGET_DIR/aarch64-apple-ios/release/libidevice_ffi.a" -headers "$headers" \
   -library "$work_dir/idevice-ios-sim.a" -headers "$headers" \
   -library "$work_dir/idevice-macos.a" -headers "$headers" \
   -library "$work_dir/idevice-maccatalyst.a" -headers "$headers" \
   -output "$output"
+fi
 # Replace the completed artifact only after every architecture succeeds.
 rm -rf "$native_dir/IDevice.xcframework"
 mv "$output" "$native_dir/IDevice.xcframework"

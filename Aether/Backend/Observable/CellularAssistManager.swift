@@ -140,9 +140,15 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 	public func handleCallback(_ url: URL) {
 		guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
-		let values = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).compactMap { item in
-			item.value.map { (item.name, $0) }
-		})
+		var values: [String: String] = [:]
+		for item in components.queryItems ?? [] {
+			guard let value = item.value else { continue }
+			guard values[item.name] == nil else {
+				_log("Ignored an ambiguous shortcut callback with duplicate parameters.", level: .warning)
+				return
+			}
+			values[item.name] = value
+		}
 		guard let rawID = values["operation"], let callbackID = UUID(uuidString: rawID), callbackID == operationID,
 			let phase = values["phase"], let command = Command(rawValue: phase), command == activeCommand,
 			let status = values["status"] else {

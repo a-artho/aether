@@ -261,7 +261,8 @@ extension ASRepository {
 					forKey: .localizedDescription
 				)
 
-			self.iconURL = try container.decode(URL.self, forKey: .iconURL)
+			// Artwork is optional; malformed artwork must not discard a usable catalog.
+			self.iconURL = try? container.decodeIfPresent(URL.self, forKey: .iconURL)
 
 			self.tintColor =
 				try container.decodeIfPresent(Color.self, forKey: .tintColor)

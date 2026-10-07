@@ -36,6 +36,7 @@ public class ASDecrypt {
 	}
 	
 	public func decrypt(key: [UInt8], keyLength: Int) -> [String]? {
+		guard keyLength > 0, keyLength <= key.count else { return nil }
 		guard let data = extractBase64() else {
 			return nil
 		}

@@ -531,9 +531,24 @@ final class SpoofSession: ObservableObject {
 
 	private func offset(coordinate: CLLocationCoordinate2D, eastMeters: Double, northMeters: Double) -> CLLocationCoordinate2D {
         let earth = 6378137.0
-        let dLat = northMeters / earth * (180 / .pi)
-        let dLon = eastMeters / (earth * cos(coordinate.latitude * .pi / 180)) * (180 / .pi)
-        return CLLocationCoordinate2D(latitude: coordinate.latitude + dLat, longitude: coordinate.longitude + dLon)
+        guard eastMeters.isFinite, northMeters.isFinite,
+              CLLocationCoordinate2DIsValid(coordinate) else { return coordinate }
+        let distance = hypot(eastMeters, northMeters) / earth
+        guard distance > 0, distance.isFinite else { return coordinate }
+        let bearing = atan2(eastMeters, northMeters)
+        let latitude = coordinate.latitude * .pi / 180
+        let longitude = coordinate.longitude * .pi / 180
+        let sineLatitude = sin(latitude) * cos(distance)
+            + cos(latitude) * sin(distance) * cos(bearing)
+        let nextLatitude = asin(min(1, max(-1, sineLatitude)))
+        let nextLongitude = longitude + atan2(
+            sin(bearing) * sin(distance) * cos(latitude),
+            cos(distance) - sin(latitude) * sin(nextLatitude)
+        )
+        let degrees = nextLongitude * 180 / .pi
+        let wrapped = (degrees + 180).truncatingRemainder(dividingBy: 360)
+        return CLLocationCoordinate2D(latitude: nextLatitude * 180 / .pi,
+                                      longitude: (wrapped < 0 ? wrapped + 360 : wrapped) - 180)
 	}
 
 	private func _ensureDeviceReady(generation: Int? = nil) async -> Bool {
