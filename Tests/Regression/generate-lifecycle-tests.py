@@ -88,7 +88,7 @@ struct ProvisioningProfileInfo {}
  func log(_ message:String,category:String,level:Level = .warning) {}
 }
 @MainActor final class Store {
-	var hasLoadedApps=false; var lastLoadedAt:Date?; var verifiedApps:[AppInfo]?
+	var hasLoadedApps=false; var lastLoadedAt:Date?; var verifiedApps:[AppInfo]?; var initialBrowse:Task<[AppInfo]?,Never>?
  var iconPrefetchTask:Task<Void,Never>?; var needsTrailingRefresh=false; var refreshGeneration=UUID(); var apps:[AppInfo]=[]; var isLoading=false; var errorMessage:String?
  func updateApplications(with apps:[AppInfo],profiles:[ProvisioningProfileInfo]) { self.apps=apps }
 ''', method(store,'func load() async'), method(store,'func refreshOnForeground() async'), method(store,'func clear()'), method(store,'func refresh(force:'), r'''
