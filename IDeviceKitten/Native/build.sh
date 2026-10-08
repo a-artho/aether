@@ -23,6 +23,7 @@ patch -d "$source_dir" -p1 < "$native_dir/verify-saved-pairing.patch"
 patch -d "$source_dir" -p1 < "$native_dir/afc-large-writes.patch"
 patch -d "$source_dir" -p1 < "$native_dir/afc-transfer-diagnostics.patch"
 patch -d "$source_dir" -p1 < "$native_dir/tls-stream-optimization.patch"
+patch -d "$source_dir" -p1 < "$native_dir/afc-upload-progress.patch"
 export CARGO_TARGET_DIR="$work_dir/target"
 export IPHONEOS_DEPLOYMENT_TARGET=15.0
 export MACOSX_DEPLOYMENT_TARGET=12.0

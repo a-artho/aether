@@ -39,3 +39,5 @@ This compiles the production installed-state, progress, and alert helpers into a
 ### Aether signing identity
 
 Run `python3 Tests/Regression/run-signing-identity-checks.py` to exercise the production profile-ID resolver, backend validation, and file-backed extension identifier rewrites. Covers malformed/wildcard profiles, expired profiles, changed queued certificates, manual-ID precedence, stale identifiers on externally renamed Aether copies, namespace boundaries, option conflicts, and preserving the existing plugin behavior when the toggle is off. Full iOS signing and tunnel behavior still require an iPhone build.
+
+Signing and transfer progress checks: `run-operation-progress-checks.py` exercises the production coalescers and terminal-state guards. `run-native-signing-progress-checks.py` signs a native fixture with and without progress, checks identical signature/resource output and SHA digests, and exercises large resource hashing plus isolated thread-local scopes. It requires Clang and Homebrew OpenSSL 3. Native AFC progress tests run with the existing native build checks.

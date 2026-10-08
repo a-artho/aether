@@ -23,7 +23,7 @@ extension Storage {
 	
 	@MainActor
 	@discardableResult
-	func deleteApp(for app: AppInfoPresentable) -> Bool {
+	func deleteApp(for app: AppInfoPresentable, stagedCleanup: ((URL) -> Void)? = nil) -> Bool {
 		guard !AppInstallationManager.shared.containsInstallation(for: app),
 			!DownloadManager.shared.usesLibraryArtifact(app),
 			!ExportManager.shared.usesLibraryArtifact(app) else {
@@ -58,12 +58,35 @@ extension Storage {
 			return false
 		}
 		if let movedDirectory {
+			if let stagedCleanup {
+				stagedCleanup(movedDirectory.staged)
+				return true
+			}
 			do { try FileManager.default.removeItem(at: movedDirectory.staged) }
 			catch { DebugLogManager.shared.log("App deleted, but could not clean staged files: \(error.localizedDescription)", category: "Library", level: .error) }
 		}
 		return true
 	}
 	
+	/// Commit deletion on the owning context, then remove the staged app folder
+	/// off the main actor. Only a value URL crosses into the file worker.
+	@MainActor
+	func deleteAppAsync(for app: AppInfoPresentable) async -> Bool {
+		var stagedURL: URL?
+		let deleted = deleteApp(for: app, stagedCleanup: { stagedURL = $0 })
+		guard deleted, let stagedURL else { return deleted }
+		let cleanupError = await Task.detached(priority: .utility) { () -> String? in
+			do {
+				try FileManager.default.removeItem(at: stagedURL)
+				return nil
+			} catch { return error.localizedDescription }
+		}.value
+		if let cleanupError {
+			DebugLogManager.shared.log("App deleted, but could not clean staged files: \(cleanupError)", category: "Library", level: .error)
+		}
+		return true
+	}
+
 	func getCertificate(from app: AppInfoPresentable) -> CertificatePair? {
 		if let signed = app as? Signed {
 			return signed.certificate

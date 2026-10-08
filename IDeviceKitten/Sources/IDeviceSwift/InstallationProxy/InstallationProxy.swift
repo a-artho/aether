@@ -17,11 +17,15 @@ private final class UploadProgressPublisher: @unchecked Sendable {
  private var latest: Double?
  private var scheduled = false
  private var closed = false
+ private var highest = 0.0
  private let publish: @MainActor @Sendable (Double) -> Void
  init(publish: @escaping @MainActor @Sendable (Double) -> Void) { self.publish = publish }
  func submit(_ value: Double) {
   lock.lock()
-  guard !closed else { lock.unlock(); return }
+  guard !closed, value.isFinite else { lock.unlock(); return }
+  let value = min(1, max(highest, max(0, value)))
+  guard value > highest else { lock.unlock(); return }
+  highest = value
   latest = value
   let enqueue = !scheduled
   scheduled = true
@@ -38,6 +42,20 @@ private final class UploadProgressPublisher: @unchecked Sendable {
  }
  @MainActor func finish() { drain(); cancel() }
  func cancel() { lock.lock(); closed = true; latest = nil; lock.unlock() }
+}
+
+// Value-only context retained for the duration of a synchronous native write.
+private final class UploadProgressContext {
+ let publisher: UploadProgressPublisher
+ let acknowledgedBytes: Int64
+ let totalBytes: Int64
+ init(publisher: UploadProgressPublisher, acknowledgedBytes: Int64, totalBytes: Int64) {
+  self.publisher = publisher; self.acknowledgedBytes = acknowledgedBytes; self.totalBytes = totalBytes
+ }
+ func report(_ bytes: UInt64) {
+  guard totalBytes > 0 else { return }
+  publisher.submit(min(1, (Double(acknowledgedBytes) + Double(bytes)) / Double(totalBytes)))
+ }
 }
 
 public class InstallationProxy: Identifiable, ObservableObject {
@@ -73,7 +91,15 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		var installproxy: InstallationProxyClientHandle?
 		var remotePath: String?
 
+		let progressPublisher = UploadProgressPublisher { [weak self] value in
+			self?.viewModel.uploadProgress = value
+		}
+		let installationProgressPublisher = UploadProgressPublisher { [weak self] value in
+			self?.viewModel.installProgress = value
+		}
+		defer { progressPublisher.cancel(); installationProgressPublisher.cancel() }
 		let worker = Task.detached(priority: .utility) {
+			defer { progressPublisher.cancel(); installationProgressPublisher.cancel() }
 			var diagnosticOutcome = "failed"
 			defer { diagnostics?.finish(outcome: Task.isCancelled ? "cancelled" : diagnosticOutcome) }
 			try Task.checkCancellation()
@@ -151,10 +177,6 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			let localFile = try FileHandle(forReadingFrom: url)
 			defer { try? localFile.close() }
 
-			let progressPublisher = UploadProgressPublisher { [weak self] value in
-				self?.viewModel.uploadProgress = value
-			}
-			defer { progressPublisher.cancel() }
 			let chunkSize = 4 * 1024 * 1024
 			var totalBytesWritten: Int64 = 0
 			diagnostics?.beginUpload(bytes: totalSize, chunkBytes: chunkSize)
@@ -167,16 +189,15 @@ public class InstallationProxy: Identifiable, ObservableObject {
 				try Task.checkCancellation()
 				let writeStarted = diagnostics?.now() ?? 0
 				var nativeMetrics = AfcWriteDiagnostics()
-				let writeError = chunk.withUnsafeBytes { buffer -> UnsafeMutablePointer<IdeviceFfiError>? in
-					guard let baseAddress = buffer.baseAddress else { return nil }
-					if diagnostics != nil {
-						return afc_file_write_diagnostics(openedFileHandle, baseAddress.assumingMemoryBound(to: UInt8.self), chunk.count, &nativeMetrics)
+				let progressContext = UploadProgressContext(publisher: progressPublisher,
+					acknowledgedBytes: totalBytesWritten, totalBytes: totalSize)
+				let writeError = withExtendedLifetime(progressContext) {
+					chunk.withUnsafeBytes { buffer -> UnsafeMutablePointer<IdeviceFfiError>? in
+						guard let baseAddress = buffer.baseAddress else { return nil }
+						return afc_file_write_with_progress(openedFileHandle,
+							baseAddress.assumingMemoryBound(to: UInt8.self), chunk.count, &nativeMetrics,
+							Self._uploadProgressCallback, Unmanaged.passUnretained(progressContext).toOpaque())
 					}
-					return afc_file_write(
-						openedFileHandle,
-						baseAddress.assumingMemoryBound(to: UInt8.self),
-						chunk.count
-					)
 				}
 				diagnostics?.recordNative(nativeMetrics)
 				diagnostics?.recordWrite(bytes: chunk.count, seconds: (diagnostics?.now() ?? 0) - writeStarted, succeeded: writeError == nil)
@@ -230,8 +251,9 @@ public class InstallationProxy: Identifiable, ObservableObject {
 
 			try Task.checkCancellation()
 			diagnostics?.stage("native-install")
+
 			let installError: UnsafeMutablePointer<IdeviceFfiError>? = remoteDir.withCString { cString in
-				let context = Unmanaged.passUnretained(self).toOpaque()
+				let context = Unmanaged.passUnretained(installationProgressPublisher).toOpaque()
 
 				if suspend {
 					DispatchQueue.main.async {
@@ -239,19 +261,20 @@ public class InstallationProxy: Identifiable, ObservableObject {
 					}
 				}
 
-				return installation_proxy_install_with_callback(
+				return withExtendedLifetime(installationProgressPublisher) { installation_proxy_install_with_callback(
 					installproxy,
 					cString,
 					nil, // options
 					Self._installationProgressCallback,
 					context
-				)
+				) }
 			}
 
 			guard installError == nil else {
 				throw IDeviceSwiftError(installError)
 			}
 
+			await MainActor.run { installationProgressPublisher.finish() }
 			diagnostics?.stage("completion")
 			try await Task.sleep(nanoseconds: 350_000_000)
 			try await self._updateStatus(with: .completed(.success(())))
@@ -260,6 +283,8 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		try await withTaskCancellationHandler {
 			try await worker.value
 		} onCancel: {
+			progressPublisher.cancel()
+			installationProgressPublisher.cancel()
 			worker.cancel()
 		}
 	}
@@ -270,20 +295,18 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		}
 	}
 
-	nonisolated static private let _installationProgressCallback: @convention(c) (
-		UInt64,
-		UnsafeMutableRawPointer?
-	) -> Void = { progress, context in
-		guard let context = context else { return }
-		let installer = Unmanaged<InstallationProxy>.fromOpaque(context).takeUnretainedValue()
-		Task {
-			try? await installer._updateInstallProgress(with: Double(progress) / 100.0)
-		}
+	// Both callbacks coalesce deliveries and drop updates after their operation closes.
+	nonisolated static private let _uploadProgressCallback: @convention(c) (
+		UInt64, UnsafeMutableRawPointer?
+	) -> Void = { bytes, context in
+		guard let context else { return }
+		Unmanaged<UploadProgressContext>.fromOpaque(context).takeUnretainedValue().report(bytes)
 	}
 
-	private func _updateInstallProgress(with status: Double) async throws {
-		await MainActor.run {
-			self.viewModel.installProgress = status
-		}
+	nonisolated static private let _installationProgressCallback: @convention(c) (
+		UInt64, UnsafeMutableRawPointer?
+	) -> Void = { progress, context in
+		guard let context else { return }
+		Unmanaged<UploadProgressPublisher>.fromOpaque(context).takeUnretainedValue().submit(Double(progress) / 100.0)
 	}
 }

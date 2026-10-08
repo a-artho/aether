@@ -86,19 +86,8 @@ class ServerInstaller: Identifiable, ObservableObject {
 					return Response(status: .notFound)
 				}
 				
-				self._updateStatus(.sendingPayload)
-				
-				return req.fileio.streamFile(
-					at: packageUrl.path
-				) { result in
-					switch result {
-					case .success:
-						self._updateStatus(.installing)
-					case .failure(let error):
-						self._updateStatus(.broken(error))
-					}
+				return self._streamPayload(at: packageUrl, for: req)
 
-				}
 			case "/install":
 				var headers = HTTPHeaders()
 				headers.add(name: .contentType, value: "text/html")
@@ -109,6 +98,62 @@ class ServerInstaller: Identifiable, ObservableObject {
 		}
 	}
 	
+	private func _streamPayload(at url: URL, for request: Request) -> Response {
+		// Keep Vapor's existing range, cache and content headers. Replace only the
+		// body producer so successful writes can report bounded byte progress.
+		let response = request.fileio.streamFile(at: url.path)
+		guard response.status == .ok || response.status == .partialContent else { return response }
+		let count = response.body.count
+		guard count >= 0 else { return response }
+		let offset: Int64
+		if response.status == .partialContent {
+			guard let range = response.headers.first(name: .contentRange),
+				let start = range.split(separator: " ").last?.split(separator: "-").first,
+				let parsed = Int64(start), parsed >= 0 else { return response }
+			offset = parsed
+		} else { offset = 0 }
+		_updateStatus(.sendingPayload)
+		response.body = .init(asyncStream: { [weak self] writer in
+			let installer = self
+			let progress = OperationProgressPublisher { [weak installer] value in
+				guard let installer, case .sendingPayload = installer.viewModel.status else { return }
+				installer.viewModel.uploadProgress = max(installer.viewModel.uploadProgress, value)
+			}
+			defer { progress.cancel() }
+			do {
+				let chunks = try await request.fileio.readFile(at: url.path,
+					chunkSize: 64 * 1024, offset: offset, byteCount: count)
+				var written = 0
+				var lastPublishedAt = DispatchTime.now().uptimeNanoseconds
+				for try await chunk in chunks {
+					try await writer.write(.buffer(chunk))
+					written += chunk.readableBytes
+					let now = DispatchTime.now().uptimeNanoseconds
+					if now - lastPublishedAt >= 250_000_000 {
+						progress.submit(Double(written) / Double(max(1, count)))
+						lastPublishedAt = now
+					}
+				}
+				guard written == count else { throw Abort(.internalServerError) }
+				try await writer.write(.end)
+				progress.cancel()
+				await MainActor.run {
+					guard let installer, case .sendingPayload = installer.viewModel.status else { return }
+					installer.viewModel.uploadProgress = 1
+					installer.viewModel.status = .installing
+				}
+			} catch {
+				progress.cancel()
+				try? await writer.write(.error(error))
+				await MainActor.run {
+					guard let installer, case .sendingPayload = installer.viewModel.status else { return }
+					installer.viewModel.status = .broken(error)
+				}
+			}
+		}, count: count, byteBufferAllocator: request.byteBufferAllocator)
+		return response
+	}
+
 	private func _shutdownServer() {
 		guard _needsShutdown else { return }
 		

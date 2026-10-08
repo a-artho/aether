@@ -35,7 +35,7 @@ struct LibraryCellView: View {
 	@Binding var selectedAppUUIDs: Set<String>
 	
 	private var _isQueued: Bool {
-		installationManager.containsInstallation(for: app)
+		installationManager.hasPendingInstallation(for: app)
 	}
 
 	private var _installTitle: String {
@@ -43,7 +43,7 @@ struct LibraryCellView: View {
 	}
 
 	private func _installOrShowQueue(for app: AppInfoPresentable) {
-		if installationManager.containsInstallation(for: app) {
+		if installationManager.hasPendingInstallation(for: app) {
 			AppTabManager.shared.showInstallQueue()
 		} else {
 			if installationManager.startInstall(app: app) {

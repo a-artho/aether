@@ -1,0 +1,176 @@
+--- a/idevice/src/lib.rs
++++ b/idevice/src/lib.rs
+@@ -505,6 +505,13 @@
+ 
+     #[cfg(feature = "afc")]
+     pub(crate) async fn send_raw_profiled(&mut self, message: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics) -> Result<(), IdeviceError> {
++        self.send_raw_profiled_with_progress(message, metrics, None).await
++    }
++
++    #[cfg(feature = "afc")]
++    pub(crate) async fn send_raw_profiled_with_progress(&mut self, message: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics,
++        mut progress: Option<&mut (dyn FnMut(u64) + Send)>) -> Result<(), IdeviceError> {
++        let initial_bytes = metrics.socket_bytes;
+         let socket = self.socket.as_mut().ok_or(IdeviceError::NoEstablishedConnection)?;
+         let start = std::time::Instant::now();
+         let result: Result<(), std::io::Error> = async {
+@@ -525,6 +532,7 @@
+                     if n == 0 { return Err(std::io::ErrorKind::WriteZero.into()); }
+                     metrics.socket_bytes += n as u64;
+                     remaining = &remaining[n..];
++                    if let Some(callback) = progress.as_mut() { callback(metrics.socket_bytes - initial_bytes); }
+                 }
+             }
+             Ok(())
+--- a/idevice/src/services/afc/inner_file.rs
++++ b/idevice/src/services/afc/inner_file.rs
+@@ -204,6 +204,12 @@
+ 
+     /// Diagnostic equivalent of write: identical packet order, sizes and reply checks.
+     pub async fn write_profiled(mut self: Pin<&mut Self>, bytes: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics) -> Result<(), IdeviceError> {
++        self.as_mut().write_profiled_with_progress(bytes, metrics, None).await
++    }
++
++    pub async fn write_profiled_with_progress(mut self: Pin<&mut Self>, bytes: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics,
++        mut progress: Option<&mut (dyn FnMut(u64) + Send)>) -> Result<(), IdeviceError> {
++        let mut acknowledged = 0u64;
+         for chunk in bytes.chunks(MAX_WRITE_TRANSFER) {
+             let start = std::time::Instant::now();
+             let header_payload = self.as_ref().fd.to_le_bytes().to_vec();
+@@ -222,12 +228,21 @@
+             let wire = packet.serialize();
+             metrics.serialize_seconds += start.elapsed().as_secs_f64();
+             metrics.packets += 1;
+-            this.client.idevice.send_raw_profiled(&wire, metrics).await?;
++            let mut on_wire = |wire_bytes: u64| {
++                if let Some(callback) = progress.as_mut() {
++                    // Header bytes aren't payload. Reserve the final byte until the
++                    // AFC status reply confirms this packet; never report early success.
++                    callback(acknowledged + wire_bytes.saturating_sub(header_len).min(chunk.len().saturating_sub(1) as u64));
++                }
++            };
++            this.client.idevice.send_raw_profiled_with_progress(&wire, metrics, Some(&mut on_wire)).await?;
+             let start = std::time::Instant::now();
+             let result = this.client.read().await;
+             metrics.reply_seconds += start.elapsed().as_secs_f64();
+             result?;
+             metrics.replies += 1;
++            acknowledged += chunk.len() as u64;
++            if let Some(callback) = progress.as_mut() { callback(acknowledged); }
+         }
+         Ok(())
+     }
+@@ -656,4 +671,55 @@
+         receiver.await.unwrap();
+     }
+ 
+-}
++    #[tokio::test]
++    async fn progress_reports_inside_packet_and_waits_for_reply_before_completion() {
++        let (client, mut server) = tokio::io::duplex(64 * 1024);
++        let reports = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
++        let received = reports.clone();
++        let receiver = tokio::spawn(async move {
++            for expected in [MAX_WRITE_TRANSFER, 123] {
++                let (sequence, bytes) = receive_write(&mut server).await;
++                assert_eq!(bytes.len(), expected);
++                assert!(bytes.iter().all(|b| *b == 0x5a));
++                // The final payload byte must not be published before this acknowledgement.
++                {
++                let events = received.lock().unwrap();
++                assert!(!events.is_empty());
++                assert!(events.last().copied().unwrap() < ((sequence as usize) * MAX_WRITE_TRANSFER + expected) as u64);
++                if sequence == 0 { assert!(events.iter().any(|n| *n > 0 && *n < (MAX_WRITE_TRANSFER / 2) as u64)); }
++                }
++                reply(&mut server, sequence, 0).await;
++            }
++        });
++        let mut publish = |n| reports.lock().unwrap().push(n);
++        let mut file = file(client);
++        let mut metrics = crate::afc::AfcWriteDiagnostics::default();
++        file.as_mut().write_profiled_with_progress(&vec![0x5a; MAX_WRITE_TRANSFER + 123], &mut metrics, Some(&mut publish)).await.unwrap();
++        receiver.await.unwrap();
++        let events = reports.lock().unwrap();
++        assert_eq!(events.last().copied(), Some((MAX_WRITE_TRANSFER + 123) as u64));
++        assert!(events.windows(2).all(|p| p[1] >= p[0]));
++        assert_eq!(metrics.replies, 2);
++    }
++
++    #[tokio::test]
++    async fn failed_reply_cannot_report_completed_payload() {
++        let (client, mut server) = tokio::io::duplex(64 * 1024);
++        let receiver = tokio::spawn(async move {
++            let (sequence, _) = receive_write(&mut server).await;
++            reply(&mut server, sequence, 18).await;
++            let mut next = [0u8; 1];
++            assert_eq!(server.read(&mut next).await.unwrap(), 0);
++        });
++        let mut reports = Vec::<u64>::new();
++        let mut publish = |n| reports.push(n);
++        let mut file = file(client);
++        let mut metrics = crate::afc::AfcWriteDiagnostics::default();
++        let result = file.as_mut().write_profiled_with_progress(&vec![0x5a; MAX_WRITE_TRANSFER + 123], &mut metrics, Some(&mut publish)).await;
++        assert!(matches!(result, Err(IdeviceError::Afc(_))));
++        drop(file); receiver.await.unwrap();
++        assert!(reports.iter().all(|n| *n < MAX_WRITE_TRANSFER as u64));
++        assert_eq!(metrics.replies, 0);
++    }
++
++}
+--- a/idevice/src/services/afc/file.rs
++++ b/idevice/src/services/afc/file.rs
+@@ -125,6 +125,12 @@
+         self.inner.as_mut().write_profiled(bytes, metrics).await
+     }
+ 
++    pub async fn write_entire_profiled_with_progress(&mut self, bytes: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics,
++        progress: Option<&mut (dyn FnMut(u64) + Send)>) -> Result<(), IdeviceError> {
++        self.inner.as_mut().write_profiled_with_progress(bytes, metrics, progress).await
++    }
++
++
+     /// Applies an flock(2)-style lock to the file
+     ///
+     /// # Arguments
+--- a/ffi/src/afc.rs
++++ b/ffi/src/afc.rs
+@@ -1003,17 +1003,38 @@
+     handle: *mut AfcFileHandle, data: *const u8, length: libc::size_t,
+     output: *mut AfcWriteDiagnostics,
+ ) -> *mut IdeviceFfiError {
++    unsafe { afc_file_write_with_progress(handle, data, length, output, None, std::ptr::null_mut()) }
++}
++
++/// Progress counts payload bytes accepted by transport; the last byte is held
++/// until the AFC reply validates the write. Context remains valid until return.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn afc_file_write_with_progress(
++    handle: *mut AfcFileHandle, data: *const u8, length: libc::size_t,
++    output: *mut AfcWriteDiagnostics,
++    callback: Option<unsafe extern "C" fn(u64, *mut std::ffi::c_void)>, context: *mut std::ffi::c_void,
++) -> *mut IdeviceFfiError {
+     if output.is_null() { return ffi_err!(IdeviceError::FfiInvalidArg); }
+     unsafe { *output = Default::default(); }
+     if handle.is_null() || data.is_null() { return ffi_err!(IdeviceError::FfiInvalidArg); }
+     let fd = unsafe { &mut *(handle as *mut idevice::afc::file::FileDescriptor) };
+     let data_slice = unsafe { std::slice::from_raw_parts(data, length) };
+     let submitted = std::time::Instant::now();
++    let context = context as usize;
+     let (res, mut metrics, finished) = run_sync(async move {
+         let worker_started = std::time::Instant::now();
+         let mut metrics = idevice::afc::AfcWriteDiagnostics::default();
+         metrics.queue_seconds = submitted.elapsed().as_secs_f64();
+-        let res = fd.write_entire_profiled(data_slice, &mut metrics).await;
++        let mut last_update = std::time::Instant::now();
++        let mut last_bytes = 0;
++        let mut publish = |bytes: u64| {
++            if bytes > last_bytes && (bytes == length as u64 || last_update.elapsed() >= std::time::Duration::from_millis(250)) {
++                last_update = std::time::Instant::now();
++                last_bytes = bytes;
++                if let Some(callback) = callback { unsafe { callback(bytes, context as *mut std::ffi::c_void); } }
++            }
++        };
++        let res = fd.write_entire_profiled_with_progress(data_slice, &mut metrics, Some(&mut publish)).await;
+         metrics.worker_seconds = worker_started.elapsed().as_secs_f64();
+         (res, metrics, std::time::Instant::now())
+     });

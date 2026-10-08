@@ -39,7 +39,7 @@ final class ZsignHandler {
 		}
 	}
 	
-	func sign() async throws {
+	func sign(progress: ((Double) -> Void)? = nil) async throws {
 		guard let cert = _certificate else {
 			throw SigningFileHandlerError.missingCertifcate
 		}
@@ -51,6 +51,7 @@ final class ZsignHandler {
 			p12Password: cert.password,
 			entitlementsPath: _options.appEntitlementsFile?.path ?? "",
 			removeProvision: !_options.removeProvisioning,
+			progress: progress,
 			completion: { success in
 				if !success {
 					self.hadError = SigningFileHandlerError.signFailed

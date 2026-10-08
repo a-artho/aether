@@ -328,13 +328,13 @@ enum SigningFixture {
  enum SigningFileHandlerError:Error { case missingCertifcate,signFailed }
  enum Zsign {
   static var returnValue=false;static var invokeCallback=false
-  static func sign(appPath:String,provisionPath:String="",p12Path:String="",p12Password:String="",entitlementsPath:String,adhoc:Bool=false,removeProvision:Bool,completion:((Bool)->Void)?)->Bool {
+  static func sign(appPath:String,provisionPath:String="",p12Path:String="",p12Password:String="",entitlementsPath:String,adhoc:Bool=false,removeProvision:Bool,progress:((Double)->Void)?=nil,completion:((Bool)->Void)?)->Bool {
    if invokeCallback { completion?(returnValue) };return returnValue
   }
  }
  final class Handler {
   let _appUrl=URL(fileURLWithPath:"/App.app"),_options=Options();var _certificate:Certificate? = Certificate();var hadError:Error?
-''',method(signer,'func sign() async throws'),method(signer,'func adhocSign() async throws'),r'''
+''',method(signer,'func sign(progress:'),method(signer,'func adhocSign() async throws'),r'''
  }
 }
 final class SigningReturnTests:XCTestCase {

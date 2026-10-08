@@ -165,6 +165,14 @@ final class AppInstallationManager: ObservableObject {
 		return currentRequest?.appKey == key || retiringAppKey == key || queuedInstalls.contains { $0.appKey == key }
 	}
 
+	// Job ownership also protects files during signing and retirement; only
+	// unfinished install requests should make a Library button say Queued.
+	func hasPendingInstallation(for app: AppInfoPresentable) -> Bool {
+		let key = InstallationRequest.appKey(for: app)
+		if queuedInstalls.contains(where: { $0.appKey == key && $0.installRequested }) { return true }
+		return currentRequest?.appKey == key && currentRequest?.installRequested == true && !hasCompletedSuccessfully
+	}
+
 	func isSigningOrQueuedToSign(_ app: AppInfoPresentable) -> Bool {
 		let key = InstallationRequest.appKey(for: app)
 		if queuedInstalls.contains(where: { $0.appKey == key && $0.signing != nil }) { return true }

@@ -40,6 +40,9 @@ p.write_text(s)
 PYZIP
 fi
 swift test --package-path "$scratch"
-for check in run-audit-fix-checks.py run-efficiency-checks.py run-device-loading-checks.py run-installed-loading-checks.py run-whole-app-checks.py run-foreground-recovery-checks.py run-signing-identity-checks.py; do
+for check in run-audit-fix-checks.py run-efficiency-checks.py run-device-loading-checks.py run-installed-loading-checks.py run-whole-app-checks.py run-foreground-recovery-checks.py run-signing-identity-checks.py run-signing-publication-checks.py run-operation-progress-checks.py; do
   python3 "$test_dir/$check"
 done
+
+python3 "$test_dir/run-native-signing-progress-checks.py"
+python3 "$test_dir/run-server-payload-progress-checks.py"

@@ -20,6 +20,7 @@ struct LibraryView: View {
 	@State private var _isDownloadingPresenting = false
 	@State private var _downloadURLText = ""
 	@State private var _isDeleteAllAlertPresented = false
+	@State private var _isDeleting = false
 
 	// MARK: Selection State
 	@State private var _selectedAppUUIDs: Set<String> = []
@@ -275,6 +276,17 @@ struct LibraryView: View {
 				}
 			}
 		}
+		.disabled(_isDeleting)
+		.overlay {
+			if _isDeleting {
+				ZStack {
+					Color.black.opacity(0.15).ignoresSafeArea()
+					ProgressView(.localized("Deleting…"))
+						.padding(24)
+						.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+				}
+			}
+		}
 	}
 	@ViewBuilder
 	private func _titleMenuActions() -> some View {
@@ -303,31 +315,38 @@ extension LibraryView {
 		}
 
 		let selectedDownloads = downloadManager.downloads.filter { _selectedDownloadIDs.contains($0.id) }
-		for download in selectedDownloads { downloadManager.deleteDownload(download) }
-		_deleteAvailableApps(selectedApps)
-
-		_selectedAppUUIDs.removeAll()
-		_selectedDownloadIDs.removeAll()
-
-		// _editMode = .inactive
+		_deleteAvailableApps(selectedApps, downloads: selectedDownloads, leaveEditing: false)
 	}
 
 	private func _deleteAllApps() {
-		var apps: [AppInfoPresentable] = Array(_signedApps)
-		apps.append(contentsOf: Array(_importedApps))
-
-		_deleteAvailableApps(apps)
-
-		_selectedAppUUIDs.removeAll()
-		_selectedDownloadIDs.removeAll()
-		_editMode = .inactive
+		_deleteAvailableApps(_getAllApps(), downloads: [], leaveEditing: true)
 	}
 
-	private func _deleteAvailableApps(_ apps: [AppInfoPresentable]) {
-		var retained = false
-		for app in apps { if !Storage.shared.deleteApp(for: app) { retained = true } }
-		if retained {
-			UIAlertController.showAlertWithOk(title: .localized("Apps In Use"), message: .localized("Apps required by an installation or update were kept. Cancel those operations before deleting them."))
+	@MainActor
+	private func _deleteAvailableApps(_ apps: [AppInfoPresentable], downloads: [Download], leaveEditing: Bool) {
+		guard !_isDeleting else { return }
+		// Snapshot before deleting: fetched managed objects change as each row is removed.
+		let snapshots = apps.map { AppSnapshot($0) }
+		_isDeleting = true
+		Task { @MainActor in
+			defer { _isDeleting = false }
+			// Give SwiftUI a chance to display the loading state before starting work.
+			await Task.yield()
+			for download in downloads {
+				downloadManager.deleteDownload(download)
+				await Task.yield()
+			}
+			var retained = false
+			for app in snapshots {
+				if !(await Storage.shared.deleteAppAsync(for: app)) { retained = true }
+				await Task.yield()
+			}
+			_selectedAppUUIDs.removeAll()
+			_selectedDownloadIDs.removeAll()
+			if leaveEditing { _editMode = .inactive }
+			if retained {
+				UIAlertController.showAlertWithOk(title: .localized("Apps In Use"), message: .localized("Apps required by an installation or update were kept. Cancel those operations before deleting them."))
+			}
 		}
 	}
 

@@ -61,12 +61,13 @@ final class SigningHandler: NSObject {
 		Logger.misc.info("[\(self._uuid)] Moved Payload to: \(movedAppURL.path)")
 	}
 	
-	func modify() async throws {
+	func modify(progress: @escaping (Double) -> Void) async throws {
 		try Task.checkCancellation()
 		guard let movedAppPath = _movedAppPath else {
 			throw SigningFileHandlerError.appNotFound
 		}
 		let fileIndex = _makeFileIndex(at: movedAppPath)
+		progress(0.22)
 		
 		guard let infoDictionary = NSDictionary(
 			contentsOf: movedAppPath.appendingPathComponent("Info.plist")
@@ -111,6 +112,7 @@ final class SigningHandler: NSObject {
 			codeSignatureDirectories: fileIndex.codeSignatureDirectories
 		)
 		try await _removeWatchIfNeeded(for: movedAppPath)
+		progress(0.24)
 		
 		if _options.experiment_supportLiquidGlass {
 			try await _locateMachosAndChangeToSDK26(for: movedAppPath)
@@ -124,6 +126,7 @@ final class SigningHandler: NSObject {
 			}
 		}
 		
+		progress(0.26)
 		// Injection can add binaries after the original index was built.
 		let hasInjection = _options.experiment_replaceSubstrateWithEllekit || !_options.injectionFiles.isEmpty
 		let machoFiles = hasInjection ? _makeFileIndex(at: movedAppPath).machoFiles : fileIndex.machoFiles
@@ -132,6 +135,7 @@ final class SigningHandler: NSObject {
 			machoFiles: machoFiles
 		)
 		
+		progress(0.28)
 		if _options.mergeEntitlements && _options.appEntitlementsFile == nil {
 			try await _mergeEntitlements(for: movedAppPath, with: _options)
 		}
@@ -144,7 +148,8 @@ final class SigningHandler: NSObject {
 			_options.signingOption == .default,
 			appCertificate != nil
 		{
-			try await handler.sign()
+			progress(0.3)
+			try await handler.sign(progress: { progress(0.3 + min(1, max(0, $0)) * 0.65) })
 //		} else if _options.signingOption == .adhoc {
 //			try await handler.adhocSign()
 		} else if _options.signingOption == .onlyModify {
@@ -156,8 +161,8 @@ final class SigningHandler: NSObject {
 		try Task.checkCancellation()
 		if let error = handler.hadError { throw error }
 		try await self.move()
+		progress(0.98)
 		try Task.checkCancellation()
-		try await self.addToDatabase()
 		
 		if let error = handler.hadError {
 			throw error
@@ -182,12 +187,12 @@ final class SigningHandler: NSObject {
 		try? _fileManager.removeItem(at: _uniqueWorkDir)
 	}
 	
-	func addToDatabase() async throws {
+	func addToDatabase(onCommitted: @MainActor () -> Void) async throws {
 		try Task.checkCancellation()
 		let app = try await _directory()
 		
 		guard let appUrl = _fileManager.getPath(in: app, for: "app") else {
-			return
+			throw SigningFileHandlerError.appNotFound
 		}
 		
 		let bundle = Bundle(url: appUrl)
@@ -202,6 +207,7 @@ final class SigningHandler: NSObject {
 		let certificateUUID = _options.signingOption == .default ? appCertificate?.uuid : nil
 
 		try await MainActor.run {
+			try Task.checkCancellation()
 			try Storage.shared.addSigned(
 				uuid: _uuid,
 				source: sourceURL,
@@ -216,6 +222,8 @@ final class SigningHandler: NSObject {
 				to: _uuid,
 				kind: .signed
 			)
+			// Publish the row and its final operation state in one main-actor turn.
+			onCommitted()
 		}
 		Logger.signing.info("[\(self._uuid)] Added to database")
 	}

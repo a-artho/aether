@@ -166,39 +166,44 @@ enum FR {
 	) -> Task<Void, Never> {
 		let signingStartedAt = Date()
 		DebugLogManager.shared.log("Signing started state=\(UIApplication.shared.applicationState.rawValue).", category: "Signing", level: .info)
+		let progressPublisher = OperationProgressPublisher(publish: progress)
 		return Task.detached {
-			let handler = SigningHandler(app: appSnapshot, options: options)
-			handler.appCertificate = certificate
-			handler.appIconData = iconData
+			await withTaskCancellationHandler {
+				defer { progressPublisher.cancel() }
+				let handler = SigningHandler(app: appSnapshot, options: options)
+				handler.appCertificate = certificate
+				handler.appIconData = iconData
 			
-			do {
-				try Task.checkCancellation()
-				try await handler.copy()
-				await MainActor.run {
-					progress(0.2)
-				}
-				try Task.checkCancellation()
-				try await handler.modify()
-				try Task.checkCancellation()
-				try? await handler.clean()
-				try await MainActor.run {
+				do {
 					try Task.checkCancellation()
-					progress(1)
-					DebugLogManager.shared.log("Signing completed elapsed=\(Date().timeIntervalSince(signingStartedAt)) state=\(UIApplication.shared.applicationState.rawValue).", category: "Signing", level: .info)
-					completion(.success(handler.signedUUID))
-				}
-			} catch {
-				try? await handler.clean()
-				await MainActor.run {
-					if let signed = Storage.shared.signedApp(uuid: handler.signedUUID) {
-						Storage.shared.deleteApp(for: signed)
-					} else {
-						try? FileManager.default.removeFileIfNeeded(at: FileManager.default.signed(handler.signedUUID))
+					try await handler.copy()
+					await MainActor.run {
+						progress(0.2)
 					}
-					DebugLogManager.shared.log("Signing stopped elapsed=\(Date().timeIntervalSince(signingStartedAt)) state=\(UIApplication.shared.applicationState.rawValue) cancelled=\(error is CancellationError) error=\(error.localizedDescription).", category: "Signing", level: .error)
-					completion(.failure(error))
+					try Task.checkCancellation()
+					try await handler.modify(progress: progressPublisher.submit)
+					try Task.checkCancellation()
+					try? await handler.clean()
+					try await handler.addToDatabase {
+						progressPublisher.cancel()
+						progress(1)
+						DebugLogManager.shared.log("Signing completed elapsed=\(Date().timeIntervalSince(signingStartedAt)) state=\(UIApplication.shared.applicationState.rawValue).", category: "Signing", level: .info)
+						completion(.success(handler.signedUUID))
+					}
+				} catch {
+					progressPublisher.cancel()
+					try? await handler.clean()
+					await MainActor.run {
+						if let signed = Storage.shared.signedApp(uuid: handler.signedUUID) {
+							Storage.shared.deleteApp(for: signed)
+						} else {
+							try? FileManager.default.removeFileIfNeeded(at: FileManager.default.signed(handler.signedUUID))
+						}
+						DebugLogManager.shared.log("Signing stopped elapsed=\(Date().timeIntervalSince(signingStartedAt)) state=\(UIApplication.shared.applicationState.rawValue) cancelled=\(error is CancellationError) error=\(error.localizedDescription).", category: "Signing", level: .error)
+						completion(.failure(error))
+					}
 				}
-			}
+			} onCancel: { progressPublisher.cancel() }
 		}
 	}
 	

@@ -37,7 +37,8 @@ final class Storage {
  struct Failure: Error {}
  func saveContext() -> Error? { saves+=1; if saves==failOnSave { return Failure() }; if let saveFailure { return saveFailure }; do { try context.save(); return nil } catch { return error } }
 '''
-source += declaration('Aether/Backend/Storage/Storage+Shared.swift', 'func deleteApp(') + '\n}\n'
+source += declaration('Aether/Backend/Storage/Storage+Shared.swift', 'func deleteApp(') + '\n'
+source += '@MainActor\n' + declaration('Aether/Backend/Storage/Storage+Shared.swift', 'func deleteAppAsync(') + '\n}\n'
 source += '''
 struct CertificatePair { let uuid: String? }
 struct SelectionBinding { var wrappedValue: Int }
@@ -131,6 +132,19 @@ source += '''
  check(tryCount(context, "Imported") == 1, "Original Library record removed; other import retained")
  check(tryCount(context, "Signed") == 1, "Signed record retained")
  check(!FileManager.default.fileExists(atPath: root.appendingPathComponent("original").path), "Original files removed")
+ AppInstallationManager.shared.busy = true
+ let protectedDeletion = await storage.deleteAppAsync(for: Snapshot(uuid: "other", isSigned: false))
+ check(!protectedDeletion && tryCount(context, "Imported") == 1, "Async deletion preserves active-operation guard")
+ AppInstallationManager.shared.busy = false
+ storage.failOnSave = storage.saves + 2
+ let failedAsyncDeletion = await storage.deleteAppAsync(for: Snapshot(uuid: "other", isSigned: false))
+ check(!failedAsyncDeletion && FileManager.default.fileExists(atPath: root.appendingPathComponent("other").path), "Async deletion restores files on commit failure")
+ storage.failOnSave = nil
+ let asyncDeleted = await storage.deleteAppAsync(for: Snapshot(uuid: "other", isSigned: false))
+ check(asyncDeleted && tryCount(context, "Imported") == 0, "Async deletion removes Library record")
+ check(!FileManager.default.fileExists(atPath: root.appendingPathComponent("other").path), "Async deletion awaits disk cleanup")
+ let remaining = try FileManager.default.contentsOfDirectory(atPath: root.path)
+ check(!remaining.contains(where: { $0.hasPrefix(".deleting-") }), "Async deletion leaves no staged folders")
  let connection = Connection(); connection.setConnection(enabled: false)
  check(!connection.proceeded, "Ordinary toggle must respect active transition")
  connection.setConnection(enabled: false, force: true)
