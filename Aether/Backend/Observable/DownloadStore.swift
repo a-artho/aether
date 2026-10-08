@@ -193,6 +193,7 @@ final class DownloadStore {
 		try? fileManager.removeItem(at: resumeDataURL(for: transferIdentifier))
 	}
 
+	@MainActor
 	func makeStagingURL(for download: Download, suggestedFilename: String?) throws -> URL {
 		try prepareDirectories()
 		let suggestedExtension = URL(fileURLWithPath: suggestedFilename ?? "").pathExtension
@@ -203,11 +204,13 @@ final class DownloadStore {
 		return stagingDirectoryURL.appendingPathComponent(fileName)
 	}
 
+	@MainActor
 	func stagingURL(for download: Download) -> URL? {
 		guard let stagedFileName = download.stagedFileName else { return nil }
 		return stagingDirectoryURL.appendingPathComponent(stagedFileName)
 	}
 
+	@MainActor
 	func removeStagingFile(for download: Download) {
 		if let stagingURL = stagingURL(for: download) {
 			try? fileManager.removeItem(at: stagingURL)
@@ -224,11 +227,13 @@ final class DownloadStore {
 		}
 	}
 
+	@MainActor
 	func cleanupArtifacts(for download: Download) {
 		removeResumeData(for: download.id)
 		removeStagingFile(for: download)
 	}
 
+	@MainActor
 	func pruneArtifacts(keeping downloads: [Download]) {
 		let retainedResumeFiles = Set(
 			downloads.compactMap { download in
