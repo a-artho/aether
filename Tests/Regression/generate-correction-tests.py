@@ -70,11 +70,6 @@ final class CorrectionTests: XCTestCase {
   cancelled.submit(0.5); cancelled.cancel()
   await Task.yield(); XCTAssertEqual(values,[1])
  }
- func testLegacyInstallQueueRemainsDecodable() throws {
-  let data=Data(#"{"app":{"uuid":"signed"},"method":1,"serverMethod":1}"#.utf8)
-  let record=try JSONDecoder().decode(QueuePersistenceFixture.StoredInstallation.self,from:data)
-  XCTAssertEqual(record.app.uuid,"signed");XCTAssertNil(record.signing);XCTAssertNil(record.installRequested)
- }
  func testQueuedSigningRestoresOptionsAndSignOnlyIntent() throws {
   let input=QueuePersistenceFixture.SigningInput(options:.init(post_installAppAfterSigned:false),iconData:Data([1,2]),certificateUUID:"certificate")
   let original=QueuePersistenceFixture.StoredInstallation(app:.init(uuid:"imported"),method:0,serverMethod:1,signing:input,installRequested:false)

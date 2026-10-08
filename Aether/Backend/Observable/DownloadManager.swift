@@ -41,9 +41,6 @@ class DownloadManager: NSObject, ObservableObject {
 		downloads = _store.loadDownloads()
 		_restorableTransferIDs = Set(downloads.filter { $0.state == .downloading || $0.state == .pausing || $0.state == .resuming }.map(\.id))
 		_restoringTransferIDs = _restorableTransferIDs
-		#if !targetEnvironment(macCatalyst)
-		retireLegacyDownloadActivities()
-		#endif
 
 		#if targetEnvironment(macCatalyst)
 		let configuration = URLSessionConfiguration.default

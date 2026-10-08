@@ -23,8 +23,8 @@ final class Storage: ObservableObject {
 				URL(fileURLWithPath: "/dev/null")
 		}
 
-		container.persistentStoreDescriptions.first?.shouldMigrateStoreAutomatically = true
-		container.persistentStoreDescriptions.first?.shouldInferMappingModelAutomatically = true
+		container.persistentStoreDescriptions.first?.shouldMigrateStoreAutomatically = false
+		container.persistentStoreDescriptions.first?.shouldInferMappingModelAutomatically = false
 
 		_loadPersistentStoreAggressively()
 		container.viewContext.automaticallyMergesChangesFromParent = true

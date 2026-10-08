@@ -135,7 +135,7 @@ final class OperationRegressionTests:XCTestCase {
   XCTAssertEqual(handler._injectedDylibNames,["test.dylib"]); XCTAssertTrue(FileManager.default.fileExists(atPath:source.path))
   try await handler.injectFramework(app); try handler.injectExtension(app)
  }
- @MainActor func testCertificateMigrationWaitsRetriesAndAvoidsDuplicates() async throws {
+ @MainActor func testDefaultCertificateImportWaitsRetriesAndAvoidsDuplicates() async throws {
   let root=try folder()
   for name in ["A","B"] {
    let folder=root.appendingPathComponent(name,isDirectory:true)
@@ -145,8 +145,6 @@ final class OperationRegressionTests:XCTestCase {
   CertificateFixture.FixtureBundle.main.assets=root; CertificateFixture.Storage.shared.certificates=[]
   CertificateFixture.DebugLogManager.shared.errors=0
   UserDefaults.standard.removeObject(forKey:CertificateFixture.flag)
-  // Older builds could have marked migration complete before either import.
-  UserDefaults.standard.set(true,forKey:"aether.didImportDefaultCertificates")
   let delegate=CertificateFixture.Delegate(); delegate.start()
   while CertificateFixture.FR.pending.isEmpty { await Task.yield() }
   XCTAssertFalse(UserDefaults.standard.bool(forKey:CertificateFixture.flag))
@@ -163,7 +161,7 @@ final class OperationRegressionTests:XCTestCase {
   XCTAssertEqual(CertificateFixture.Storage.shared.certificates.count,2)
   delegate.start(); for _ in 0..<20 { await Task.yield() }
   XCTAssertTrue(CertificateFixture.FR.pending.isEmpty)
-  UserDefaults.standard.removeObject(forKey:CertificateFixture.flag); UserDefaults.standard.removeObject(forKey:"aether.didImportDefaultCertificates")
+  UserDefaults.standard.removeObject(forKey:CertificateFixture.flag)
  }
 }
 ''')

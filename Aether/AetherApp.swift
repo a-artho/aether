@@ -435,8 +435,8 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 						let password = try String(contentsOf: folder.appendingPathComponent("cert.txt"), encoding: .utf8)
 						let keyData = try Data(contentsOf: key)
 						let provisionData = try Data(contentsOf: provision)
-						// Idempotent after an earlier partial migration or a crash after
-						// the certificate commit but before the migration flag commit.
+						// Avoid duplicates if first-run import is interrupted after a
+						// certificate commit but before the completion flag is saved.
 						let exists = Storage.shared.getAllCertificates().contains { cert in
 							guard cert.isDefault, cert.password == password,
 								let storedKey = Storage.shared.getFile(.certificate, from: cert),
@@ -458,7 +458,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 				}
 				if allSucceeded { UserDefaults.standard.set(true, forKey: "aether.didImportDefaultCertificates.v2") }
 			} catch {
-				DebugLogManager.shared.log("Default certificate migration failed: \(error.localizedDescription)", category: "Certificate", level: .error)
+				DebugLogManager.shared.log("Default certificate import failed: \(error.localizedDescription)", category: "Certificate", level: .error)
 			}
 		}
 	}

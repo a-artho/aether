@@ -375,7 +375,7 @@ final class SigningReturnTests:XCTestCase {
 stored=(repo/'Aether/Backend/Observable/DownloadStore.swift').read_text()
 stored=stored[stored.index('struct StoredDownload:'):stored.index('final class DownloadStore')]
 parts += [r'''
-enum DownloadMigrationFixture {
+enum DownloadPersistenceFixture {
  struct SourceAppProvenance:Codable,Sendable {}
  final class Download {
   enum FailureAction:String,Codable,Sendable { case resume,restart,retryProcessing }
@@ -387,22 +387,15 @@ enum DownloadMigrationFixture {
  }
 ''',stored,r'''
 }
-final class DownloadMigrationTests:XCTestCase {
- @MainActor func testRetiredUpdateIntentDoesNotLoseDownloadStateAndIsNotSavedAgain() throws {
-  let initial=DownloadMigrationFixture.StoredDownload(download:DownloadMigrationFixture.Download())
-  let encoded=try JSONEncoder().encode(initial)
-  for status in ["downloading","paused","processing","failed"] {
-   var object=try XCTUnwrap(JSONSerialization.jsonObject(with:encoded) as? [String:Any])
-   object["status"]=status
-   object["automaticUpdate"]=["bundleIdentifier":"example.app","signedUUID":"old-signed","installationEnqueued":false]
-   let legacy=try JSONSerialization.data(withJSONObject:object)
-   let migrated=try JSONDecoder().decode(DownloadMigrationFixture.StoredDownload.self,from:legacy)
-   XCTAssertEqual(migrated.transferIdentifier,"transfer");XCTAssertEqual(migrated.importIdentifier,"import")
-   XCTAssertEqual(migrated.stagedFileName,"staged.ipa");XCTAssertEqual(migrated.bytesDownloaded,1024)
-   XCTAssertEqual(migrated.status.rawValue,status)
-   if status=="failed" { XCTAssertEqual(migrated.state(hasResumeData:true),.failed("Download Failed",.retryProcessing)) }
-   let saved=try XCTUnwrap(JSONSerialization.jsonObject(with:JSONEncoder().encode(migrated)) as? [String:Any])
-   XCTAssertNil(saved["automaticUpdate"])
+final class DownloadPersistenceTests:XCTestCase {
+ @MainActor func testCurrentDownloadStateRoundTrips() throws {
+  for state in [DownloadPersistenceFixture.Download.State.downloading,.paused,.processing,.failed("Download Failed",.retryProcessing)] {
+   let download=DownloadPersistenceFixture.Download();download.state=state
+   let initial=DownloadPersistenceFixture.StoredDownload(download:download)
+   let restored=try JSONDecoder().decode(DownloadPersistenceFixture.StoredDownload.self,from:JSONEncoder().encode(initial))
+   XCTAssertEqual(restored.transferIdentifier,"transfer");XCTAssertEqual(restored.importIdentifier,"import")
+   XCTAssertEqual(restored.stagedFileName,"staged.ipa");XCTAssertEqual(restored.bytesDownloaded,1024)
+   XCTAssertEqual(restored.state(hasResumeData:true),state)
   }
  }
 }

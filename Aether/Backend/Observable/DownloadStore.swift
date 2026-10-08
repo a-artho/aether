@@ -16,21 +16,21 @@ struct StoredDownload: Codable, Sendable {
 		case failed
 	}
 
-	// `id` remains the logical app/version ID for queue migration compatibility.
+	// Logical source identity is separate from the concrete transfer identity.
 	let id: String
-	let transferIdentifier: String?
-	let importIdentifier: String?
+	let transferIdentifier: String
+	let importIdentifier: String
 	let url: URL
 	let fileName: String
 	let sourceProvenance: SourceAppProvenance?
-	let waitingForForeground: Bool?
+	let waitingForForeground: Bool
 	let status: Status
 	let failureMessage: String?
 	let failureAction: Download.FailureAction?
 	let stagedFileName: String?
-	let bytesDownloaded: Int64?
-	let totalBytes: Int64?
-	let progress: Double?
+	let bytesDownloaded: Int64
+	let totalBytes: Int64
+	let progress: Double
 
 	@MainActor
 	init(download: Download) {
@@ -132,19 +132,8 @@ final class DownloadStore {
 		let stagedFiles = (try? fileManager.contentsOfDirectory(at: stagingDirectoryURL,
 			includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])) ?? []
 		return records.map { record in
-			let transferIdentifier = record.transferIdentifier ?? storageKey(for: record.id)
-			let legacyResumeData = record.transferIdentifier == nil
-				? loadResumeData(for: record.id)
-				: nil
-			let resumeData = loadResumeData(for: transferIdentifier) ?? legacyResumeData
-			if let legacyResumeData {
-				do {
-					try saveResumeData(legacyResumeData, for: transferIdentifier)
-					removeResumeData(for: record.id)
-				} catch {
-					// Keep the legacy file until a later successful persistence attempt.
-				}
-			}
+			let transferIdentifier = record.transferIdentifier
+			let resumeData = loadResumeData(for: transferIdentifier)
 			let download = Download(
 				transferIdentifier: transferIdentifier,
 				logicalIdentifier: record.id,
@@ -153,16 +142,13 @@ final class DownloadStore {
 				state: record.state(hasResumeData: resumeData != nil),
 				fileName: record.fileName,
 				stagedFileName: record.stagedFileName,
-				importIdentifier: record.importIdentifier ?? storageKey(for: record.id)
+				importIdentifier: record.importIdentifier
 			)
-			download.waitingForForeground = record.waitingForForeground ?? false
+			download.waitingForForeground = record.waitingForForeground
 			download.resumeData = resumeData
-			download.bytesDownloaded = record.bytesDownloaded ?? 0
-			download.totalBytes = record.totalBytes ?? 0
-			download.progress = record.progress ?? {
-				guard download.totalBytes > 0 else { return 0 }
-				return Double(download.bytesDownloaded) / Double(download.totalBytes)
-			}()
+			download.bytesDownloaded = record.bytesDownloaded
+			download.totalBytes = record.totalBytes
+			download.progress = record.progress
 			// The validated URLSession file may have moved before its queue checkpoint committed.
 			// Recover only the exact transfer's regular file before startup pruning runs.
 			if record.stagedFileName == nil, record.status == .downloading || record.status == .resuming,

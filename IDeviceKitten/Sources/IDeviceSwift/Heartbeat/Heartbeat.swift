@@ -11,14 +11,12 @@ import IDevice
 // MARK: - Class
 // ـ♡ﮩ٨ـ heartbeat ♪₊˚
 // RSD handles/generation are protected by rsdConnectionLock. The endpoint has
-// its own lock; pairing migration is serialized by pairingMigrationLock.
+// its own lock; current pairing records are read from Documents.
 public final class HeartbeatManager: @unchecked Sendable {
 	public typealias PairingRecordSource = SavedPairingRecordSource
 
 	static public let shared = HeartbeatManager()
 	private static let pairingRecordSourceKey = "aether.activePairingRecordSource"
-	private static let pairingMigrationLock = NSLock()
-	private static var hasCompletedPairingMigration = false
 
 	typealias IdevicePairingFile = OpaquePointer
 
@@ -55,7 +53,6 @@ public final class HeartbeatManager: @unchecked Sendable {
 	}
 
 	static public func importedPairingFileURL() -> URL {
-		migratePairingRecordsToDocumentsIfNeeded()
 		return importedPairingFile()
 	}
 
@@ -66,17 +63,14 @@ public final class HeartbeatManager: @unchecked Sendable {
 
 	/// Returns the on-device Remote Pairing record location.
 	static public func onDevicePairingFileURL() -> URL {
-		migratePairingRecordsToDocumentsIfNeeded()
 		return onDevicePairingFile()
 	}
 
 	static public func hasOnDevicePairingFile() -> Bool {
-		migratePairingRecordsToDocumentsIfNeeded()
 		return FileManager.default.fileExists(atPath: onDevicePairingFile().path)
 	}
 
 	static public func hasImportedPairingFile() -> Bool {
-		migratePairingRecordsToDocumentsIfNeeded()
 		return FileManager.default.fileExists(atPath: importedPairingFile().path)
 	}
 
@@ -150,68 +144,4 @@ public final class HeartbeatManager: @unchecked Sendable {
 		pairingDirectory().appendingPathComponent("onDeviceRPPairing.plist")
 	}
 
-	private static func legacyOnDevicePairingFile() -> URL {
-		let applicationSupport = FileManager.default.urls(
-			for: .applicationSupportDirectory,
-			in: .userDomainMask
-		).first!
-		return applicationSupport
-			.appendingPathComponent(Bundle.main.bundleIdentifier ?? "Aether", isDirectory: true)
-			.appendingPathComponent("onDeviceRPPairing.plist")
-	}
-
-	/// Moves records written by earlier Aether builds into Documents.
-	/// This is safe to run repeatedly and never replaces a current record.
-	private static func migratePairingRecordsToDocumentsIfNeeded() {
-		pairingMigrationLock.lock()
-		defer { pairingMigrationLock.unlock() }
-		guard !hasCompletedPairingMigration,
-			  UIApplication.shared.isProtectedDataAvailable else {
-			return
-		}
-
-		let fileManager = FileManager.default
-		let source = legacyOnDevicePairingFile()
-		let destination = onDevicePairingFile()
-		guard fileManager.fileExists(atPath: source.path) else {
-			hasCompletedPairingMigration = true
-			return
-		}
-		guard !fileManager.fileExists(atPath: destination.path) else {
-			hasCompletedPairingMigration = true
-			return
-		}
-
-		movePairingRecordIfNeeded(
-			from: source,
-			to: destination,
-			fileManager: fileManager
-		)
-		hasCompletedPairingMigration = fileManager.fileExists(atPath: destination.path)
-	}
-
-	private static func movePairingRecordIfNeeded(
-		from source: URL,
-		to destination: URL,
-		fileManager: FileManager
-	) {
-		guard source != destination,
-			  fileManager.fileExists(atPath: source.path),
-			  !fileManager.fileExists(atPath: destination.path) else {
-			return
-		}
-
-		do {
-			try fileManager.moveItem(at: source, to: destination)
-		} catch {
-			// A copy/remove fallback handles the unlikely case that the two
-			// container locations cannot be renamed atomically.
-			do {
-				try fileManager.copyItem(at: source, to: destination)
-				try fileManager.removeItem(at: source)
-			} catch {
-				try? fileManager.removeItem(at: destination)
-			}
-		}
-	}
 }

@@ -84,7 +84,7 @@ final class AppInstallationManager: ObservableObject {
 		let method: Int
 		let serverMethod: Int
 		var signing: SigningInput?
-		var installRequested: Bool?
+		var installRequested: Bool
 	}
 	private static let queueStorageKey = "Aether.pendingInstallations"
 
@@ -109,7 +109,7 @@ final class AppInstallationManager: ObservableObject {
 			let records = try? JSONDecoder().decode([StoredInstallation].self, from: data) else { return }
 		let requests = records.compactMap { record -> InstallationRequest? in
 			guard Storage.shared.getAppDirectory(for: record.app) != nil else { return nil }
-			return InstallationRequest(app: record.app, method: record.method, serverMethod: record.serverMethod, signing: record.signing, installRequested: record.installRequested ?? true)
+			return InstallationRequest(app: record.app, method: record.method, serverMethod: record.serverMethod, signing: record.signing, installRequested: record.installRequested)
 		}
 		guard let first = requests.first else {
 			UserDefaults.standard.removeObject(forKey: Self.queueStorageKey)
