@@ -233,15 +233,16 @@ final class LifecycleRegressionTests:XCTestCase {
   for normal in [false,true] {
    let cell=Cellular(); UserDefaults.standard.set(true,forKey:Cellular.restoreKey)
    cell.handleApplicationDidBecomeActive()
+   let recovery=cell.callbackRecoveryTask
    if normal { cell.normalCallback() }
-   try await Task.sleep(nanoseconds:2_100_000_000)
+   await recovery?.value
    XCTAssertEqual(cell.launched.count, normal ? 0 : 1)
    if !normal { XCTAssertEqual(cell.state,.restoringData) }
    cell.finish()
   }
   let cell=Cellular(); UserDefaults.standard.set(true,forKey:Cellular.restoreKey)
-  cell.handleApplicationDidBecomeActive(); cell.operationID=UUID()
-  try await Task.sleep(nanoseconds:2_100_000_000)
+  cell.handleApplicationDidBecomeActive(); let recovery=cell.callbackRecoveryTask; cell.operationID=UUID()
+  await recovery?.value
   XCTAssertTrue(cell.launched.isEmpty); cell.finish()
  }
  func testManifestQueriesRoundTripReservedCharactersWithoutInjection() throws {
