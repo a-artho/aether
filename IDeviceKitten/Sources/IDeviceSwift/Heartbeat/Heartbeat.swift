@@ -19,6 +19,7 @@ public final class HeartbeatManager: @unchecked Sendable {
 	private static let pairingRecordSourceKey = "aether.activePairingRecordSource"
 
 	typealias IdevicePairingFile = OpaquePointer
+	typealias RpPairingFileHandle = OpaquePointer
 
 	typealias AdapterHandle = OpaquePointer
 	typealias RsdHandshakeHandle = OpaquePointer
