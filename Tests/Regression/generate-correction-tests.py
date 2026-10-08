@@ -83,7 +83,7 @@ final class CorrectionTests: XCTestCase {
   XCTAssertEqual(restored.signing?.options.post_installAppAfterSigned,false)
   XCTAssertEqual(restored.signing?.iconData,Data([1,2]));XCTAssertEqual(restored.signing?.certificateUUID,"certificate")
  }
- func testMovedIPARecoversBeforePruningWithoutNewMetadataCommit() throws {
+ @MainActor func testMovedIPARecoversBeforePruningWithoutNewMetadataCommit() throws {
   let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at:root) }
   let store=DownloadStore(rootURL:root), download=Download()
@@ -98,7 +98,7 @@ final class CorrectionTests: XCTestCase {
   XCTAssertTrue(FileManager.default.fileExists(atPath:ipa.path))
   XCTAssertFalse(FileManager.default.fileExists(atPath:unrelated.path))
  }
- func testRecoveryDoesNotAdoptSymlinkOrOverridePausedIntent() throws {
+ @MainActor func testRecoveryDoesNotAdoptSymlinkOrOverridePausedIntent() throws {
   let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at:root) }
   let store=DownloadStore(rootURL:root), download=Download()

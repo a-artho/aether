@@ -388,7 +388,7 @@ enum DownloadMigrationFixture {
 ''',stored,r'''
 }
 final class DownloadMigrationTests:XCTestCase {
- func testRetiredUpdateIntentDoesNotLoseDownloadStateAndIsNotSavedAgain() throws {
+ @MainActor func testRetiredUpdateIntentDoesNotLoseDownloadStateAndIsNotSavedAgain() throws {
   let initial=DownloadMigrationFixture.StoredDownload(download:DownloadMigrationFixture.Download())
   let encoded=try JSONEncoder().encode(initial)
   for status in ["downloading","paused","processing","failed"] {
