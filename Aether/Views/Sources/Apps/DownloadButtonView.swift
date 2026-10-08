@@ -30,7 +30,7 @@ struct DownloadButtonView: View {
 		ZStack {
 			if let currentDownload {
 				DownloadProgressButton(download: currentDownload)
-					.compatTransition()
+					.transition(.blurReplace)
 			} else {
 				Button {
 					if let url = app.currentDownloadUrl {
@@ -58,7 +58,7 @@ struct DownloadButtonView: View {
 				}
 				.buttonStyle(.borderless)
 				.tint(_themeColor)
-				.compatTransition()
+				.transition(.blurReplace)
 			}
 		}
 		.animation(.easeInOut(duration: 0.3), value: currentDownload != nil)

@@ -158,25 +158,16 @@ public class InstallationAppProxy: NSObject {
 			var installproxy: InstallationProxyClientHandle?
 			try Self._requirePairingFile()
 
-			if heartbeat.isRsd {
-				do {
-					try heartbeat.withRSDServiceConnection { adapter, handshake in
-						installation_proxy_connect_rsd(adapter, handshake, &installproxy)
-					}
-				} catch {
-					throw IDeviceConnectionError.installationProxyConnectionFailed(
-						error.localizedDescription
-					)
+			do {
+				try heartbeat.withRSDServiceConnection { adapter, handshake in
+					installation_proxy_connect_rsd(adapter, handshake, &installproxy)
 				}
-			} else {
-				guard let provider = heartbeat.provider else {
-					throw IDeviceConnectionError.tcpProviderUnavailable
-				}
-				if let error = installation_proxy_connect(provider, &installproxy) {
-					let reason = IDeviceSwiftError(error).localizedDescription
-					throw IDeviceConnectionError.installationProxyConnectionFailed(reason)
-				}
+			} catch {
+				throw IDeviceConnectionError.installationProxyConnectionFailed(
+					error.localizedDescription
+				)
 			}
+
 			defer { installation_proxy_client_free(installproxy) }
 
 			if let error = installation_proxy_uninstall(installproxy, id, nil) {
@@ -190,51 +181,29 @@ public class InstallationAppProxy: NSObject {
 	) throws {
 		try Self._requirePairingFile()
 
-		if _heartbeat.isRsd {
-			do {
-				try _heartbeat.withRSDServiceConnection { adapter, handshake in
-					installation_proxy_connect_rsd(adapter, handshake, &client)
-				}
-			} catch {
-				throw IDeviceConnectionError.installationProxyConnectionFailed(
-					error.localizedDescription
-				)
+		do {
+			try _heartbeat.withRSDServiceConnection { adapter, handshake in
+				installation_proxy_connect_rsd(adapter, handshake, &client)
 			}
-		} else {
-			let connection = _heartbeat.checkSocketConnection()
-			guard connection.isConnected else {
-				throw IDeviceConnectionError.legacyEndpointUnavailable(connection.error)
-			}
-			guard let provider = _heartbeat.provider else {
-				throw IDeviceConnectionError.tcpProviderUnavailable
-			}
-			if let error = installation_proxy_connect(provider, &client) {
-				let reason = IDeviceSwiftError(error).localizedDescription
-				throw IDeviceConnectionError.installationProxyConnectionFailed(reason)
-			}
+		} catch {
+			throw IDeviceConnectionError.installationProxyConnectionFailed(
+				error.localizedDescription
+			)
 		}
+
 	}
 
 	private func _connectMisagent(client: inout MisagentClientHandle?) throws {
 		try Self._requirePairingFile()
 
-		if _heartbeat.isRsd {
-			do {
-				try _heartbeat.withRSDServiceConnection { adapter, handshake in
-					misagent_connect_rsd(adapter, handshake, &client)
-				}
-			} catch {
-				throw IDeviceConnectionError.misagentConnectionFailed(error.localizedDescription)
+		do {
+			try _heartbeat.withRSDServiceConnection { adapter, handshake in
+				misagent_connect_rsd(adapter, handshake, &client)
 			}
-		} else {
-			guard let provider = _heartbeat.provider else {
-				throw IDeviceConnectionError.tcpProviderUnavailable
-			}
-			if let error = misagent_connect(provider, &client) {
-				let reason = IDeviceSwiftError(error).localizedDescription
-				throw IDeviceConnectionError.misagentConnectionFailed(reason)
-			}
+		} catch {
+			throw IDeviceConnectionError.misagentConnectionFailed(error.localizedDescription)
 		}
+
 	}
 
 	private static func _requirePairingFile() throws {
@@ -306,6 +275,7 @@ extension InstallationAppProxy {
 
 /// SpringBoard requests are serial on one short-lived connection. Native handles
 /// are created, used and freed exclusively on this queue.
+// Connection ownership and idle-close work are serialized by a private queue.
 private final class InstalledIconConnection: @unchecked Sendable {
 	private let queue = DispatchQueue(label: "InstallationAppProxy.icons", qos: .userInitiated)
 	private var client: OpaquePointer?
@@ -336,18 +306,15 @@ private final class InstalledIconConnection: @unchecked Sendable {
 					let heartbeat = HeartbeatManager.shared
 					if self.scope != scope || self.generation != heartbeat.serviceConnectionGeneration { self.close() }
 					if self.client == nil {
-						if heartbeat.isRsd {
+						do {
 							try heartbeat.withRSDServiceConnection { adapter, handshake in
 								let error = springboard_services_connect_rsd(adapter, handshake, &self.client)
 								if error == nil { self.generation = heartbeat.rsdGeneration }
 								return error
 							}
-						} else {
-							guard let provider = heartbeat.provider else { throw IDeviceConnectionError.tcpProviderUnavailable }
-							if let error = springboard_services_connect(provider, &self.client) { throw IDeviceSwiftError(error) }
 						}
 						self.scope = scope
-						if !heartbeat.isRsd { self.generation = heartbeat.serviceConnectionGeneration }
+
 					}
 					var bytes: UnsafeMutableRawPointer?
 					var length = 0
@@ -378,6 +345,7 @@ private final class InstalledIconConnection: @unchecked Sendable {
 
 /// A disposable, bounded cache of original icon bytes, scoped to the pairing
 /// identity, endpoint and installed version/build.
+// Disk cache mutation is serialized by its private queue.
 private final class InstalledIconDiskCache: @unchecked Sendable {
 	private let queue = DispatchQueue(label: "InstallationAppProxy.iconDiskCache")
 	private let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
@@ -442,6 +410,7 @@ private final class InstalledIconDiskCache: @unchecked Sendable {
 	}
 }
 
+// NSCache synchronizes its own concurrent access; no other mutable cache state is shared.
 private final class InstalledIconCache: NSObject, @unchecked Sendable {
 	private let cache = NSCache<NSString, UIImage>()
 

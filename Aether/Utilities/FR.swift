@@ -55,7 +55,7 @@ enum FR {
 		completion: @escaping (Result<Bool, Error>) -> Void
 	) {
 		Task.detached {
-			let handler = AppFileHandler(
+			let handler = await AppFileHandler(
 				file: download.url,
 				download: download,
 				transactionIdentifier: download.importIdentifier
@@ -104,13 +104,13 @@ enum FR {
 				Task { await packageProcessingGate.release() }
 			}
 
-			let handler = AppFileHandler(
+			let handler = await AppFileHandler(
 				file: ipa,
 				download: download,
 				sourceProvenance: sourceProvenance,
 				transactionIdentifier: transactionIdentifier
 			)
-			
+
 			do {
 				stage = "recovery"
 				await log("Processing queue acquired; checking committed import")
@@ -153,7 +153,7 @@ enum FR {
 			}
 		}
 	}
-	
+
 	@MainActor
 	@discardableResult
 	static func signPackageFile(
@@ -173,7 +173,7 @@ enum FR {
 				let handler = SigningHandler(app: appSnapshot, options: options)
 				handler.appCertificate = certificate
 				handler.appIconData = iconData
-			
+
 				do {
 					try Task.checkCancellation()
 					try await handler.copy()
@@ -206,7 +206,7 @@ enum FR {
 			} onCancel: { progressPublisher.cancel() }
 		}
 	}
-	
+
 	static func handleCertificateFiles(
 		p12URL: URL,
 		provisionURL: URL,
@@ -223,7 +223,7 @@ enum FR {
 				nickname: certificateName.isEmpty ? nil : certificateName,
 				isDefault: isDefault
 			)
-			
+
 			do {
 				try await handler.copy()
 				try await handler.addToDatabase()
@@ -237,7 +237,7 @@ enum FR {
 			}
 		}
 	}
-	
+
 	static func checkPasswordForCertificate(
 		for key: URL,
 		with password: String,
@@ -246,16 +246,16 @@ enum FR {
 		defer {
 			password_check_fix_free(provision.path)
 		}
-		
+
 		password_check_fix(provision.path)
-		
+
 		if (!p12_password_check(key.path, password)) {
 			return false
 		}
-		
+
 		return true
 	}
-	
+
 	static func movePairing(_ url: URL) {
 		let fileManager = FileManager.default
 		let dest = HeartbeatManager.importedPairingFileURL()
@@ -277,11 +277,11 @@ enum FR {
 			try? fileManager.removeItem(at: stagedImport)
 			return
 		}
-		
+
 		HeartbeatManager.shared.resetRSDTunnel()
 		HeartbeatManager.shared.start(true)
 	}
-	
+
 	static func downloadSSLCertificates(
 		from urlString: String,
 		completion: @escaping (Bool) -> Void
@@ -310,7 +310,7 @@ enum FR {
 			}
 		}
 	}
-	
+
 	static func handleSource(
 		_ urlString: String,
 		completion: ((Bool) -> Void)? = nil
@@ -320,11 +320,11 @@ enum FR {
 			completion?(false)
 			return
 		}
-		
+
 		if !trimmed.lowercased().hasPrefix("http://") && !trimmed.lowercased().hasPrefix("https://") {
 			trimmed = "https://" + trimmed
 		}
-		
+
 		guard let url = URL(string: trimmed) else {
 			DispatchQueue.main.async {
 				UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Invalid URL."))
@@ -332,7 +332,7 @@ enum FR {
 			}
 			return
 		}
-		
+
 		Task {
 			do {
 				let snapshot = try await SourceRepositoryService.shared.fetch(from: url)
@@ -365,7 +365,7 @@ enum FR {
 			}
 		}
 	}
-	
+
 	static func exportCertificateAndOpenUrl(using template: String) {
 		// Helper that performs the export for a given certificate
 		func performExport(for certificate: CertificatePair) {
@@ -375,49 +375,49 @@ enum FR {
 			else {
 				return
 			}
-			
+
 			let base64encodedCert = certificateKeyFileData.base64EncodedString()
-			
+
 			var allowedQueryParamAndKey = NSCharacterSet.urlQueryAllowed
 			allowedQueryParamAndKey.remove(charactersIn: ";/?:@&=+$, ")
-			
+
 			guard let encodedCert = base64encodedCert.addingPercentEncoding(withAllowedCharacters: allowedQueryParamAndKey) else {
 				return
 			}
-			
+
 			let urlStr = template
 				.replacingOccurrences(of: "$(BASE64_CERT)", with: encodedCert)
 				.replacingOccurrences(of: "$(PASSWORD)", with: certificate.password ?? "")
-			
+
 			guard let callbackUrl = URL(string: urlStr) else {
 				return
 			}
-			
+
 			UIApplication.shared.open(callbackUrl)
 		}
-		
+
 		let certificates = Storage.shared.getAllCertificates()
 		guard !certificates.isEmpty else { return }
-		
+
 		DispatchQueue.main.async {
 			var selectionActions: [UIAlertAction] = []
-			
+
 			for cert in certificates {
 				var title: String
 				let decoded = Storage.shared.getProvisionFileDecoded(for: cert)
-				
+
 				title = cert.nickname ?? decoded?.Name ?? .localized("Unknown")
-				
+
 				if let getTaskAllow = decoded?.Entitlements?["get-task-allow"]?.value as? Bool, getTaskAllow == true {
 					title = "🐞 \(title)"
 				}
-				
+
 				let selectAction = UIAlertAction(title: title, style: .default) { _ in
 					performExport(for: cert)
 				}
 				selectionActions.append(selectAction)
 			}
-			
+
 			UIAlertController.showAlertWithCancel(
 				title: .localized("Export Certificate"),
 				message: .localized("Do you want to export your certificate to an external app? That app will be able to sign apps using your certificate."),

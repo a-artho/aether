@@ -15,7 +15,7 @@ extension SourceAppsView {
 	enum SortOption: String, CaseIterable {
 		case name
 		case latest
-		
+
 		var displayName: String {
 			switch self {
 			case .name: 	.localized("Name")
@@ -28,7 +28,7 @@ extension SourceAppsView {
 // MARK: - View
 struct SourceAppsView: View {
 	@AppStorage("Aether.sortOptionRawValue") private var _sortOptionRawValue: String = SortOption.latest.rawValue
-	
+
 	@State private var _sortOption: SortOption = .latest
 	@State var isLoading = true
 	@State var hasLoadedOnce = false
@@ -47,7 +47,7 @@ struct SourceAppsView: View {
 			.localized("%lld Sources", arguments: object.count)
 		}
 	}
-	
+
 	var object: [AltSource]
 	@ObservedObject var viewModel: SourcesViewModel
 	var isAllRepos: Bool = false
@@ -69,7 +69,7 @@ struct SourceAppsView: View {
 			}
 		)
 	}
-	
+
 	// MARK: Body
 	var body: some View {
 		ZStack {
@@ -144,7 +144,7 @@ struct SourceAppsView: View {
 			_consumePendingAppRequestIfPossible()
 		}
 	}
-	
+
 	@ViewBuilder
 	private func _titleMenuActions() -> some View {
 			_sortActions()
@@ -222,7 +222,7 @@ struct SourceAppsView: View {
 			appLocator: .locator(for: app)
 		)
 	}
-	
+
 	typealias SourceRepositoryContext = SourceAppCatalogContext
 
 	struct SourceAppSelection: Hashable {
@@ -241,7 +241,7 @@ extension SourceAppsView {
 			}
 		}
 	}
-	
+
 	private func _sortButton(for option: SortOption) -> some View {
 		Button {
 			_sortOption = option
@@ -254,17 +254,5 @@ extension SourceAppsView {
 				}
 			}
 		}
-	}
-}
-
-import SwiftUI
-
-extension View {
-	@ViewBuilder
-	func navigationDestinationIfAvailable<Item: Identifiable & Hashable, Destination: View>(
-		item: Binding<Item?>,
-		@ViewBuilder destination: @escaping (Item) -> Destination
-	) -> some View {
-		self.navigationDestination(item: item, destination: destination)
 	}
 }

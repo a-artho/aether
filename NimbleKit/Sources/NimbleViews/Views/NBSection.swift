@@ -17,7 +17,7 @@ public struct NBSection<Content, Footer>: View
 	private var _trailing: AnyView?
 	private var _content: Content
 	private var _footer: Footer
-	
+
 	public init(_ headerText: String,
 	            secondary headerTextSecondary: String? = nil,
 	            systemName: String? = nil,
@@ -31,7 +31,7 @@ public struct NBSection<Content, Footer>: View
 		self._content = content()
 		self._footer = footer()
 	}
-	
+
 	public init(_ headerText: String,
 	            secondary headerTextSecondary: String? = nil,
 	            systemName: String? = nil,
@@ -73,7 +73,7 @@ public struct NBSection<Content, Footer>: View
 		self._content = content()
 		self._footer = EmptyView()
 	}
-	
+
 	public var body: some View {
 		Section(
 			header:
@@ -83,38 +83,26 @@ public struct NBSection<Content, Footer>: View
 						.font(.system(size: 12))
 						.offset(y: -2)
 				}
-					
+
 				Text(_headerText)
 					.fontWeight(.bold)
 					.font(.title2)
 					.foregroundStyle(.primary)
-						
-					
+
 				Spacer()
-                    
+
 				if let _trailing {
 					_trailing
 				} else if let _headerTextSecondary {
-					if #available(iOS 26.0, *) {
-						Text(_headerTextSecondary)
-							.font(.caption)
-							.foregroundStyle(.secondary)
-							.contentTransition(.numericText())
-							.padding(.horizontal, 8)
-							.padding(.vertical, 4.4)
-							.background(Color(uiColor: .quaternarySystemFill))
-							.clipShape(Capsule())
-							.glassEffect()
-					} else {
-						Text(_headerTextSecondary)
-							.font(.caption)
-							.foregroundStyle(.secondary)
-							.contentTransition(.numericText())
-							.padding(.horizontal, 8)
-							.padding(.vertical, 4.4)
-							.background(Color(uiColor: .quaternarySystemFill))
-							.clipShape(Capsule())
-					}
+					Text(_headerTextSecondary)
+						.font(.caption)
+						.foregroundStyle(.secondary)
+						.contentTransition(.numericText())
+						.padding(.horizontal, 8)
+						.padding(.vertical, 4.4)
+						.background(Color(uiColor: .quaternarySystemFill))
+						.clipShape(Capsule())
+						.glassEffect()
 				}
 			}
 			.offset(y: 2)

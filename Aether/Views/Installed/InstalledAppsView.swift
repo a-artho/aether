@@ -591,17 +591,12 @@ struct InstalledAppIconView: View {
 	}
 }
 
-
 struct DeviceControlsBar<Controls: View>: ViewModifier {
 	let controls: Controls
 	var isEnabled = true
 
 	func body(content: Content) -> some View {
-		if #available(iOS 26, *) {
-			content.safeAreaBar(edge: .top, spacing: 0) { bar }
-		} else {
-			content.safeAreaInset(edge: .top, spacing: 0) { bar }
-		}
+		content.safeAreaBar(edge: .top, spacing: 0) { bar }
 	}
 
 	@ViewBuilder
@@ -625,7 +620,7 @@ struct DeviceAccessoryTile: View {
 	let action: () -> Void
 
 	var body: some View {
-		if #available(iOS 26, *), liquidGlassTiles {
+		if liquidGlassTiles {
 			button.buttonStyle(.plain)
 		} else {
 			button.buttonStyle(_HomeCardButtonStyle { HapticManager.shared.impact() })
@@ -634,7 +629,7 @@ struct DeviceAccessoryTile: View {
 
 	private var button: some View {
 		Button {
-			if #available(iOS 26, *), liquidGlassTiles { HapticManager.shared.impact() }
+			if liquidGlassTiles { HapticManager.shared.impact() }
 			action()
 		} label: {
 			HStack(spacing: 8) {
@@ -674,7 +669,7 @@ struct DeviceAccessoryTileGroup<Content: View>: View {
 	@ViewBuilder var content: Content
 
 	var body: some View {
-		if #available(iOS 26, *), liquidGlassTiles {
+		if liquidGlassTiles {
 			GlassEffectContainer(spacing: 8) {
 				HStack(spacing: 12) { content }
 			}
@@ -689,7 +684,7 @@ private struct DeviceAccessoryTileSurface: ViewModifier {
 	let liquidGlassTiles: Bool
 
 	func body(content: Content) -> some View {
-		if #available(iOS 26, *), liquidGlassTiles {
+		if liquidGlassTiles {
 			content.glassEffect(.regular.interactive(!isDisabled), in: .rect(cornerRadius: 15))
 		} else {
 			content.background(Color(uiColor: .secondarySystemGroupedBackground),

@@ -14,7 +14,7 @@ import UIKit
 struct AppearanceView: View {
 	@AppStorage("Aether.userInterfaceStyle")
 	private var _userInterfaceStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
-	
+
 	@AppStorage("Aether.shouldTintIcons")
 	private var _shouldTintIcons: Bool = false
 
@@ -32,29 +32,29 @@ struct AppearanceView: View {
 
 	@AppStorage("Aether.liquidGlassTiles")
 	private var _liquidGlassTiles: Bool = true
-	
+
 	@AppStorage("Aether.shouldChangeIconsBasedOffStyle")
 	private var _shouldChangeIconsBasedOffStyle: Bool = false
-	
+
 	@AppStorage("Aether.storeCellAppearance")
 	private var _storeCellAppearance: Int = 0
 	private let _storeCellAppearanceMethods: [(name: String, desc: String)] = [
 		(.localized("Standard"), .localized("Default style for the app, only includes subtitle.")),
 		(.localized("Big Description"), .localized("Adds the localized description of the app."))
 	]
-	
+
 	@AppStorage("Aether.userTintColor")
 	private var _selectedColorHex: String = "#848ef9"
-	
+
 	@State private var _currentIcon: String? = UIApplication.shared.alternateIconName
-	
+
 	private var _tintColorBinding: Binding<Color> {
 		Binding(
 			get: { Color(hex: _selectedColorHex) },
 			set: { _selectedColorHex = $0.toHex() }
 		)
 	}
-	
+
 	// MARK: Body
 	var body: some View {
 		NBList(.localized("Appearance")) {
@@ -66,13 +66,13 @@ struct AppearanceView: View {
 				}
 				.pickerStyle(.segmented)
 			}
-			
+
 			NBSection(.localized("Theme")) {
 				AppearanceTintColorView()
 					.listRowInsets(EdgeInsets())
 					.listRowBackground(EmptyView())
 			}
-			
+
 			Section {
 				ColorPicker(selection: _tintColorBinding, supportsOpacity: false) {
 					SettingsRowLabel(.localized("Custom Theme Color"), systemImage: "eyedropper.halffull", backgroundColor: .blue)
@@ -84,7 +84,7 @@ struct AppearanceView: View {
 					SettingsRowLabel(.localized("App Icon"), systemImage: "app.badge.fill", backgroundColor: .indigo)
 				}
 			}
-			
+
 			NBSection(.localized("Tab Bar")) {
 				Toggle(isOn: $_hideTabBarLabels) {
 					SettingsRowLabel(.localized("Hide Labels"), systemImage: "rectangle.bottomthird.inset.filled", backgroundColor: .blue)
@@ -101,18 +101,16 @@ struct AppearanceView: View {
 				Text(.localized("Place search on the right. When an Add button is present, search appears beside it in a shared button group."))
 			}
 
-			if #available(iOS 26, *) {
-				NBSection(.localized("Device Controls")) {
-					Toggle(isOn: $_controlsInHeader) {
-						SettingsRowLabel(.localized("Controls in Header"), systemImage: "rectangle.topthird.inset.filled", backgroundColor: .blue)
-					}
-					Toggle(isOn: $_liquidGlassTiles) {
-						SettingsRowLabel(.localized("Liquid Glass Tiles"), systemImage: "square.grid.2x2.fill", backgroundColor: .cyan)
-					}
-					.disabled(_controlsInHeader)
-				} footer: {
-					Text(.localized("Move device and app information controls into the header. Liquid Glass Tiles applies when controls are shown as tiles."))
+			NBSection(.localized("Device Controls")) {
+				Toggle(isOn: $_controlsInHeader) {
+					SettingsRowLabel(.localized("Controls in Header"), systemImage: "rectangle.topthird.inset.filled", backgroundColor: .blue)
 				}
+				Toggle(isOn: $_liquidGlassTiles) {
+					SettingsRowLabel(.localized("Liquid Glass Tiles"), systemImage: "square.grid.2x2.fill", backgroundColor: .cyan)
+				}
+				.disabled(_controlsInHeader)
+			} footer: {
+				Text(.localized("Move device and app information controls into the header. Liquid Glass Tiles applies when controls are shown as tiles."))
 			}
 
 			NBSection(.localized("Updates")) {
@@ -131,7 +129,7 @@ struct AppearanceView: View {
 					SettingsRowLabel(.localized("Tinted Icons"), systemImage: "paintpalette.fill", backgroundColor: .purple)
 				}
 			}
-			
+
 			NBSection(.localized("Sources")) {
 				Picker(.localized("Store Cell Appearance"), selection: $_storeCellAppearance) {
 					ForEach(0..<_storeCellAppearanceMethods.count, id: \.self) { index in

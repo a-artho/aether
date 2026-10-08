@@ -10,6 +10,8 @@ import Zip
 import ZIPFoundation
 import SwiftUI
 
+// One import worker owns the mutable archive/work-directory state. Cancellation
+// is forwarded to that worker; UI progress is published on MainActor.
 final class AppFileHandler: NSObject, @unchecked Sendable {
 	private let _fileManager = FileManager.default
 	private let _uuid: String
@@ -26,6 +28,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		let uncompressedBytes: Int64
 	}
 
+	@MainActor
 	init(
 		file ipa: URL,
 		install: Bool = false,
@@ -41,10 +44,10 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		self._sourceProvenance = sourceProvenance ?? download?.sourceProvenance
 		self._uniqueWorkDir = _fileManager.temporaryDirectory
 			.appendingPathComponent("AetherImport_\(uuid)", isDirectory: true)
-		
+
 		super.init()
 	}
-	
+
 	func prepare(copySource: Bool) async throws {
 		// Reserve enough room before duplicating a large archive. This avoids a
 		// needless full IPA copy only to fail during extraction.
@@ -54,11 +57,11 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		try _fileManager.removeFileIfNeeded(at: _uniqueWorkDir)
 		try _fileManager.createDirectoryIfNeeded(at: _uniqueWorkDir)
 		// Snapshot staged inputs before extraction. APFS clones keep this inexpensive.
-		
+
 		let destinationURL = _uniqueWorkDir.appendingPathComponent("Input.ipa")
 
 		try _fileManager.removeFileIfNeeded(at: destinationURL)
-		
+
 		try _fileManager.copyItemPreferClone(at: _ipa, to: destinationURL)
 		_ipa.removeAllCachedResourceValues()
 		let after = try _ipa.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .fileResourceIdentifierKey])
@@ -69,7 +72,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 			try _inspectArchiveIfNeeded()
 		}
 	}
-	
+
 	func extract() async throws {
 		try Task.checkCancellation()
 		try _inspectArchiveIfNeeded()
@@ -77,7 +80,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 
 		Zip.addCustomFileExtension("ipa")
 		let download = self._download
-		
+
 		let worker = Task.detached(priority: .utility) {
 			let progressLock = NSLock()
 			var lastProgressUpdate = Date.distantPast
@@ -117,29 +120,29 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 			try await worker.value
 		} onCancel: { worker.cancel() }
 	}
-	
+
 	func move() async throws {
 		try Task.checkCancellation()
 		guard let payloadURL = uniqueWorkDirPayload else {
 			throw ImportedFileHandlerError.payloadNotFound
 		}
-		
+
 		let destinationURL = try await _directory()
-		
+
 		guard _fileManager.fileExists(atPath: payloadURL.path) else {
 			throw ImportedFileHandlerError.payloadNotFound
 		}
-		
+
 		try _fileManager.removeFileIfNeeded(at: destinationURL)
 		try _fileManager.moveItem(at: payloadURL, to: destinationURL)
-		
+
 		try? _fileManager.removeItem(at: _uniqueWorkDir)
 	}
-	
+
 	func addToDatabase() async throws {
 		try Task.checkCancellation()
 		let app = try await _directory()
-		
+
 		guard let appUrl = _fileManager.getPath(in: app, for: "app") else {
 			throw ImportedFileHandlerError.appBundleNotFound
 		}
@@ -205,12 +208,12 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 			}
 		}
 	}
-	
+
 	private func _directory() async throws -> URL {
 		// Documents/Aether/Unsigned/\(UUID)
 		_fileManager.unsigned(_uuid)
 	}
-	
+
 	func clean() async throws {
 		try _fileManager.removeFileIfNeeded(at: _uniqueWorkDir)
 	}

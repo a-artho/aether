@@ -12,7 +12,7 @@ import Foundation
 final class Storage: ObservableObject {
 	static let shared = Storage()
 	let container: NSPersistentContainer
-	
+
 	private let _name: String = "Aether"
 
 	init(inMemory: Bool = false) {
@@ -22,7 +22,7 @@ final class Storage: ObservableObject {
 			container.persistentStoreDescriptions.first?.url =
 				URL(fileURLWithPath: "/dev/null")
 		}
-		
+
 		container.persistentStoreDescriptions.first?.shouldMigrateStoreAutomatically = true
 		container.persistentStoreDescriptions.first?.shouldInferMappingModelAutomatically = true
 
@@ -34,7 +34,7 @@ final class Storage: ObservableObject {
 	var context: NSManagedObjectContext {
 		container.viewContext
 	}
-	
+
 	/// Performs a synchronous save on the view context. The old implementation
 	/// queued the save onto the next run-loop turn, which allowed callers to
 	/// report success before the object existed in the persistent store.
@@ -51,7 +51,7 @@ final class Storage: ObservableObject {
 		}
 		return saveError
 	}
-	
+
 	func clearContext<T: NSManagedObject>(request: NSFetchRequest<T>) {
 		guard let fetchRequest = request as? NSFetchRequest<NSFetchRequestResult> else { return }
 		context.performAndWait {
@@ -69,7 +69,7 @@ final class Storage: ObservableObject {
 			}
 		}
 	}
-	
+
 	func countContent<T: NSManagedObject>(for type: T.Type) -> String {
 		let request = T.fetchRequest()
 		return "\((try? context.count(for: request)) ?? 0)"
@@ -81,7 +81,7 @@ final class Storage: ObservableObject {
 				// Never destroy the user library as a side effect of a metadata
 				// load failure. An explicit reset is the only operation allowed to
 				// delete Signed, Unsigned, or Certificates.
-				print("Aether could not load its metadata store at \(description.url?.path ?? "unknown location"): \(error.localizedDescription)")
+				DiagnosticLog.error("Could not load metadata store at \(description.url?.path ?? "unknown location"): \(error.localizedDescription)", category: "Storage")
 			}
 		}
 	}

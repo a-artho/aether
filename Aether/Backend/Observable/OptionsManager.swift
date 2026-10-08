@@ -11,44 +11,44 @@ import UIKit
 // MARK: - OptionsManager
 class OptionsManager: ObservableObject {
 	static let shared = OptionsManager()
-	
+
 	private let _key = "signing_options"
-	
+
 	@Published var options: Options {
 		didSet {
 			saveOptions()
 		}
 	}
-	
+
 	init() {
 		let defaults = Options.defaultOptions
-		
+
 		if let data = UserDefaults.standard.data(forKey: _key) {
 			do {
 				let savedDict = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-				
+
 				let defaultData = try JSONEncoder().encode(defaults)
 				var mergedDict = try JSONSerialization.jsonObject(with: defaultData) as? [String: Any] ?? [:]
 
 				for (key, value) in savedDict {
 					mergedDict[key] = value
 				}
-				
+
 				let mergedData = try JSONSerialization.data(withJSONObject: mergedDict)
 				self.options = try JSONDecoder().decode(Options.self, from: mergedData)
 				return
 			} catch {
-				print("Failed to decode or merge options, falling back to defaults :/ \(error)")
+				DiagnosticLog.error("Failed to decode or merge signing options; using defaults: \(error.localizedDescription)", category: "Signing")
 			}
 		}
-		
+
 		self.options = defaults
-		
+
 		if let encoded = try? JSONEncoder().encode(defaults) {
 			UserDefaults.standard.set(encoded, forKey: _key)
 		}
 	}
-	
+
 	/// Saves options
 	func saveOptions() {
 		if let encoded = try? JSONEncoder().encode(options) {
@@ -59,9 +59,9 @@ class OptionsManager: ObservableObject {
 
 // MARK: - Options
 struct Options: Codable, Equatable, Sendable {
-	
+
 	// MARK: Pre Modifications
-	
+
 	/// App name
 	var appName: String?
 	/// App version
@@ -78,9 +78,9 @@ struct Options: Codable, Equatable, Sendable {
 	var minimumAppRequirement: MinimumAppRequirement
 	/// Signing options
 	var signingOption: SigningOption
-	
+
 	// MARK: Options
-	
+
 	/// Inject path (i.e. `@rpath`)
 	var injectPath: InjectPath
 	/// Inject folder (i.e. `Frameworks/`)
@@ -123,31 +123,31 @@ struct Options: Codable, Equatable, Sendable {
 	var mergeEntitlements: Bool
 
 	// MARK: Experiments
-	
+
 	/// Modifies app to support liquid glass
 	var experiment_supportLiquidGlass: Bool
 	/// Modifies app to disable liquid glass
 	var experiment_disableLiquidGlass: Bool
 	/// Modifies application to use ElleKit instead of CydiaSubstrate
 	var experiment_replaceSubstrateWithEllekit: Bool
-	
+
 	// MARK: Post Modifications
-	
+
 	var post_installAppAfterSigned: Bool
 	/// This will delete your imported application after signing, to save on using unneeded space.
 	var post_deleteAppAfterSigned: Bool
-	
+
 	// MARK: - Defaults
 	static let defaultOptions = Options(
-		
+
 		// MARK: Pre Modifications
-		
+
 		appAppearance: .default,
 		minimumAppRequirement: .default,
 		signingOption: .default,
-		
+
 		// MARK: Options
-		
+
 		injectPath: .executable_path,
 		injectFolder: .frameworks,
 		ppqString: randomString(),
@@ -168,19 +168,19 @@ struct Options: Codable, Equatable, Sendable {
 		changeLanguageFilesForCustomDisplayName: false,
 		injectIntoExtensions: false,
 		mergeEntitlements: false,
-		
+
 		// MARK: Experiments
-		
+
 		experiment_supportLiquidGlass: false,
 		experiment_disableLiquidGlass: false,
 		experiment_replaceSubstrateWithEllekit: false,
-		
+
 		// MARK: Post Modifications
-		
+
 		post_installAppAfterSigned: false,
 		post_deleteAppAfterSigned: false
 	)
-	
+
 	// MARK: duplicate values are not recommended!
 
 	enum AppAppearance: String, Codable, CaseIterable, LocalizedDescribable, Sendable {
@@ -216,7 +216,7 @@ struct Options: Codable, Equatable, Sendable {
 			}
 		}
 	}
-	
+
 	enum SigningOption: String, Codable, CaseIterable, LocalizedDescribable, Sendable {
 		case `default`
 		case onlyModify
@@ -230,17 +230,17 @@ struct Options: Codable, Equatable, Sendable {
 			}
 		}
 	}
-	
+
 	enum InjectPath: String, Codable, CaseIterable, LocalizedDescribable, Sendable {
 		case executable_path = "@executable_path"
 		case rpath = "@rpath"
 	}
-	
+
 	enum InjectFolder: String, Codable, CaseIterable, LocalizedDescribable, Sendable {
 		case root = "/"
 		case frameworks = "/Frameworks/"
 	}
-	
+
 	/// Default random value for `ppqString`
 	static func randomString() -> String {
 		String((0..<6).compactMap { _ in UUID().uuidString.randomElement() })

@@ -8,94 +8,6 @@ import Foundation
 import UIKit
 import UserNotifications
 
-class Download: ObservableObject, Identifiable, @unchecked Sendable {
-	enum FailureAction: String, Codable, Equatable, Sendable {
-		case resume
-		case restart
-		case retryProcessing
-	}
-
-	enum State: Equatable {
-		case downloading
-		case pausing
-		case paused
-		case resuming
-		case processing
-		case failed(String, FailureAction)
-	}
-
-	@Published var progress: Double = 0
-	@Published var bytesDownloaded: Int64 = 0
-	@Published var totalBytes: Int64 = 0
-	@Published var unpackageProgress: Double = 0
-	@Published var state: State
-
-	var backgroundProgress: Double {
-		// Native execution now represents only the local import stage.
-		return unpackageProgress
-	}
-
-	var overallProgress: Double {
-		onlyArchiving
-			? unpackageProgress
-			: (0.3 * unpackageProgress) + (0.7 * progress)
-	}
-
-	var task: URLSessionDownloadTask?
-	var resumeData: Data?
-	var stagedFileName: String?
-	var lastUIProgressUpdate: TimeInterval = 0
-	var lastBackgroundDiagnosticUpdate: TimeInterval = 0
-	var lastPersistedProgressUpdate: TimeInterval = 0
-	var lastPersistedBytes: Int64 = 0
-
-	/// Unique identity for this concrete transfer and all of its artifacts.
-	let id: String
-	/// Stable UI/source identity supplied by the caller.
-	let logicalIdentifier: String
-	let importIdentifier: String
-	let url: URL
-	let fileName: String
-	let onlyArchiving: Bool
-	let sourceIsStable: Bool
-	var sourceProvenance: SourceAppProvenance?
-	@Published var waitingForForeground = false
-	var interruptionForegroundGeneration: UInt64 = 0
-
-	init(
-		transferIdentifier: String = UUID().uuidString,
-		logicalIdentifier: String,
-		url: URL,
-		onlyArchiving: Bool = false,
-		sourceIsStable: Bool = false,
-		sourceProvenance: SourceAppProvenance? = nil,
-		state: State? = nil,
-		fileName: String? = nil,
-		stagedFileName: String? = nil,
-		importIdentifier: String? = nil
-	) {
-		self.id = transferIdentifier
-		self.logicalIdentifier = logicalIdentifier
-		self.importIdentifier = importIdentifier ?? UUID().uuidString
-		self.url = url
-		self.onlyArchiving = onlyArchiving
-		self.sourceIsStable = sourceIsStable
-		self.sourceProvenance = sourceProvenance
-		self.fileName = fileName ?? (url.lastPathComponent.isEmpty ? "Download.ipa" : url.lastPathComponent)
-		self.stagedFileName = stagedFileName
-		self.state = state ?? (onlyArchiving ? .processing : .downloading)
-	}
-
-	var isActive: Bool {
-		switch state {
-		case .downloading, .pausing, .resuming, .processing:
-			return true
-		case .paused, .failed:
-			return false
-		}
-	}
-}
-
 @MainActor
 class DownloadManager: NSObject, ObservableObject {
 	static let shared = DownloadManager()
@@ -887,30 +799,9 @@ class DownloadManager: NSObject, ObservableObject {
 			return
 		}
 		#if !targetEnvironment(macCatalyst)
-		_requestDownloadNotificationPermission()
+		DownloadResultNotifier.shared.requestPermissionIfNeeded()
 		#endif
 	}
-
-	#if !targetEnvironment(macCatalyst)
-	private var requestingNotificationPermission = false
-
-	private func _requestDownloadNotificationPermission() {
-		guard UIApplication.shared.applicationState == .active, !requestingNotificationPermission else { return }
-		requestingNotificationPermission = true
-		Task {
-			defer { requestingNotificationPermission = false }
-			let center = UNUserNotificationCenter.current()
-			let settings = await center.notificationSettings()
-			guard settings.authorizationStatus == .notDetermined,
-				UIApplication.shared.applicationState == .active else { return }
-			do {
-				_ = try await center.requestAuthorization(options: [.alert, .sound])
-			} catch {
-				DebugLogManager.shared.log("Download notification permission failed: \(error.localizedDescription)", category: "Download", level: .notice)
-			}
-		}
-	}
-	#endif
 
 	private func _notifyDownloadCompleted(_ download: Download) {
 		let name = download.sourceProvenance?.sourceAppName ?? download.fileName
@@ -919,24 +810,8 @@ class DownloadManager: NSObject, ObservableObject {
 	}
 
 	private func _notifyDownload(_ download: Download, title: String, body: String) {
-		#if !targetEnvironment(macCatalyst)
-		let content = UNMutableNotificationContent()
-		content.title = title
-		content.body = body
-		content.sound = .default
-		let request = UNNotificationRequest(identifier: "Aether.download.result.\(download.id)", content: content, trigger: nil)
-		let checkpoint = DownloadCheckpointLease()
-		Task {
-			defer { checkpoint.end() }
-			do {
-				try await UNUserNotificationCenter.current().add(request)
-				DebugLogManager.shared.log("Download result notification submitted id=\(download.id) title=\(title).", category: "Download", level: .info)
-			} catch {
-				DebugLogManager.shared.log("Download result notification failed id=\(download.id): \(error.localizedDescription)", category: "Download", level: .notice)
-			}
-		}
-		#endif
-	}
+        DownloadResultNotifier.shared.send(transferIdentifier: download.id, title: title, body: body)
+    }
 
 	private func _stopContinuedTask(for download: Download, success: Bool) {
 		#if !targetEnvironment(macCatalyst)

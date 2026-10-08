@@ -14,7 +14,6 @@ extensions="$repo_root/NimbleKit/Sources/NimbleExtensions"
 sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 xcrun --sdk iphonesimulator swiftc -target "$(uname -m)-apple-ios26.0-simulator" -sdk "$sdk" \
  "$test_dir/PlatformRunner.swift" \
- "$extensions/UIApplication/UIApplication+installedState.swift" \
  "$extensions/UIApplication/UIApplication+open_private.swift" \
  "$extensions/UIAlertController/UIAlertController+Alerts.swift" \
  "$extensions/UIAlertController/UIApplication+topController.swift" \

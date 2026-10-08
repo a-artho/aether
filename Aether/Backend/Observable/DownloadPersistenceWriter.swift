@@ -68,7 +68,7 @@ actor DownloadPersistenceWriter {
 		do {
 			try store.save(records: snapshot.records)
 		} catch {
-			print("Failed to persist downloads: \(error.localizedDescription)")
+			DiagnosticLog.error("Failed to persist downloads: \(error.localizedDescription)", category: "Download")
 		}
 	}
 }

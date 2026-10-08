@@ -9,7 +9,9 @@
 
 import AVFoundation
 
-class BackgroundAudioManager {
+// All engine/session ownership is protected by _lock. The render callback
+// touches only the buffer supplied by AVAudioEngine.
+final class BackgroundAudioManager: @unchecked Sendable {
 	static let shared = BackgroundAudioManager()
 	private let _engine = AVAudioEngine()
 	private var _silenceNode: AVAudioSourceNode?
@@ -18,7 +20,7 @@ class BackgroundAudioManager {
 	private let _lock = NSLock()
 
 	private init() {}
-	
+
 	func start(_ requester: String = "default") {
 		_lock.lock()
 		defer { _lock.unlock() }
@@ -26,7 +28,7 @@ class BackgroundAudioManager {
 		guard !_engine.isRunning else { return }
 		do {
 			let session = AVAudioSession.sharedInstance()
-			
+
 			try session.setCategory(.playback, options: [.mixWithOthers])
 			try session.setActive(true)
 			_sessionIsActive = true
@@ -37,17 +39,17 @@ class BackgroundAudioManager {
 				}
 				return noErr
 			}
-			
+
 			_engine.attach(silence)
 			_silenceNode = silence
 			_engine.connect(silence, to: _engine.mainMixerNode, format: nil)
 			try _engine.start()
 		} catch {
 			_cleanup()
-			print("failed to start engine:", error)
+			DiagnosticLog.error("Failed to start background audio: \(error.localizedDescription)", category: "Background")
 		}
 	}
-	
+
 	func stop(_ requester: String = "default") {
 		_lock.lock()
 		defer { _lock.unlock() }
@@ -77,7 +79,7 @@ class BackgroundAudioManager {
 				_sessionIsActive = false
 			} catch {
 				// Retain ownership so a later stop can retry deactivation.
-				print("failed to deactivate audio session:", error)
+				DiagnosticLog.error("Failed to deactivate background audio: \(error.localizedDescription)", category: "Background")
 			}
 		}
 	}

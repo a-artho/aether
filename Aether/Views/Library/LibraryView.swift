@@ -136,7 +136,7 @@ struct LibraryView: View {
 									selectedSigningAppPresenting: $_selectedSigningAppPresenting,
 									selectedAppUUIDs: $_selectedAppUUIDs
 								)
-								.compatMatchedTransitionSource(id: app.uuid ?? "", ns: _namespace)
+								.matchedTransitionSource(id: app.uuid ?? "", in: _namespace)
 							}
 						}
 
@@ -149,7 +149,7 @@ struct LibraryView: View {
 									selectedSigningAppPresenting: $_selectedSigningAppPresenting,
 									selectedAppUUIDs: $_selectedAppUUIDs
 								)
-								.compatMatchedTransitionSource(id: app.uuid ?? "", ns: _namespace)
+								.matchedTransitionSource(id: app.uuid ?? "", in: _namespace)
 							}
 						}
 					}
@@ -226,7 +226,7 @@ struct LibraryView: View {
 			}
 			.fullScreenCover(item: $_selectedSigningAppPresenting) { app in
 				SigningView(app: app.base)
-					.compatNavigationTransition(id: app.base.uuid ?? "", ns: _namespace)
+					.navigationTransition(.zoom(sourceID: app.base.uuid ?? "", in: _namespace))
 			}
 			.sheet(isPresented: $_isImportingPresenting) {
 				LibraryImportPickerView(

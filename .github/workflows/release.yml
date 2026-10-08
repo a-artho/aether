@@ -5,6 +5,11 @@ on:
     tags:
       - v*
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the IPA after validation
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -58,6 +63,7 @@ jobs:
             packages/Aether.ipa --version "$VERSION"
 
       - name: Publish release
+        if: github.event_name == 'push' || inputs.publish_release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

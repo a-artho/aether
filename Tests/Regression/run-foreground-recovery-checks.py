@@ -106,7 +106,7 @@ struct DeviceConnectionCheck:Sendable {var isConnected=false;var apps:[AppInfo]?
 final class HeartbeatManager:@unchecked Sendable {
  static let shared=HeartbeatManager();var ipAddress="";let isRsd=true
  func checkSocketConnection(timeoutInSeconds:Double)->DeviceConnectionCheck {DeviceConnectionCheck()}
- func checkDeviceConnection(timeoutInSeconds:Double,includeApps:Bool=false,legacySocketAlreadyVerified:Bool,onVerified:@Sendable ()->Void = {})->DeviceConnectionCheck {DeviceConnectionCheck()}
+ func checkDeviceConnection(timeoutInSeconds:Double,includeApps:Bool=false,onVerified:@Sendable ()->Void = {})->DeviceConnectionCheck {DeviceConnectionCheck()}
 }
 @MainActor final class Gate {
  var pending:CheckedContinuation<Void,Never>?

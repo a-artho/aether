@@ -13,34 +13,9 @@ extension HeartbeatManager {
 	/// Verifies that Aether can reach the paired device's Installation Proxy service.
 	/// Unlike a raw TCP probe, this validates the active transport and pairing flow.
 	public func checkDeviceConnection(
-		timeoutInSeconds: Double = 2.0, includeApps: Bool = false, legacySocketAlreadyVerified: Bool = false, onVerified: (@Sendable () -> Void)? = nil
+		timeoutInSeconds: Double = 2.0, includeApps: Bool = false, onVerified: (@Sendable () -> Void)? = nil
 	) -> DeviceConnectionCheck {
-		if isRsd {
-			// The packet tunnel can be usable to the native Remote Pairing client
-			// before a generic POSIX TCP probe to its virtual address succeeds.
-			// Let the handshake below verify the real transport instead of rejecting
-			// it based on that duplicate preflight.
-			return _checkRSDDeviceConnection(timeoutInSeconds: timeoutInSeconds, includeApps: includeApps, onVerified: onVerified)
-		}
-
-		if !legacySocketAlreadyVerified {
-			let socketConnection = checkSocketConnection(timeoutInSeconds: timeoutInSeconds)
-			guard socketConnection.isConnected else {
-				return .init(isConnected: false, error: socketConnection.error)
-			}
-		}
-
-		guard let provider else {
-			return .init(isConnected: false, error: "Heartbeat provider unavailable")
-		}
-
-		var client: OpaquePointer?
-		defer { installation_proxy_client_free(client) }
-		if let error = installation_proxy_connect(provider, &client) {
-			let swiftError = IDeviceSwiftError(error)
-			return .init(isConnected: false, error: swiftError.localizedDescription, errorCode: swiftError.code, errorSubCode: swiftError.subCode)
-		}
-		return verifiedClient(client, includeApps: includeApps, onVerified: onVerified)
+		return _checkRSDDeviceConnection(timeoutInSeconds: timeoutInSeconds, includeApps: includeApps, onVerified: onVerified)
 	}
 
 	private func verifiedClient(_ client: OpaquePointer?, includeApps: Bool, onVerified: (@Sendable () -> Void)? = nil) -> DeviceConnectionCheck {
@@ -76,84 +51,13 @@ extension HeartbeatManager {
 
 	/// Check connection to RSD endpoint (port 49152)
 	/// - Returns: Tuple for connection status and error message (if any)
-	public func checkRSDEndpoint(timeoutInSeconds: Double = 0.5) -> (isConnected: Bool, error: String?) {
-		checkPortConnection(port: port_rsd, timeoutInSeconds: timeoutInSeconds)
-	}
 
 	/// Check connection to legacy socket/tunnel (port 62078)
 	/// - Returns: Tuple for connection status and error message (if any)
-	public func checkSocketConnection(timeoutInSeconds: Double = 2.0) -> (isConnected: Bool, error: String?) {
-		checkPortConnection(port: port, timeoutInSeconds: timeoutInSeconds)
-	}
 
 	/// Check TCP connection to a specific port on the device
 	/// - Returns: Tuple for connection status and error message (if any)
-	public func checkPortConnection(port targetPort: UInt16, timeoutInSeconds: Double = 0.5) -> (isConnected: Bool, error: String?) {
-		let socketFD = socket(AF_INET, SOCK_STREAM, 0)
-		if socketFD == -1 {
-			return (false, "Failed to create socket")
-		}
 
-		defer {
-			close(socketFD)
-		}
-
-		let flags = fcntl(socketFD, F_GETFL, 0)
-		if flags == -1 {
-			return (false, "Failed to get socket flags")
-		}
-		if fcntl(socketFD, F_SETFL, flags | O_NONBLOCK) == -1 {
-			return (false, "Failed to set socket to non-blocking mode")
-		}
-
-		var addr = sockaddr_in()
-		memset(&addr, 0, MemoryLayout.size(ofValue: addr))
-		addr.sin_family = sa_family_t(AF_INET)
-		addr.sin_port = CFSwapInt16HostToBig(targetPort)
-
-		guard inet_pton(AF_INET, ipAddress, &addr.sin_addr) == 1 else {
-			return (false, "Invalid IP address format")
-		}
-
-		let connectResult = withUnsafePointer(to: &addr) {
-			$0.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-				connect(socketFD, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
-			}
-		}
-
-		if connectResult != 0 {
-			if errno != EINPROGRESS {
-				return (false, "Failed to connect: \(String(cString: strerror(errno)))")
-			}
-
-			var writeSet = fd_set()
-			__darwin_fd_set(socketFD, &writeSet)
-
-			var timeout = timeval()
-			timeout.tv_sec = Int(timeoutInSeconds)
-			timeout.tv_usec = __darwin_suseconds_t(Int((timeoutInSeconds - Double(timeout.tv_sec)) * 1_000_000))
-
-			let selectResult = select(socketFD + 1, nil, &writeSet, nil, &timeout)
-
-			if selectResult == 0 {
-				return (false, "Connection timed out")
-			} else if selectResult == -1 {
-				return (false, "Select failed: \(String(cString: strerror(errno)))")
-			}
-
-			var error: Int32 = 0
-			var len = socklen_t(MemoryLayout<Int32>.size)
-			if getsockopt(socketFD, SOL_SOCKET, SO_ERROR, &error, &len) == -1 {
-				return (false, "Failed to get socket options")
-			}
-
-			if error != 0 {
-				return (false, "Connection failed: \(String(cString: strerror(error)))")
-			}
-		}
-
-		return (true, nil)
-	}
 	/// Retrieves and reads pairing file (if any)
 	/// - Returns: Pointer to pairing file
 	func getPairing() throws -> IdevicePairingFile {

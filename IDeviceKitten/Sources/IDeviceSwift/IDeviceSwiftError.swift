@@ -45,8 +45,6 @@ public struct IDeviceSwiftError: LocalizedError {
 
 enum IDeviceConnectionError: LocalizedError {
 	case pairingFileMissing
-	case legacyEndpointUnavailable(String?)
-	case tcpProviderUnavailable
 	case rsdPairingFileUnreadable(String?)
 	case rsdEndpointInvalid
 	case rsdTunnelUnavailable(String)
@@ -61,11 +59,6 @@ enum IDeviceConnectionError: LocalizedError {
 		switch self {
 		case .pairingFileMissing:
 			return "The device pairing file is missing."
-		case .legacyEndpointUnavailable(let reason):
-			return reason.map { "The device connection is unavailable: \($0)" }
-				?? "The device connection is unavailable."
-		case .tcpProviderUnavailable:
-			return "The device TCP provider is unavailable."
 		case .rsdPairingFileUnreadable(let reason):
 			return reason.map { "The device pairing file could not be read for RSD: \($0)" }
 				?? "The device pairing file could not be read for RSD."

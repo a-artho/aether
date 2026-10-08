@@ -6,8 +6,8 @@ import PackageDescription
 let package = Package(
 	name: "NimbleKit",
 	platforms: [
-		.iOS(.v16),
-		.tvOS(.v16)
+		.iOS("26.0"),
+		.tvOS("26.0")
 	],
 	products: [
 		.library(name: "NimbleExtensions", targets: ["NimbleExtensions"]),

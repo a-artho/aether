@@ -13,13 +13,13 @@ import NimbleViews
 struct SourceNewsView: View {
 	@State var isLoading = true
 	@State var hasLoadedInitialData = false
-	
+
 	@State private var _selectedNewsPresenting: ASRepository.News?
-	
+
 	@Namespace private var _namespace
-	
+
 	var news: [ASRepository.News]?
-	
+
 	// MARK: Body
 	var body: some View {
 		Group {
@@ -34,7 +34,7 @@ struct SourceNewsView: View {
 								_selectedNewsPresenting = new
 							} label: {
 								SourceNewsCardView(new: new)
-									.compatMatchedTransitionSource(id: new.id, ns: _namespace)
+									.matchedTransitionSource(id: new.id, in: _namespace)
 							}
 						}
 					}
@@ -53,10 +53,10 @@ struct SourceNewsView: View {
 		}
 		.fullScreenCover(item: $_selectedNewsPresenting) { new in
 			SourceNewsCardInfoView(new: new)
-				.compatNavigationTransition(id: new.id, ns: _namespace)
+				.navigationTransition(.zoom(sourceID: new.id, in: _namespace))
 		}
 	}
-	
+
 	private func _load() {
 		withAnimation(.easeIn(duration: 0.3)) {
 			isLoading = false

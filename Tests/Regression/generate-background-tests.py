@@ -95,6 +95,29 @@ typealias SourceAppProvenance=Provenance
 typealias URLSessionDownloadTask=NetworkTask
 typealias URLSession=Session
 struct Store { func saveResumeData(_ data:Data,for id:String) throws {};func cleanupArtifacts(for download:Download) {} }
+@MainActor final class DownloadResultNotifier {
+ static let shared=DownloadResultNotifier()
+ func requestPermissionIfNeeded() {}
+	func send(transferIdentifier: String, title: String, body: String) {
+		#if !targetEnvironment(macCatalyst)
+		let content = UNMutableNotificationContent()
+		content.title = title
+		content.body = body
+		content.sound = .default
+		let request = UNNotificationRequest(identifier: "Aether.download.result.\(transferIdentifier)", content: content, trigger: nil)
+		let checkpoint = DownloadCheckpointLease()
+		Task {
+			defer { checkpoint.end() }
+			do {
+				try await UNUserNotificationCenter.current().add(request)
+				DebugLogManager.shared.log("Download result notification submitted id=\(transferIdentifier) title=\(title).", category: "Download", level: .info)
+			} catch {
+				DebugLogManager.shared.log("Download result notification failed id=\(transferIdentifier): \(error.localizedDescription)", category: "Download", level: .notice)
+			}
+		}
+		#endif
+	}
+}
 @MainActor final class Driver {
  var downloads:[Download]=[];var _restorableTransferIDs=Set<String>();var _restoringTransferIDs=Set<String>();let _session=Session(),_store=Store()
  var holdSave=false;var saveGate:CheckedContinuation<Void,Never>?
@@ -109,7 +132,6 @@ struct Store { func saveResumeData(_ data:Data,for id:String) throws {};func cle
  func _getDownloadTask(_ task:NetworkTask)->Download? { downloads.first { $0.task === task } }
  func _persistDownloads(immediately:Bool=true) { persists+=1 };func _releaseIdleBackgroundTunnel() {}
  func _markRestartRequired(_ download:Download,message:String) { download.state = .failed;download.task=nil;_stopContinuedTask(for:download,success:false) }
- func _requestDownloadNotificationPermission() {}
  func notify(_ download:Download) { _notifyDownloadCompleted(download) }
  func notifyFailure(_ download:Download) { _notifyDownload(download,title:"Download failed",body:"Connection lost") }
  func start(_ download:Download) { downloads.append(download);_startDownloadExecution(for:download) }

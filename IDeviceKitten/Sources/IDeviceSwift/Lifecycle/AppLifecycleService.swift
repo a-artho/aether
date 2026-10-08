@@ -18,7 +18,7 @@ public enum AppLifecycleService {
 		// Prefer the typed RSD AppService transport. It has a defined response
 		// contract, unlike the private Objective-C workspace selector.
 		let heartbeat = HeartbeatManager.shared
-		if heartbeat.isRsd && HeartbeatManager.hasPairingFile() {
+		if HeartbeatManager.hasPairingFile() {
 			do {
 				let launched = try await Task.detached(priority: .userInitiated) { () -> Bool in
 					var appService: AppServiceHandle?
@@ -82,7 +82,7 @@ public enum AppLifecycleService {
 		executableName: String? = nil
 	) async throws -> Bool {
 		let heartbeat = HeartbeatManager.shared
-		guard heartbeat.isRsd && HeartbeatManager.hasPairingFile() else {
+		guard HeartbeatManager.hasPairingFile() else {
 			throw IDeviceSwiftError(
 				message: "Terminating running processes requires an active iDevice RSD tunnel."
 			)

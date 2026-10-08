@@ -38,28 +38,18 @@ extension Color: Codable {
 	}
 
 	public func toHex(alpha: Bool = false) -> String {
-		
+
 		// had to use this shim
 		let (r, g, b, a) = {
-			if #available(iOS 17.0, *) {
-				
-				let resolved = resolve(in: EnvironmentValues())
-				
-				let r = resolved.red
-				let g = resolved.green
-				let b = resolved.blue
-				let a = resolved.opacity
-				
-				return (r, g, b, a)
-			} else {
-				let (r, g, b, a) = components
-				return (
-					Float(r),
-					Float(g),
-					Float(b),
-					Float(a)
-				)
-			}
+
+			let resolved = resolve(in: EnvironmentValues())
+
+			let r = resolved.red
+			let g = resolved.green
+			let b = resolved.blue
+			let a = resolved.opacity
+
+			return (r, g, b, a)
 		}()
 
 		if alpha {
@@ -124,23 +114,23 @@ extension Color: @retroactive RawRepresentable {
 // taken from meret
 public extension Color {
 	var components: (red: CGFloat, green: CGFloat, blue: CGFloat, opacity: CGFloat) {
-		
+
 		#if canImport(UIKit)
 			typealias NativeColor = UIColor
 		#elseif canImport(AppKit)
 			typealias NativeColor = NSColor
 		#endif
-		
+
 		var r: CGFloat = 0
 		var g: CGFloat = 0
 		var b: CGFloat = 0
 		var o: CGFloat = 0
-		
+
 		guard NativeColor(self).getRed(&r, green: &g, blue: &b, alpha: &o) else {
 			// You can handle the failure here as you want
 			return (0, 0, 0, 0)
 		}
-		
+
 		return (r, g, b, o)
 	}
 }

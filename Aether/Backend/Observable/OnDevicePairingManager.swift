@@ -111,7 +111,7 @@ final class OnDevicePairingManager: ObservableObject {
 		guard let identifier = sessionIdentifier, isActive else { return }
 		_log("Preparing protected background time for pairing.")
 		#if !targetEnvironment(macCatalyst)
-		if #available(iOS 26.0, *), hasContinuedProcessingTask {
+		if hasContinuedProcessingTask {
 			BackgroundTaskManager.shared.markPairingSettingsOpened(for: identifier)
 			return
 		}
@@ -130,7 +130,7 @@ final class OnDevicePairingManager: ObservableObject {
 			state = .pairingWithoutCode
 			_log("Pairing continued without a code.", level: .notice)
 			#if !targetEnvironment(macCatalyst)
-			if #available(iOS 26.0, *), hasContinuedProcessingTask {
+			if hasContinuedProcessingTask {
 				BackgroundTaskManager.shared.showPairingProgress(
 					.localized("Finishing code-free pairing"),
 					for: identifier
@@ -143,7 +143,7 @@ final class OnDevicePairingManager: ObservableObject {
 		state = .awaitingCode(code)
 		_log("Pairing code received and displayed.", level: .notice)
 		#if !targetEnvironment(macCatalyst)
-		if #available(iOS 26.0, *), hasContinuedProcessingTask {
+		if hasContinuedProcessingTask {
 			BackgroundTaskManager.shared.showPairingCode(code, for: identifier)
 		}
 		#endif
@@ -241,26 +241,24 @@ final class OnDevicePairingManager: ObservableObject {
 
 	private func _startContinuedProcessingTask(for identifier: UUID) {
 		#if !targetEnvironment(macCatalyst)
-		if #available(iOS 26.0, *) {
-			hasContinuedProcessingTask = BackgroundTaskManager.shared.startPairingTask(
-				for: identifier,
-				onExpiration: { [weak self] in
-					Task { @MainActor [weak self] in
-						self?.hasContinuedProcessingTask = false
-						self?._cancel(
-							for: identifier,
-							failure: .localized("Pairing was stopped by iOS. Try again.")
-						)
-					}
+		hasContinuedProcessingTask = BackgroundTaskManager.shared.startPairingTask(
+			for: identifier,
+			onExpiration: { [weak self] in
+				Task { @MainActor [weak self] in
+					self?.hasContinuedProcessingTask = false
+					self?._cancel(
+						for: identifier,
+						failure: .localized("Pairing was stopped by iOS. Try again.")
+					)
 				}
-			)
-		}
+			}
+		)
 		#endif
 	}
 
 	private func _stopContinuedProcessingTask(for identifier: UUID, success: Bool) {
 		#if !targetEnvironment(macCatalyst)
-		if #available(iOS 26.0, *), hasContinuedProcessingTask {
+		if hasContinuedProcessingTask {
 			BackgroundTaskManager.shared.stopPairingTask(for: identifier, success: success)
 		}
 		#endif

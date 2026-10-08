@@ -13,3 +13,6 @@ AD_HOC_CODE_SIGNING_ALLOWED = YES
 
 DEPLOYMENT_LOCATION = YES
 DSTROOT = $(SRCROOT)/_build/
+
+// Audit concurrency at module boundaries while retaining Swift 5 language compatibility.
+SWIFT_STRICT_CONCURRENCY=complete

@@ -107,14 +107,6 @@ public class InstallationProxy: Identifiable, ObservableObject {
 				throw IDeviceConnectionError.pairingFileMissing
 			}
 
-			if await self._heartbeat.isRsd {
-			} else {
-				let connection = await self._heartbeat.checkSocketConnection()
-				guard connection.isConnected else {
-					throw IDeviceConnectionError.legacyEndpointUnavailable(connection.error)
-				}
-			}
-
 			defer {
 				if let fileHandle {
 					if let error = afc_file_close(fileHandle) {
@@ -131,24 +123,13 @@ public class InstallationProxy: Identifiable, ObservableObject {
 
 			let heartbeat = await self._heartbeat
 
-			diagnostics?.transport(isRSD: heartbeat.isRsd)
-			if heartbeat.isRsd {
-				do {
-					try heartbeat.withRSDServiceConnection { adapter, handshake in
-						afc_client_connect_rsd(adapter, handshake, &afcClient)
-					}
-				} catch {
-					throw IDeviceConnectionError.afcConnectionFailed(error.localizedDescription)
+			diagnostics?.transport(isRSD: true)
+			do {
+				try heartbeat.withRSDServiceConnection { adapter, handshake in
+					afc_client_connect_rsd(adapter, handshake, &afcClient)
 				}
-			} else {
-				guard let provider = heartbeat.provider else {
-					throw IDeviceConnectionError.tcpProviderUnavailable
-				}
-
-				if let error = afc_client_connect(provider, &afcClient) {
-					let reason = IDeviceSwiftError(error).localizedDescription
-					throw IDeviceConnectionError.afcConnectionFailed(reason)
-				}
+			} catch {
+				throw IDeviceConnectionError.afcConnectionFailed(error.localizedDescription)
 			}
 
 			let stagingDir = "PublicStaging"
@@ -228,25 +209,14 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			try await self._updateStatus(with: .installing)
 			diagnostics?.stage("installation-proxy-connect")
 
-
-			if heartbeat.isRsd {
-				do {
-					try heartbeat.withRSDServiceConnection { adapter, handshake in
-						installation_proxy_connect_rsd(adapter, handshake, &installproxy)
-					}
-				} catch {
-					throw IDeviceConnectionError.installationProxyConnectionFailed(
-						error.localizedDescription
-					)
+			do {
+				try heartbeat.withRSDServiceConnection { adapter, handshake in
+					installation_proxy_connect_rsd(adapter, handshake, &installproxy)
 				}
-			} else {
-				guard let provider = heartbeat.provider else {
-					throw IDeviceConnectionError.tcpProviderUnavailable
-				}
-				if let error = installation_proxy_connect(provider, &installproxy) {
-					let reason = IDeviceSwiftError(error).localizedDescription
-					throw IDeviceConnectionError.installationProxyConnectionFailed(reason)
-				}
+			} catch {
+				throw IDeviceConnectionError.installationProxyConnectionFailed(
+					error.localizedDescription
+				)
 			}
 
 			try Task.checkCancellation()

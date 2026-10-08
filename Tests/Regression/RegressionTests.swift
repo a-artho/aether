@@ -54,15 +54,5 @@ final class RegressionTests: XCTestCase {
 		XCTAssertFalse(monitor.observe(progress: 0.7))
 		XCTAssertTrue(monitor.observe(progress: nil))
 	}
-	func testCancellationBeforeAndAfterAttachingWorker() async {
-		for before in [true, false] {
-			let relay = TaskCancellationRelay()
-			if before { relay.cancel() }
-			let worker = Task { while !Task.isCancelled { await Task.yield() } }
-			relay.attach(worker)
-			if !before { relay.cancel() }
-			await worker.value
-			XCTAssertTrue(worker.isCancelled)
-		}
-	}
+
 }

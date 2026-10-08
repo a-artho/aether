@@ -13,7 +13,7 @@ public struct NBPillView: View {
 	public var color: Color
 	public var index: Int
 	public var count: Int
-	
+
 	public init(
 		title: String,
 		icon: String,
@@ -27,11 +27,11 @@ public struct NBPillView: View {
 		self.index = index
 		self.count = count
 	}
-	
+
 	public var body: some View {
 		let position = PillPosition.position(for: index, in: count)
 		let radii = position.cornerRadii
-		
+
 		HStack(spacing: 4) {
 			Image(systemName: icon)
 				.font(.caption)
@@ -54,10 +54,10 @@ public struct NBPillView: View {
 			.fill(color.opacity(0.15))
 		)
 	}
-	
+
 	public enum PillPosition {
 		case single, first, middle, last
-		
+
 		static public func position(for index: Int, in count: Int) -> PillPosition {
 			switch count {
 			case 1: return .single
@@ -66,23 +66,9 @@ public struct NBPillView: View {
 			default: return .middle
 			}
 		}
-		
+
 		public var cornerRadii: (topLeading: CGFloat, bottomLeading: CGFloat, bottomTrailing: CGFloat, topTrailing: CGFloat) {
-			if #available(iOS 26.0, *) {
-				return (16, 16, 16, 16)
-			}
-			else {
-				switch self {
-				case .single:
-					return (10, 10, 10, 10)
-				case .first:
-					return (10, 10, 5, 5)
-				case .middle:
-					return (5, 5, 5, 5)
-				case .last:
-					return (5, 5, 10, 10)
-				}
-			}
+			return (16, 16, 16, 16)
 		}
 	}
 }

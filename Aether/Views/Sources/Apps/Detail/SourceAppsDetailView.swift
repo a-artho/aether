@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import Combine
 import AltSourceKit
 import NimbleViews
 import NukeUI
@@ -14,20 +13,9 @@ import UIKit
 
 // MARK: - SourceAppsDetailView
 struct SourceAppsDetailView: View {
-	@ObservedObject var downloadManager = DownloadManager.shared
-	@State private var _downloadProgress: Double = 0
-	@State var cancellable: AnyCancellable? // Combine
 	@State private var _isScreenshotPreviewPresented: Bool = false
 	@State private var _selectedScreenshotIndex: Int = 0
 	@State private var _appStoreDestination: AppStoreDestination?
-
-	var currentDownload: Download? {
-		guard let url = app.currentDownloadUrl else { return nil }
-		return downloadManager.getDownload(
-			from: url,
-			sourceProvenance: SourceAppProvenance(sourceURL: sourceURL, repository: source, app: app)
-		)
-	}
 
 	let sourceURL: URL?
 	let source: ASRepository
@@ -507,9 +495,9 @@ extension SourceAppsDetailView {
 				}
 			}
 			.padding(.horizontal)
-			.compatScrollTargetLayout()
+			.scrollTargetLayout()
 		}
-		.compatScrollTargetBehavior()
+		.scrollTargetBehavior(.viewAligned)
 		.padding(.horizontal, -20)
 	}
 }

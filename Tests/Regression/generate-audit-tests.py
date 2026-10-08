@@ -11,10 +11,11 @@ def declaration(path, start):
 locator = declaration('Aether/Backend/Observable/SourcesRouter.swift', 'struct AppLocator:')
 publish = declaration('Aether/Backend/Observable/DebugLogManager.swift', 'private func _publish(').replace('private func', 'func', 1)
 focus = declaration('Aether/Views/Installed/InstalledAppsView.swift', '.task(id: installationFocusState)').replace('.task(id: installationFocusState)', 'func focus()', 1)
-audio = declaration('Aether/Utilities/BackgroundAudioManager.swift', 'class BackgroundAudioManager')
+audio = declaration('Aether/Utilities/BackgroundAudioManager.swift', 'final class BackgroundAudioManager')
 fixture = r'''
 import Foundation
 import XCTest
+enum DiagnosticLog { static func error(_ message:String, category:String) {} }
 struct ASRepository {
  struct App: Hashable {
   let uuid: UUID, id: String?, version: String, downloadURL: URL, description: String

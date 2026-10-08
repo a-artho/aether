@@ -20,7 +20,8 @@ extension InstallerStatusViewModel {
 	}
 }
 
-public class InstallerStatusViewModel: ObservableObject {
+@MainActor
+public final class InstallerStatusViewModel: ObservableObject {
 	@Published public var status: InstallerStatus
 	@Published public var signingProgress: Double = 0.0
 	@Published public var uploadProgress: Double = 0.0

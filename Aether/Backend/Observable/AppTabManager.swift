@@ -25,7 +25,7 @@ final class AppTabManager: ObservableObject {
 		case reset
 		case root
 	}
-	
+
 	@Published var selectedTab: TabEnum = .sources {
 		didSet {
 			guard selectedTab != oldValue else { return }
@@ -38,12 +38,11 @@ final class AppTabManager: ObservableObject {
 	}
 	@Published var isSettingsPresented = false
 	@Published var requestedSettingsPage: SettingsPage? = nil
-	@Published private(set) var isInstallationSettingsRequested = false
 	@Published var isLibrarySearchPresented = false
 	@Published private(set) var installationFocusRequest: UUID?
-	
+
 	private init() {}
-	
+
 	func switchTo(_ tab: TabEnum) {
 		if tab == .settings {
 			openSettings()
@@ -72,10 +71,6 @@ final class AppTabManager: ObservableObject {
 
 	func openInstallationSettings() {
 		openSettings(page: .installation)
-	}
-
-	func consumeInstallationSettingsRequest() {
-		isInstallationSettingsRequested = false
 	}
 
 	func openSearch() {

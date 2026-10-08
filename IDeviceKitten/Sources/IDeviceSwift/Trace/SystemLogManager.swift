@@ -36,15 +36,6 @@ public class SystemLogManager: NSObject {
 			throw IDeviceConnectionError.pairingFileMissing
 		}
 
-		if !self._heartbeat.isRsd {
-			let connection = self._heartbeat.checkSocketConnection()
-			guard connection.isConnected else {
-				throw IDeviceConnectionError.legacyEndpointUnavailable(connection.error)
-			}
-			guard (self._heartbeat.provider != nil) else {
-				throw IDeviceConnectionError.tcpProviderUnavailable
-			}
-		}
 	}
 
 	/// Connects to syslog relay
@@ -59,13 +50,9 @@ public class SystemLogManager: NSObject {
 				self.isStreaming = false
 			}
 
-			if self._heartbeat.isRsd {
+			do {
 				try self._heartbeat.withRSDServiceConnection { adapter, handshake in
 					syslog_relay_connect_rsd(adapter, handshake, &self.syslogClient)
-				}
-			} else {
-				if let error = syslog_relay_connect_tcp(self._heartbeat.provider, &self.syslogClient) {
-					throw IDeviceSwiftError(error)
 				}
 			}
 
@@ -113,13 +100,9 @@ public class SystemLogManager: NSObject {
 				self.isStreaming = false
 			}
 
-			if self._heartbeat.isRsd {
+			do {
 				try self._heartbeat.withRSDServiceConnection { adapter, handshake in
 					os_trace_relay_connect_rsd(adapter, handshake, &self.osTraceRelayClient)
-				}
-			} else {
-				if let error = os_trace_relay_connect(self._heartbeat.provider, &self.osTraceRelayClient) {
-					throw IDeviceSwiftError(error)
 				}
 			}
 

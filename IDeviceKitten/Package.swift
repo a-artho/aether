@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
 	name: "IDeviceKit",
 	platforms: [
-		.iOS(.v15),
+		.iOS("26.0"),
 		.macOS(.v12),
 	],
 	products: [

@@ -10,7 +10,7 @@ import Foundation
 import IDevice
 import Network
 
-private final class OnDevicePairingCodeCallbackBox: @unchecked Sendable {
+private final class OnDevicePairingCodeCallbackBox: Sendable {
 	let handler: @Sendable (String) -> Void
 
 	init(handler: @escaping @Sendable (String) -> Void) {
@@ -408,7 +408,6 @@ private final class OnDevicePairingSocketServer: @unchecked Sendable {
 			throw OnDevicePairingSessionError.cancelled
 		}
 	}
-
 
 	/// The native host considers Pair-Setup complete immediately after writing
 	/// M6. iOS commits the record just after that write, so closing the relay at

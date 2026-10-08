@@ -311,16 +311,6 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		#endif
 	}
 
-	public func providerIsReady() async -> Bool {
-		#if targetEnvironment(simulator)
-		return isConnected
-		#elseif os(iOS) && !targetEnvironment(macCatalyst)
-		return manager?.connection.status == .connected
-		#else
-		return false
-		#endif
-	}
-
 	public func updateNetworkConfiguration(
 		interface: String,
 		peer: String,

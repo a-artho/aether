@@ -104,8 +104,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		connectionPreparation != nil || state == .connecting || state == .disconnecting
 	}
 
-	private let pathMonitor = NWPathMonitor()
-	private let monitorQueue = DispatchQueue(label: "aether.network.monitor")
+	private var networkObservation: DeviceNetworkObservation?
 	private var didBecomeActiveObserver: NSObjectProtocol?
 	private var didEnterBackgroundObserver: NSObjectProtocol?
 	private var foregroundRecoveryTask: Task<Void, Never>?
@@ -140,12 +139,9 @@ public final class DeviceConnectionManager: ObservableObject {
 		)
 
 		// 1. Monitor network changes (NWPathMonitor is an event trigger, not source of truth)
-		pathMonitor.pathUpdateHandler = { [weak self] path in
-			Task { @MainActor [weak self] in
-				self?.networkPathChanged(path)
-			}
-		}
-		pathMonitor.start(queue: monitorQueue)
+		networkObservation = DeviceNetworkObservation { [weak self] path in
+            self?.networkPathChanged(path)
+        }
 
 		// 2. Foreground reconciliation (fires when returning from LocalDevVPN or app switcher)
 		didBecomeActiveObserver = NotificationCenter.default.addObserver(
@@ -179,7 +175,6 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	deinit {
-		pathMonitor.cancel()
 		if let didBecomeActiveObserver {
 			NotificationCenter.default.removeObserver(didBecomeActiveObserver)
 		}
@@ -196,7 +191,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		lastVerifiedAt = 0
 		if let path {
 			let previousNetworkState = physicalNetworkState
-			physicalNetworkState = Self.classify(path)
+			physicalNetworkState = DeviceNetworkObservation.classify(path)
 			_log("Physical network is now \(String(describing: physicalNetworkState)).", category: "Cellular Assist")
 			if physicalNetworkState != .cellularOnly {
 				CellularAssistManager.shared.networkNoLongerNeedsManualRecovery()
@@ -569,24 +564,10 @@ public final class DeviceConnectionManager: ObservableObject {
 			}
 		}
 
-		let isRsd = HeartbeatManager.shared.isRsd
-		if !isRsd {
-			let probe = await Task.detached(priority: .userInitiated) {
-				HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 1.5)
-			}.value
-
-			guard _reconciliationIsCurrent(epoch: epoch) else { throw CancellationError() }
-			guard probe.isConnected else {
-				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
-				_log("Device endpoint probe failed: \(probe.error ?? "port unreachable").", level: .warning)
-				throw DeviceConnectionError.tunnelUnavailable(probe.error ?? "Port unreachable")
-			}
-		}
-
 		let checkedRecord = _syncPairingRecord()
 		if let checkedRecord { pairingVerification.beginChecking(checkedRecord) }
 		let checkResult = await Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, legacySocketAlreadyVerified: !isRsd)
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
 		}.value
 
 		guard _reconciliationIsCurrent(epoch: epoch) else { throw CancellationError() }
@@ -719,38 +700,6 @@ public final class DeviceConnectionManager: ObservableObject {
 			}
 		}
 
-		// The legacy transport needs a socket preflight. RSD is verified by its
-		// native Remote Pairing handshake below; a raw probe can fail even when
-		// the packet tunnel is ready.
-		let isRsd = HeartbeatManager.shared.isRsd
-		if !isRsd {
-			let probe = await Task.detached(priority: .utility) {
-				HeartbeatManager.shared.checkSocketConnection(timeoutInSeconds: 1.5)
-			}.value
-
-			guard
-				_reconciliationIsCurrent(epoch: epoch),
-				reconciliationGeneration == transitionGeneration
-			else {
-				return
-			}
-			guard !CellularAssistManager.shared.isAutomaticRecoveryInProgress || cellularAssistTransaction else {
-				return
-			}
-
-			if !probe.isConnected {
-				if expectedState == true && !force && !isExpired {
-					// During active connection attempt that hasn't timed out, wait for retries.
-					return
-				}
-				if _beginCellularAssistIfEligible() { return }
-				await _resetRSDTunnel()
-				guard _reconciliationIsCurrent(epoch: epoch) else { return }
-				_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
-				return
-			}
-		}
-
 		// Step 2: Full Installation Proxy check (validates pairing + transport)
 		let checkedRecord = _syncPairingRecord()
 		if let checkedRecord { pairingVerification.beginChecking(checkedRecord) }
@@ -768,7 +717,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			}
 		}
 		let verification = Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, includeApps: includeApps, legacySocketAlreadyVerified: !isRsd, onVerified: publishReadiness)
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, includeApps: includeApps, onVerified: publishReadiness)
 		}
 		if includeApps {
 			InstalledAppsStore.shared.stageInitialBrowse(Task { await verification.value.apps })
@@ -953,17 +902,6 @@ public final class DeviceConnectionManager: ObservableObject {
 		return isConnected
 	}
 
-	private static func classify(_ path: NWPath) -> PhysicalNetworkState {
-		guard path.status == .satisfied else { return .offline }
-		if path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet) {
-			return .wifiOrWired
-		}
-		if path.usesInterfaceType(.cellular) {
-			return .cellularOnly
-		}
-		return .unknown
-	}
-
 	private func _setLocalDevVPNConnection(enabled: Bool, generation: UUID) {
 		let action = enabled ? "enable" : "disable"
 		guard let url = URL(string: "localdevvpn://\(action)?scheme=aether") else {
@@ -972,10 +910,6 @@ public final class DeviceConnectionManager: ObservableObject {
 			return
 		}
 
-		if enabled {
-			// On older iOS, start the legacy heartbeat alongside LocalDevVPN.
-			HeartbeatManager.shared.start(true)
-		}
 		_startTransitionPolling(generation: generation, expectedState: enabled)
 
 		UIApplication.shared.open(url, options: [:]) { [weak self] didOpen in
@@ -999,8 +933,7 @@ public final class DeviceConnectionManager: ObservableObject {
 				try await EmbeddedTunnelManager.shared.start { self.transitionGeneration == generation }
 				guard transitionGeneration == generation else { return }
 				// The embedded tunnel also carries the pre-RSD legacy service.
-				HeartbeatManager.shared.start(true)
-				transitionDeadline = CACurrentMediaTime() + 10.0
+					transitionDeadline = CACurrentMediaTime() + 10.0
 				_startTransitionPolling(generation: generation, expectedState: true)
 				await reconcile()
 			} catch {

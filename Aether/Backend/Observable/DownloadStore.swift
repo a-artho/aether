@@ -32,6 +32,7 @@ struct StoredDownload: Codable, Sendable {
 	let totalBytes: Int64?
 	let progress: Double?
 
+	@MainActor
 	init(download: Download) {
 		self.id = download.logicalIdentifier
 		self.transferIdentifier = download.id
@@ -119,6 +120,7 @@ final class DownloadStore {
 		rootURL.appendingPathComponent("Staging", isDirectory: true)
 	}
 
+	@MainActor
 	func loadDownloads() -> [Download] {
 		guard
 			let data = try? Data(contentsOf: recordsURL),

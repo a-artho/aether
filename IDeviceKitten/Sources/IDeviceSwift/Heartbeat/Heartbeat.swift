@@ -6,13 +6,13 @@
 //
 
 import Foundation
-import UIKit.UIApplication
-import Combine
 import IDevice
 
 // MARK: - Class
 // ـ♡ﮩ٨ـ heartbeat ♪₊˚
-public class HeartbeatManager {
+// RSD handles/generation are protected by rsdConnectionLock. The endpoint has
+// its own lock; pairing migration is serialized by pairingMigrationLock.
+public final class HeartbeatManager: @unchecked Sendable {
 	public typealias PairingRecordSource = SavedPairingRecordSource
 
 	static public let shared = HeartbeatManager()
@@ -22,26 +22,20 @@ public class HeartbeatManager {
 
 	typealias IdevicePairingFile = OpaquePointer
 	typealias RpPairingFileHandle = OpaquePointer
-	typealias TcpProviderHandle = OpaquePointer
+
 	typealias AdapterHandle = OpaquePointer
 	typealias RemoteServerHandle = OpaquePointer
 	typealias RsdHandshakeHandle = OpaquePointer
-	typealias HeartbeatClientHandle = OpaquePointer
 
-	public var fileManager = FileManager.default
-	var provider: TcpProviderHandle?
-	public var heartbeatThread: Thread?
+	public let fileManager = FileManager.default
 
-	public var sessionId: UInt32? = nil
-	public var ipAddress: String = "10.7.0.1"
-	public let port: UInt16 = UInt16(LOCKDOWN_PORT)
+	private let endpointLock = NSLock()
+    private var endpointAddress = "10.7.0.1"
+    public var ipAddress: String {
+        get { endpointLock.lock(); defer { endpointLock.unlock() }; return endpointAddress }
+        set { endpointLock.lock(); defer { endpointLock.unlock() }; endpointAddress = newValue }
+    }
 	public let port_rsd: UInt16 = UInt16(49152)
-
-	public let restartLock = NSLock()
-	public var isRestartInProgress = false
-	public var restartBackoffTime: TimeInterval = 1.0
-	public var restartWorkItem: DispatchWorkItem?
-	public var firstRun = false
 
 	let rsdConnectionLock = NSLock()
 	var rsdGeneration: UInt64 = 0
@@ -54,35 +48,12 @@ public class HeartbeatManager {
 	var rsdHandshake: RsdHandshakeHandle?
 	var lastSuccessfulRSDPort: UInt16?
 
-	public var cancellable: AnyCancellable? // Combine
-
 	// InvalidHostID means the saved pairing identity is no longer accepted.
 	public init() {
 		#if DEBUG
 		idevice_init_logger(IdeviceLogLevel.init(3), Disabled, nil)
 		#endif
 
-		if #available(iOS 17.4, *) {
-		} else {
-			// On first start, just be a normal run, on second and onwards
-			// we force restart it with a different sessionid
-			cancellable = NotificationCenter.default
-				.publisher(for: UIApplication.willEnterForegroundNotification)
-				.receive(on: DispatchQueue.main)
-				.sink { notification in
-					let forceRestart = self.firstRun
-					self.firstRun = true
-					self.start(forceRestart)
-				}
-		}
-	}
-
-	public var isRsd: Bool {
-		if #available(iOS 17.4, *) {
-			true
-		} else {
-			false
-		}
 	}
 
 	static public func importedPairingFileURL() -> URL {

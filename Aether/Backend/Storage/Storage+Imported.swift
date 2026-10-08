@@ -6,37 +6,9 @@
 //
 
 import CoreData
-import UIKit.UIImpactFeedbackGenerator
 
 // MARK: - Class extension: Imported Apps
 extension Storage {
-	@MainActor
-	func addImported(
-		uuid: String,
-		source: URL? = nil,
-		
-		appName: String? = nil,
-		appIdentifier: String? = nil,
-		appVersion: String? = nil,
-		appIcon: String? = nil,
-		
-		completion: @escaping (Error?) -> Void
-	) {
-		do {
-			try upsertImported(
-				uuid: uuid,
-				source: source,
-				appName: appName,
-				appIdentifier: appIdentifier,
-				appVersion: appVersion,
-				appIcon: appIcon
-			)
-			HapticManager.shared.impact()
-			completion(nil)
-		} catch {
-			completion(error)
-		}
-	}
 
 	@MainActor
 	func upsertImported(
