@@ -30,7 +30,11 @@ private struct AppInfoPresentable { let uuid:String? }
  var _filteredSignedApps:[AppInfoPresentable]=[];var _filteredImportedApps:[AppInfoPresentable]=[]
  var _selectedAppUUIDs=Set<String>();var _selectedDownloadIDs=Set<String>()
  let downloadManager=Downloads();var removed:[String]=[]
- func _deleteAvailableApps(_ apps:[AppInfoPresentable]) { removed += apps.compactMap { $0.uuid } }
+ func _deleteAvailableApps(_ apps:[AppInfoPresentable], downloads:[Download], leaveEditing:Bool) {
+  removed += apps.compactMap { $0.uuid }
+  for download in downloads { downloadManager.deleteDownload(download) }
+  _selectedAppUUIDs.removeAll();_selectedDownloadIDs.removeAll()
+ }
 ''' + method(library, 'private func _getAllApps()') + method(library, 'private func _bulkDeleteSelectedApps()') + r'''
 }
 @MainActor private final class PendingFixture {
