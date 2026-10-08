@@ -66,8 +66,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 	typealias AfcFileHandle = OpaquePointer
 	typealias InstallationProxyClientHandle = OpaquePointer
 
-	@ObservedObject
-	public var viewModel: InstallerStatusViewModel
+	public let viewModel: InstallerStatusViewModel
 
 	public init(viewModel: InstallerStatusViewModel) {
 		self.viewModel = viewModel
@@ -86,10 +85,6 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		} else {
 			diagnostics = nil
 		}
-		var afcClient: AfcClientHandle?
-		var fileHandle: AfcFileHandle?
-		var installproxy: InstallationProxyClientHandle?
-		var remotePath: String?
 
 		let progressPublisher = UploadProgressPublisher { [weak self] value in
 			self?.viewModel.uploadProgress = value
@@ -99,6 +94,12 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		}
 		defer { progressPublisher.cancel(); installationProgressPublisher.cancel() }
 		let worker = Task.detached(priority: .utility) {
+			// Native handles belong exclusively to this worker and its cleanup.
+			var afcClient: AfcClientHandle?
+			var fileHandle: AfcFileHandle?
+			var installproxy: InstallationProxyClientHandle?
+			var remotePath: String?
+
 			defer { progressPublisher.cancel(); installationProgressPublisher.cancel() }
 			var diagnosticOutcome = "failed"
 			defer { diagnostics?.finish(outcome: Task.isCancelled ? "cancelled" : diagnosticOutcome) }

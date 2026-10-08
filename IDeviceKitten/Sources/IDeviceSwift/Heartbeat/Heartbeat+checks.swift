@@ -49,15 +49,6 @@ extension HeartbeatManager {
 		}
 	}
 
-	/// Check connection to RSD endpoint (port 49152)
-	/// - Returns: Tuple for connection status and error message (if any)
-
-	/// Check connection to legacy socket/tunnel (port 62078)
-	/// - Returns: Tuple for connection status and error message (if any)
-
-	/// Check TCP connection to a specific port on the device
-	/// - Returns: Tuple for connection status and error message (if any)
-
 	/// Retrieves and reads pairing file (if any)
 	/// - Returns: Pointer to pairing file
 	func getPairing() throws -> IdevicePairingFile {

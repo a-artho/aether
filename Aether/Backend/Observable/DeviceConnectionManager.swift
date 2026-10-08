@@ -932,8 +932,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			do {
 				try await EmbeddedTunnelManager.shared.start { self.transitionGeneration == generation }
 				guard transitionGeneration == generation else { return }
-				// The embedded tunnel also carries the pre-RSD legacy service.
-					transitionDeadline = CACurrentMediaTime() + 10.0
+				transitionDeadline = CACurrentMediaTime() + 10.0
 				_startTransitionPolling(generation: generation, expectedState: true)
 				await reconcile()
 			} catch {

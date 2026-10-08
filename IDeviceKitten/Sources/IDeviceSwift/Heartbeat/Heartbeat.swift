@@ -21,10 +21,8 @@ public final class HeartbeatManager: @unchecked Sendable {
 	private static var hasCompletedPairingMigration = false
 
 	typealias IdevicePairingFile = OpaquePointer
-	typealias RpPairingFileHandle = OpaquePointer
 
 	typealias AdapterHandle = OpaquePointer
-	typealias RemoteServerHandle = OpaquePointer
 	typealias RsdHandshakeHandle = OpaquePointer
 
 	public let fileManager = FileManager.default

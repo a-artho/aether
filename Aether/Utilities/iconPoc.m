@@ -169,12 +169,8 @@
     ISRecordResourceProvider* provider = [[PrivClass(ISRecordResourceProvider) alloc] initWithRecord:record options:0];
     
     // set suggestedRecipe so -[ISRecipeFactory _recipe] skips all checks and directly use ISiOSAppRecipe
-	if (@available(iOS 17.0, *)) {
-		[provider setSuggestedRecipe:[[PrivClass(ISiOSAppRecipe) alloc] init]];
-		[provider setResourceType:1];
-	} else {
-		[provider setIconShape:7];
-	}
+	[provider setSuggestedRecipe:[[PrivClass(ISiOSAppRecipe) alloc] init]];
+	[provider setResourceType:1];
     return provider;
 }
 
@@ -201,10 +197,7 @@ UIImage* iconTest(NSURL *bundleURL) {
         method_exchangeImplementations(class_getInstanceMethod(PrivClass(IFBundle), @selector(platform)), class_getInstanceMethod(IFBundleFake.class, @selector(platform)));
     });
 
-//    NSBundle* bundle = [NSBundle bundleWithURL:[docPathUrl URLByAppendingPathComponent:@"me.oatmealdome.DolphiniOS-njb.app"]];
-//    ISBundleIcon* icon = [[PrivClass(ISBundleIcon) alloc] initWithBundleURL:[docPathUrl URLByAppendingPathComponent:@"com.aigch.OpenParsec1.app"]];
     ISBundleIcon* icon = [[PrivClass(ISBundleIcon) alloc] initWithBundleURL:bundleURL];
-//    ISBundleIcon* icon = [[PrivClass(ISBundleIcon) alloc] initWithBundleURL:[docPathUrl URLByAppendingPathComponent:@"org.mozilla.ios.Firefox.app"]];
     ISImageDescriptor *descriptor = [PrivClass(ISImageDescriptor) imageDescriptorNamed:@"com.apple.IconServices.ImageDescriptor.HomeScreen"];
     descriptor.drawBorder = YES;
     descriptor.ignoreCache = YES;
@@ -235,13 +228,9 @@ UIImage* iconTest(NSURL *bundleURL) {
 		(style == UIUserInterfaceStyleDark) ? 1 : 0;
 	}
 
-    if (@available(iOS 18.0, *)) {
-        // 0 = normal, 2 = tinted mode, 3 = liquid glass (gray scale)
-		if (@available(iOS 18.2, *)) {
-			descriptor.appearanceVariant = (variant == 0) ? 0 : 2;
-		}
-        descriptor.specialIconOptions = 2;
-    }
+    // 0 = normal, 2 = tinted mode, 3 = liquid glass (gray scale)
+    descriptor.appearanceVariant = (variant == 0) ? 0 : 2;
+    descriptor.specialIconOptions = 2;
 
     ISGenerationRequest* request = [[PrivClass(ISGenerationRequest) alloc] init];
     [request setIcon:(ISConcreteIcon*)icon];

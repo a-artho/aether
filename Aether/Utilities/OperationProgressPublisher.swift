@@ -8,9 +8,9 @@ final class OperationProgressPublisher: @unchecked Sendable {
     private var scheduled = false
     private var closed = false
     private var highest = 0.0
-    private let publish: @MainActor (Double) -> Void
+    private let publish: @MainActor @Sendable (Double) -> Void
 
-    init(publish: @escaping @MainActor (Double) -> Void) { self.publish = publish }
+    init(publish: @escaping @MainActor @Sendable (Double) -> Void) { self.publish = publish }
 
     func submit(_ value: Double) {
         guard value.isFinite else { return }
