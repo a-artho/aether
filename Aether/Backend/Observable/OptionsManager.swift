@@ -25,20 +25,10 @@ class OptionsManager: ObservableObject {
 
 		if let data = UserDefaults.standard.data(forKey: _key) {
 			do {
-				let savedDict = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
-
-				let defaultData = try JSONEncoder().encode(defaults)
-				var mergedDict = try JSONSerialization.jsonObject(with: defaultData) as? [String: Any] ?? [:]
-
-				for (key, value) in savedDict {
-					mergedDict[key] = value
-				}
-
-				let mergedData = try JSONSerialization.data(withJSONObject: mergedDict)
-				self.options = try JSONDecoder().decode(Options.self, from: mergedData)
+				self.options = try JSONDecoder().decode(Options.self, from: data)
 				return
 			} catch {
-				DiagnosticLog.error("Failed to decode or merge signing options; using defaults: \(error.localizedDescription)", category: "Signing")
+				DiagnosticLog.error("Failed to decode signing options; using defaults: \(error.localizedDescription)", category: "Signing")
 			}
 		}
 
