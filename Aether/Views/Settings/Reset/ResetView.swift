@@ -13,9 +13,6 @@ import IDeviceSwift
 
 // MARK: - View
 struct ResetView: View {
-	@ObservedObject private var localServer = LocalServerSetup.shared
-	@ObservedObject private var installations = AppInstallationManager.shared
-	@State private var confirmsCAReset = false
 	// MARK: Body
 	var body: some View {
 		NBList(.localized("Reset")) {
@@ -24,20 +21,6 @@ struct ResetView: View {
 			_coredata()
 			_all()
 		}
-		.confirmationDialog(.localized("Reset Local Server CA"), isPresented: $confirmsCAReset, titleVisibility: .visible) {
-			Button(.localized("Reset"), role: .destructive) {
-				Task { await localServer.reset() }
-			}
-			Button(.localized("Cancel"), role: .cancel) {}
-		} message: {
-			Text(.localized("Deletes the generated CA, private keys, and server certificate. Fully Local installation will need setup again. Remove the old Aether Local Server profile manually under iOS Settings → General → VPN & Device Management."))
-		}
-		.alert(.localized("Local Server"), isPresented: Binding(
-			get: { localServer.error != nil },
-			set: { if !$0 { localServer.error = nil } }
-		)) {
-			Button(.localized("OK"), role: .cancel) { localServer.error = nil }
-		} message: { Text(localServer.error ?? "") }
 	}
 	
 	private func _cacheSize() -> String {
@@ -124,11 +107,6 @@ extension ResetView {
 			} label: {
 				SettingsRowLabel(.localized("Reset Tunneling"), systemImage: "network", backgroundColor: .green)
 			}
-
-			Button { confirmsCAReset = true } label: {
-				SettingsRowLabel(.localized("Reset Local Server CA"), systemImage: "checkmark.shield.fill", backgroundColor: .blue)
-			}
-			.disabled(installations.hasPendingInstalls || localServer.isSettingUp)
 		}
 	}
 
@@ -209,7 +187,6 @@ extension ResetView {
 					textColor: .red
 				)
 			}
-			.disabled(installations.hasPendingInstalls || localServer.isSettingUp)
 		}
 	}
 
@@ -299,7 +276,6 @@ extension ResetView {
 	}
 	
 	static func resetAll() async {
-		guard await LocalServerSetup.shared.reset() else { return }
 		clearWorkCache()
 		clearNetworkCache()
 		resetPairing()

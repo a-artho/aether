@@ -277,6 +277,35 @@ enum FR {
 		HeartbeatManager.shared.start(true)
 	}
 	
+	static func downloadSSLCertificates(
+		from urlString: String,
+		completion: @escaping (Bool) -> Void
+	) {
+		NBFetchService().fetch(from: urlString) { (result: Result<ServerView.ServerPackModel, Error>) in
+			switch result {
+			case .success(let pack):
+				do {
+					try FileManager.forceWrite(content: pack.key, to: "server.pem")
+					try FileManager.forceWrite(content: pack.cert, to: "server.crt")
+					try FileManager.forceWrite(content: pack.info.domains.commonName, to: "commonName.txt")
+					DispatchQueue.main.async {
+						let generator = UINotificationFeedbackGenerator()
+						generator.notificationOccurred(.success)
+						completion(true)
+					}
+				} catch {
+					DispatchQueue.main.async {
+						completion(false)
+					}
+				}
+			case .failure(_):
+				DispatchQueue.main.async {
+					completion(false)
+				}
+			}
+		}
+	}
+	
 	static func handleSource(
 		_ urlString: String,
 		completion: ((Bool) -> Void)? = nil

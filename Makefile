@@ -5,8 +5,9 @@ PLATFORMS := iphoneos maccatalyst
 export DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
 
 TMP := $(TMPDIR)/$(NAME)
+CERT_JSON_URL := https://backloop.dev/pack.json
 
-.PHONY: all clean native $(PLATFORMS)
+.PHONY: all clean deps native $(PLATFORMS)
 
 all: $(PLATFORMS)
 
@@ -18,7 +19,17 @@ clean:
 	rm -rf packages
 	rm -rf Payload
 
-$(PLATFORMS):
+deps:
+	rm -rf deps || true
+	mkdir -p deps
+
+	curl -fsSL "$(CERT_JSON_URL)" -o cert.json
+	jq -r '.cert' cert.json > deps/server.crt
+	jq -r '.key1, .key2' cert.json > deps/server.pem
+	jq -r '.info.domains.commonName' cert.json > deps/commonName.txt
+
+
+$(PLATFORMS): deps
 	@test -d IDeviceKitten/Native/IDevice.xcframework || $(MAKE) native
 	@if [ "$@" = "iphoneos" ]; then \
 		DEST="generic/platform=iOS"; \
@@ -51,6 +62,7 @@ $(PLATFORMS):
 		codesign --force --sign - --timestamp=none --entitlements AetherTunnel/AetherTunnel.entitlements "$$TUNNEL"; \
 	fi
 	codesign --force --sign - --timestamp=none $(TMP)/$@/Payload/Aether.app
+	cp deps/* $(TMP)/$@/Payload/Aether.app/ || true
 
 	mkdir -p packages
 

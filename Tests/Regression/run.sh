@@ -43,6 +43,3 @@ swift test --package-path "$scratch"
 for check in run-audit-fix-checks.py run-efficiency-checks.py run-device-loading-checks.py run-installed-loading-checks.py run-whole-app-checks.py run-foreground-recovery-checks.py run-signing-identity-checks.py; do
   python3 "$test_dir/$check"
 done
-
-# Certificate generation uses the same OpenSSL primitives as production signing.
-python3 "$test_dir/run-local-server-checks.py"

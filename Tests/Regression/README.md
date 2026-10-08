@@ -39,7 +39,3 @@ This compiles the production installed-state, progress, and alert helpers into a
 ### Aether signing identity
 
 Run `python3 Tests/Regression/run-signing-identity-checks.py` to exercise the production profile-ID resolver, backend validation, and file-backed extension identifier rewrites. Covers malformed/wildcard profiles, expired profiles, changed queued certificates, manual-ID precedence, stale identifiers on externally renamed Aether copies, namespace boundaries, option conflicts, and preserving the existing plugin behavior when the toggle is off. Full iOS signing and tunnel behavior still require an iPhone build.
-
-### Fully Local server certificates
-
-Run `python3 Tests/Regression/run-local-server-checks.py` with Homebrew `openssl@3` installed. It compiles the production native certificate generator and Swift credential store, then checks CA/leaf signatures, loopback SAN, key matching, validity thresholds, reuse, atomic persistence, recovery, exported profile contents, and refusal to treat an untrusted CA as ready. The iOS profile-download, manual trust, and installation handoffs still require device verification. No certificate is installed or trusted by the test.

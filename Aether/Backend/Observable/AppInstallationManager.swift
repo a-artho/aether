@@ -406,10 +406,6 @@ final class AppInstallationManager: ObservableObject {
 			var currentHandler: ArchiveHandler?
 			do {
 				try Task.checkCancellation()
-				let localTLS: LocalServerTLSMaterial?
-				if context.method == 0 && context.serverMethod == 0 {
-					localTLS = try LocalServerCertificates.shared.prepareTLS()
-				} else { localTLS = nil }
 				let handler = ArchiveHandler(app: appSnapshot, viewModel: statusVM, purpose: .install)
 				currentHandler = handler
 				guard await MainActor.run(body: {
@@ -436,7 +432,7 @@ final class AppInstallationManager: ObservableObject {
 				
 				if context.method == 0 {
 					let serverInstaller = try await MainActor.run {
-						try ServerInstaller(app: appSnapshot, viewModel: statusVM, serverMethod: context.serverMethod, localTLS: localTLS)
+						try ServerInstaller(app: appSnapshot, viewModel: statusVM, serverMethod: context.serverMethod)
 					}
 					guard await MainActor.run(body: {
 						self?.installGeneration == generation && !Task.isCancelled
