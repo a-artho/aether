@@ -8,7 +8,7 @@
 import Combine
 
 extension InstallerStatusViewModel {
-	public enum InstallerStatus {
+	public enum InstallerStatus: Sendable {
 		case none
 		case signing
 		case ready

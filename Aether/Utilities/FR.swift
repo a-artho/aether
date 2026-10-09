@@ -367,36 +367,35 @@ enum FR {
 		}
 	}
 
-	static func exportCertificateAndOpenUrl(using template: String) {
-		// Helper that performs the export for a given certificate
-		@MainActor @Sendable func performExport(for certificate: CertificatePair) {
-			guard
-				let certificateKeyFile = Storage.shared.getFile(.certificate, from: certificate),
-				let certificateKeyFileData = try? Data(contentsOf: certificateKeyFile)
-			else {
-				return
-			}
-
-			let base64encodedCert = certificateKeyFileData.base64EncodedString()
-
-			var allowedQueryParamAndKey = NSCharacterSet.urlQueryAllowed
-			allowedQueryParamAndKey.remove(charactersIn: ";/?:@&=+$, ")
-
-			guard let encodedCert = base64encodedCert.addingPercentEncoding(withAllowedCharacters: allowedQueryParamAndKey) else {
-				return
-			}
-
-			let urlStr = template
-				.replacingOccurrences(of: "$(BASE64_CERT)", with: encodedCert)
-				.replacingOccurrences(of: "$(PASSWORD)", with: certificate.password ?? "")
-
-			guard let callbackUrl = URL(string: urlStr) else {
-				return
-			}
-
-			UIApplication.shared.open(callbackUrl)
+	private static func _exportCertificate(_ certificate: CertificatePair, using template: String) {
+		guard
+			let certificateKeyFile = Storage.shared.getFile(.certificate, from: certificate),
+			let certificateKeyFileData = try? Data(contentsOf: certificateKeyFile)
+		else {
+			return
 		}
 
+		let base64encodedCert = certificateKeyFileData.base64EncodedString()
+
+		var allowedQueryParamAndKey = NSCharacterSet.urlQueryAllowed
+		allowedQueryParamAndKey.remove(charactersIn: ";/?:@&=+$, ")
+
+		guard let encodedCert = base64encodedCert.addingPercentEncoding(withAllowedCharacters: allowedQueryParamAndKey) else {
+			return
+		}
+
+		let urlStr = template
+			.replacingOccurrences(of: "$(BASE64_CERT)", with: encodedCert)
+			.replacingOccurrences(of: "$(PASSWORD)", with: certificate.password ?? "")
+
+		guard let callbackUrl = URL(string: urlStr) else {
+			return
+		}
+
+		UIApplication.shared.open(callbackUrl)
+	}
+
+	static func exportCertificateAndOpenUrl(using template: String) {
 		let certificates = Storage.shared.getAllCertificates()
 		guard !certificates.isEmpty else { return }
 
@@ -414,7 +413,7 @@ enum FR {
 				}
 
 				let selectAction = UIAlertAction(title: title, style: .default) { _ in
-					performExport(for: cert)
+					_exportCertificate(cert, using: template)
 				}
 				selectionActions.append(selectAction)
 			}

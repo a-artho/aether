@@ -87,7 +87,7 @@ swift=imports
 swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/IDeviceSwiftError.swift','public struct IDeviceSwiftError')+'\n'
 swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/IDeviceSwiftError.swift','enum IDeviceConnectionError')+'\n'
 swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/Heartbeat/PairingVerification.swift','public struct DeviceConnectionCheck')+'\n'
-swift+='''public struct AppInfo: Codable { let CFBundleIdentifier: String?; let CFBundleDisplayName: String? }
+swift+='''public struct AppInfo: Codable, Sendable { let CFBundleIdentifier: String?; let CFBundleDisplayName: String? }
 class InstallationAppProxy {
 '''
 for start in ['static func readApps(','private static func decodeApps(']: swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/InstallationAppProxy.swift',start)+'\n'

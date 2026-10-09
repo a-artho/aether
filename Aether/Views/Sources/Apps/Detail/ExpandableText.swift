@@ -20,13 +20,19 @@ enum SourceAppBodyText {
 		}
 	}
 
-	private final class Cache: NSCache<NSString, DisplayText>, @unchecked Sendable {}
-	private static let cache: Cache = {
-		let cache = Cache()
-		cache.countLimit = 512
-		cache.totalCostLimit = 4 * 1024 * 1024
-		return cache
-	}()
+	// NSCache synchronizes its entries; cached text is immutable and configuration is fixed at init.
+	private final class Cache: @unchecked Sendable {
+		private let values = NSCache<NSString, DisplayText>()
+		init() {
+			values.countLimit = 512
+			values.totalCostLimit = 4 * 1024 * 1024
+		}
+		func object(forKey key: NSString) -> DisplayText? { values.object(forKey: key) }
+		func setObject(_ value: DisplayText, forKey key: NSString, cost: Int) {
+			values.setObject(value, forKey: key, cost: cost)
+		}
+	}
+	private static let cache = Cache()
 
 	private static func displayText(_ text: String) -> DisplayText {
 		let key = text as NSString
