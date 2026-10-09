@@ -43,7 +43,7 @@ extension ServerInstaller {
 	}
 
 	@MainActor
-	func launchSemiLocalInstall(fallback: @escaping () -> Void) {
+	func launchSemiLocalInstall(fallback: @escaping @MainActor @Sendable () -> Void) {
 		guard let installURL = URL(string: iTunesLinkExternal) else {
 			fallback()
 			return

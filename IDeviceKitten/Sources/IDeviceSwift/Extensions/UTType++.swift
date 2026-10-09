@@ -9,6 +9,6 @@
 import UniformTypeIdentifiers
 
 extension UTType {
-	public static var plist = UTType(filenameExtension: "plist", conformingTo: .data)!
-	public static var mobiledevicepairing = UTType(filenameExtension: "mobiledevicepairing", conformingTo: .data)!
+	public static let plist = UTType(filenameExtension: "plist", conformingTo: .data)!
+	public static let mobiledevicepairing = UTType(filenameExtension: "mobiledevicepairing", conformingTo: .data)!
 }

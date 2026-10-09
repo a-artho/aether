@@ -27,7 +27,7 @@ class TweakHandler {
 
 	init(
 		app: URL,
-		options: Options = OptionsManager.shared.options
+		options: Options
 	) {
 		self._app = app
 		self._options = options

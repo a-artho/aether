@@ -439,7 +439,7 @@ final class AppInstallationManager: ObservableObject {
 				try Task.checkCancellation()
 				
 				if context.method == 0 {
-					let serverInstaller = try await MainActor.run { [weak self] in
+					let serverInstaller = try await MainActor.run {
 						try ServerInstaller(app: appSnapshot, viewModel: statusVM, serverMethod: context.serverMethod)
 					}
 					guard await MainActor.run(body: { [weak self] in
