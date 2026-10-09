@@ -279,7 +279,6 @@ enum FR {
 		}
 
 		HeartbeatManager.shared.resetRSDTunnel()
-		HeartbeatManager.shared.start(true)
 	}
 
 	static func downloadSSLCertificates(
