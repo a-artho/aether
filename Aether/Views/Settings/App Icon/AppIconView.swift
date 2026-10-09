@@ -10,7 +10,6 @@ import NimbleViews
 
 // MARK: - View extension: Model
 extension AppIconView {
-	@MainActor
 	struct AltIcon: Identifiable {
 		var displayName: String
 		var author: String
@@ -18,6 +17,7 @@ extension AppIconView {
 		var image: UIImage
 		var id: String { key ?? displayName }
 		
+		@MainActor
 		init(displayName: String, author: String, key: String? = nil, previewImageName: String? = nil) {
 			self.displayName = displayName
 			self.author = author
