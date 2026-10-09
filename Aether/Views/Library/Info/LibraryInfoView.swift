@@ -64,7 +64,6 @@ extension LibraryInfoView {
 			}
 			
 			if 
-				let name = app.name, 
 				let appDirectory = Storage.shared.getAppDirectory(for: app),
 				let appMinimumOS = Bundle(url: appDirectory)?.minimumOSVersion
 			{

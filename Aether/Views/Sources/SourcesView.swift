@@ -119,7 +119,7 @@ struct SourcesView: View {
 				secondaryLabel: .localized("Add Source"),
 				secondaryAction: { router.presentAddSource() }
 			) { EmptyView() })
-			.onChange(of: router.searchTarget) { target in
+			.onChange(of: router.searchTarget) { _, target in
 				switch target {
 				case .some(.collection(_)):
 					break
@@ -182,10 +182,10 @@ struct SourcesView: View {
 		.onAppear {
 			_resolvePendingNavigationIntent()
 		}
-		.onChange(of: router.navigationIntent) { _ in
+		.onChange(of: router.navigationIntent) { _, _ in
 			_resolvePendingNavigationIntent()
 		}
-		.onChange(of: _sourceIdentitySnapshot) { _ in
+		.onChange(of: _sourceIdentitySnapshot) { _, _ in
 			_resolvePendingNavigationIntent()
 		}
 		.task(id: _sourceIdentitySnapshot) {

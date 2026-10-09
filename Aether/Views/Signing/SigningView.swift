@@ -100,7 +100,7 @@ struct SigningView: View {
 				.ignoresSafeArea()
 			}
 			.photosPicker(isPresented: $_isImagePickerPresenting, selection: $_selectedPhoto)
-			.onChange(of: _selectedPhoto) { newValue in
+			.onChange(of: _selectedPhoto) { _, newValue in
 				guard let newValue else { return }
 				
 				Task {
@@ -111,9 +111,9 @@ struct SigningView: View {
 				}
 			}
 		}
-		.onChange(of: _selectedCertificateUUID) { _ in _refreshProfileIdentity() }
-		.onChange(of: _temporaryCertificate) { _ in _refreshProfileIdentity() }
-		.onChange(of: _temporaryOptions.matchAetherIdentityToProfile) { _ in _refreshProfileIdentity() }
+		.onChange(of: _selectedCertificateUUID) { _, _ in _refreshProfileIdentity() }
+		.onChange(of: _temporaryCertificate) { _, _ in _refreshProfileIdentity() }
+		.onChange(of: _temporaryOptions.matchAetherIdentityToProfile) { _, _ in _refreshProfileIdentity() }
 		.alert(.localized("Error"), isPresented: Binding(
 			get: { scenePhase == .active && _signingError != nil },
 			set: { if !$0, scenePhase == .active { _signingError = nil } }

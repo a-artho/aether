@@ -215,7 +215,7 @@ struct LibraryView: View {
 			) { _titleMenuActions() })
 
 			.environment(\.editMode, $_editMode)
-			.onChange(of: tabManager.isLibrarySearchPresented) { presented in
+			.onChange(of: tabManager.isLibrarySearchPresented) { _, presented in
 				if !presented {
 					_isSearchFocused = false
 					_searchText = ""
@@ -265,11 +265,11 @@ struct LibraryView: View {
 			} message: {
 				Text(.localized("This permanently removes all signed and imported apps from your library."))
 			}
-			.onChange(of: downloadManager.downloads.map(\.id)) { ids in
+			.onChange(of: downloadManager.downloads.map(\.id)) { _, ids in
 				// Completed or otherwise removed transfers cannot remain selected.
 				_selectedDownloadIDs.formIntersection(ids)
 			}
-			.onChange(of: _editMode) { mode in
+			.onChange(of: _editMode) { _, mode in
 				if mode == .inactive {
 					_selectedAppUUIDs.removeAll()
 					_selectedDownloadIDs.removeAll()

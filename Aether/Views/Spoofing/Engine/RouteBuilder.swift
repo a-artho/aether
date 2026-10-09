@@ -9,8 +9,8 @@ enum RouteBuilder {
         mode: TravelMode
     ) async throws -> [CLLocationCoordinate2D] {
         let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: start))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: end))
+        request.source = MKMapItem(location: CLLocation(latitude: start.latitude, longitude: start.longitude), address: nil)
+        request.destination = MKMapItem(location: CLLocation(latitude: end.latitude, longitude: end.longitude), address: nil)
         request.transportType = mode.mkTransportType
         request.requestsAlternateRoutes = false
 

@@ -166,7 +166,7 @@ struct AppearanceView: View {
 				}
 			}
 		}
-		.onChange(of: _userInterfaceStyle) { value in
+		.onChange(of: _userInterfaceStyle) { _, value in
 			if let style = UIUserInterfaceStyle(rawValue: value) {
 				for scene in UIApplication.shared.connectedScenes {
 					if let windowScene = scene as? UIWindowScene {

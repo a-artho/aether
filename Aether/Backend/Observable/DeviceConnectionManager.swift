@@ -174,7 +174,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		_restoreInstallationMode()
 	}
 
-	deinit {
+	isolated deinit {
 		if let didBecomeActiveObserver {
 			NotificationCenter.default.removeObserver(didBecomeActiveObserver)
 		}

@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct AppInfo: Codable, Identifiable {
+public struct AppInfo: Codable, Identifiable, Sendable {
 	public var id: String { CFBundleIdentifier ?? UUID().uuidString }
 
 	public let CFBundleName: String?

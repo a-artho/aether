@@ -20,8 +20,9 @@ enum SourceAppBodyText {
 		}
 	}
 
-	private static let cache: NSCache<NSString, DisplayText> = {
-		let cache = NSCache<NSString, DisplayText>()
+	private final class Cache: NSCache<NSString, DisplayText>, @unchecked Sendable {}
+	private static let cache: Cache = {
+		let cache = Cache()
 		cache.countLimit = 512
 		cache.totalCostLimit = 4 * 1024 * 1024
 		return cache

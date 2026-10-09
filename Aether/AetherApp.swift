@@ -350,7 +350,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 		didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
 	) -> Bool {
 		UNUserNotificationCenter.current().delegate = self
-		DebugLogManager.shared.log("App launched: bundle=\(Bundle.main.bundleIdentifier ?? "unknown"), version=\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "unknown"), launchURL=\(launchOptions?[.url] != nil).", category: "Import", level: .debug)
+		DebugLogManager.shared.log("App launched: bundle=\(Bundle.main.bundleIdentifier ?? "unknown"), version=\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") ?? "unknown").", category: "Import", level: .debug)
 		_createPipeline()
 		_createDocumentsDirectories()
 		ResetView.clearWorkCache()
@@ -372,7 +372,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
 		DownloadManager.shared.setBackgroundEventsCompletionHandler(completionHandler)
 	}
 
-	func userNotificationCenter(
+	nonisolated func userNotificationCenter(
 		_ center: UNUserNotificationCenter,
 		didReceive response: UNNotificationResponse
 	) async {

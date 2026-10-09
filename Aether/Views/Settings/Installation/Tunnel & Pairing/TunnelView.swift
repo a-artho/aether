@@ -87,7 +87,7 @@ struct TunnelView: View {
 					.autocorrectionDisabled()
 					.textInputAutocapitalization(.never)
 					.keyboardType(.numbersAndPunctuation)
-					.onChange(of: draftInterfaceIP) { _ in _validate() }
+					.onChange(of: draftInterfaceIP) { _, _ in _validate() }
 					.disabled(connection.state != .disconnected || connection.isUpdating)
 			}
 
@@ -99,14 +99,14 @@ struct TunnelView: View {
 					.autocorrectionDisabled()
 					.textInputAutocapitalization(.never)
 					.keyboardType(.numbersAndPunctuation)
-					.onChange(of: draftPeerIP) { _ in _validate() }
+					.onChange(of: draftPeerIP) { _, _ in _validate() }
 					.disabled(connection.state != .disconnected || connection.isUpdating)
 			}
 
 			Toggle(isOn: $draftAllowIntermediate) {
 				SettingsRowLabel(.localized("Allow Intermediate Addresses"), systemImage: "arrow.triangle.branch", backgroundColor: .teal)
 			}
-			.onChange(of: draftAllowIntermediate) { _ in _validate() }
+			.onChange(of: draftAllowIntermediate) { _, _ in _validate() }
 			.disabled(connection.state != .disconnected || connection.isUpdating)
 
 			if let validationError {

@@ -9,6 +9,7 @@ import CoreData
 import Foundation
 
 // MARK: - Storage
+@MainActor
 final class Storage: ObservableObject {
 	static let shared = Storage()
 	let container: NSPersistentContainer
@@ -28,7 +29,7 @@ final class Storage: ObservableObject {
 
 		_loadPersistentStoreAggressively()
 		container.viewContext.automaticallyMergesChangesFromParent = true
-		container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+		container.viewContext.mergePolicy = NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)
 	}
 
 	var context: NSManagedObjectContext {
@@ -40,33 +41,24 @@ final class Storage: ObservableObject {
 	/// report success before the object existed in the persistent store.
 	@discardableResult
 	func saveContext() -> Error? {
-		var saveError: Error?
-		context.performAndWait {
-			guard self.context.hasChanges else { return }
-			do {
-				try self.context.save()
-			} catch {
-				saveError = error
-			}
-		}
-		return saveError
+		guard context.hasChanges else { return nil }
+		do { try context.save(); return nil }
+		catch { return error }
 	}
 
 	func clearContext<T: NSManagedObject>(request: NSFetchRequest<T>) {
 		guard let fetchRequest = request as? NSFetchRequest<NSFetchRequestResult> else { return }
-		context.performAndWait {
+		do {
 			let deleteRequest = NSBatchDeleteRequest(fetchRequest: fetchRequest)
 			deleteRequest.resultType = .resultTypeObjectIDs
-			do {
-				let result = try context.execute(deleteRequest) as? NSBatchDeleteResult
-				if let ids = result?.result as? [NSManagedObjectID] {
-					NSManagedObjectContext.mergeChanges(
-						fromRemoteContextSave: [NSDeletedObjectsKey: ids], into: [context]
-					)
-				}
-			} catch {
-				DebugLogManager.shared.log("Metadata reset failed: \(error.localizedDescription)", category: "Storage", level: .error)
+			let result = try context.execute(deleteRequest) as? NSBatchDeleteResult
+			if let ids = result?.result as? [NSManagedObjectID] {
+				NSManagedObjectContext.mergeChanges(
+					fromRemoteContextSave: [NSDeletedObjectsKey: ids], into: [context]
+				)
 			}
+		} catch {
+			DebugLogManager.shared.log("Metadata reset failed: \(error.localizedDescription)", category: "Storage", level: .error)
 		}
 	}
 

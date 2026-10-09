@@ -29,7 +29,7 @@ struct SpoofingRootView: View {
         } message: {
             Text(session.lastError ?? "")
         }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             if phase == .background { session.stopJoystick() }
         }
         .task(id: scenePhase) {

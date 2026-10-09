@@ -492,7 +492,6 @@
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/Aether/Resources",
-					"$(PROJECT_DIR)/Aether/Resources/idevice",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.2;
 				MARKETING_VERSION = "$(AETHER_PROJECT_VERSION)-debug";
@@ -556,7 +555,6 @@
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/Aether/Resources",
-					"$(PROJECT_DIR)/Aether/Resources/idevice",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.2;
 				MARKETING_VERSION = "$(AETHER_PROJECT_VERSION)";

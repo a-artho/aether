@@ -65,20 +65,20 @@ extension Storage {
 	func revokagedCertificate(for cert: CertificatePair) {
 		guard !cert.revoked else { return }
 		
+		guard let certificateUUID = cert.uuid else { return }
 		Zsign.checkRevokage(
 			provisionPath: Storage.shared.getFile(.provision, from: cert)?.path ?? "",
 			p12Path: Storage.shared.getFile(.certificate, from: cert)?.path ?? "",
 			p12Password: cert.password ?? ""
-		) { (status, _, _) in
-			if status == 1 {
-				self.context.perform {
-					guard !cert.isDeleted, cert.managedObjectContext === self.context else {
-						DebugLogManager.shared.log("Ignored revocation result for a removed certificate.", category: "Certificate", level: .debug)
-						return
-					}
-					cert.revoked = true
-					self.saveContext()
+		) { [weak self] (status, _, _) in
+			guard status == 1 else { return }
+			Task { @MainActor [weak self] in
+				guard let self, let certificate = self.getAllCertificates().first(where: { $0.uuid == certificateUUID }), !certificate.isDeleted, certificate.managedObjectContext === self.context else {
+					DebugLogManager.shared.log("Ignored revocation result for a removed certificate.", category: "Certificate", level: .debug)
+					return
 				}
+				certificate.revoked = true
+				self.saveContext()
 			}
 		}
 	}

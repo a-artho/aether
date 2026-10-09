@@ -131,6 +131,7 @@ struct InstalledAppDetailView: View {
 
 	@ViewBuilder
 	private var updatesSection: some View {
+		let cellAppearance = storeCellAppearance
 		if hasCheckedUpdates && !updates.isEmpty {
 			NBSection(.localized("Updates"), trailing: { updateRefreshStatus }) {
 				ForEach(InstalledAppUpdateCandidate.groupedByDate(updates)) { group in
@@ -146,7 +147,7 @@ struct InstalledAppDetailView: View {
 								showSourceBadge: true, onSelect: { selectedUpdate = update })
 							.accessibilityHint(update.repository.name ?? update.sourceURL.host ?? "")
 							.alignmentGuide(.listRowSeparatorLeading) { dimensions in
-								storeCellAppearance == 0 ? dimensions[.listRowSeparatorLeading] : dimensions[.leading]
+								cellAppearance == 0 ? dimensions[.listRowSeparatorLeading] : dimensions[.leading]
 							}
 						}
 					}

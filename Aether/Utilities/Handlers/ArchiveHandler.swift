@@ -10,7 +10,8 @@ import UIKit.UIApplication
 import Zip
 import IDeviceSwift
 
-final class ArchiveHandler: NSObject {
+// Immutable inputs cross workers; the lock protects payload and cleanup state.
+final class ArchiveHandler: NSObject, @unchecked Sendable {
 	enum Purpose: Equatable {
 		case install
 		case export
@@ -68,7 +69,7 @@ final class ArchiveHandler: NSObject {
 		let payloadURL = try await withTaskCancellationHandler {
 			try await worker.value
 		} onCancel: { worker.cancel() }
-		_payloadUrl = payloadURL
+		_operationLock.withLock { _payloadUrl = payloadURL }
 	}
 	
 	func archive() async throws -> URL {
@@ -77,7 +78,7 @@ final class ArchiveHandler: NSObject {
 
 		let worker = Task.detached(priority: .utility) { [self] in
 			try Task.checkCancellation()
-			guard let payloadUrl = self._payloadUrl else {
+			guard let payloadUrl = self._operationLock.withLock({ self._payloadUrl }) else {
 				throw SigningFileHandlerError.appNotFound
 			}
 			

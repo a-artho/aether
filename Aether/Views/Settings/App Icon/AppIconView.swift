@@ -10,6 +10,7 @@ import NimbleViews
 
 // MARK: - View extension: Model
 extension AppIconView {
+	@MainActor
 	struct AltIcon: Identifiable {
 		var displayName: String
 		var author: String

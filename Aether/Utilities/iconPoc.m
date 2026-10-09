@@ -186,7 +186,7 @@
 @end
 
 
-UIImage* iconTest(NSURL *bundleURL) {
+UIImage* iconTest(NSURL *bundleURL, CGFloat displayScale, NSInteger interfaceStyle) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         void* handle = dlopen("/System/Library/PrivateFrameworks/IconServices.framework/IconServices", RTLD_LAZY|RTLD_GLOBAL);
@@ -201,7 +201,7 @@ UIImage* iconTest(NSURL *bundleURL) {
     ISImageDescriptor *descriptor = [PrivClass(ISImageDescriptor) imageDescriptorNamed:@"com.apple.IconServices.ImageDescriptor.HomeScreen"];
     descriptor.drawBorder = YES;
     descriptor.ignoreCache = YES;
-    descriptor.scale = UIScreen.mainScreen.scale;
+    descriptor.scale = displayScale;
 	descriptor.tintColor =
 		[[PrivClass(IFColor) alloc]
 			initWithCGColor:FRCreateCGColorFromHex()];
@@ -218,7 +218,7 @@ UIImage* iconTest(NSURL *bundleURL) {
 
 	// Resolve "system / unspecified" dynamically
 	if (style == UIUserInterfaceStyleUnspecified) {
-		style = UIScreen.mainScreen.traitCollection.userInterfaceStyle;
+		style = interfaceStyle;
 	}
 
 	// IconServices: 0 = light, 1 = dark

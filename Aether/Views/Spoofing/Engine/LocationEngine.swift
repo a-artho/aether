@@ -52,14 +52,26 @@ enum LocationConnectionStage: Sendable {
 
 /// Thin Swift wrapper around idevice’s DVT location simulation (injects into locationd).
 enum LocationEngine {
-	private static let queue = DispatchQueue(label: "aether.spoofing.location", qos: .userInitiated)
+    private static let session = NativeLocationSession()
+    static func set(latitude: Double, longitude: Double, pairingPath: String, deviceIP: String,
+                    progress: @escaping @Sendable (LocationConnectionStage) -> Void = { _ in }) async -> Result<Void, LocationEngineError> {
+        await session.set(latitude: latitude, longitude: longitude, pairingPath: pairingPath, deviceIP: deviceIP, progress: progress)
+    }
+    static func clear(pairingPath: String, deviceIP: String, verifyRemotely: Bool) async -> Result<Void, LocationEngineError> {
+        await session.clear(pairingPath: pairingPath, deviceIP: deviceIP, verifyRemotely: verifyRemotely)
+    }
+}
 
-    private static var adapter: OpaquePointer?
-    private static var handshake: OpaquePointer?
-    private static var remoteServer: OpaquePointer?
-    private static var locationSimulation: OpaquePointer?
+// Every native handle is accessed exclusively on this serial queue.
+private final class NativeLocationSession: @unchecked Sendable {
+	private let queue = DispatchQueue(label: "aether.spoofing.location", qos: .userInitiated)
 
-    static func set(
+    private var adapter: OpaquePointer?
+    private var handshake: OpaquePointer?
+    private var remoteServer: OpaquePointer?
+    private var locationSimulation: OpaquePointer?
+
+    func set(
         latitude: Double,
         longitude: Double,
         pairingPath: String,
@@ -67,7 +79,7 @@ enum LocationEngine {
         progress: @escaping @Sendable (LocationConnectionStage) -> Void = { _ in }
     ) async -> Result<Void, LocationEngineError> {
         await withCheckedContinuation { continuation in
-            queue.async {
+            queue.async { [self] in
                 let result = setLocked(
                     latitude: latitude,
                     longitude: longitude,
@@ -80,13 +92,13 @@ enum LocationEngine {
         }
     }
 
-    static func clear(
+    func clear(
         pairingPath: String,
         deviceIP: String,
         verifyRemotely: Bool
     ) async -> Result<Void, LocationEngineError> {
         await withCheckedContinuation { continuation in
-            queue.async {
+            queue.async { [self] in
                 continuation.resume(returning: clearLocked(
                     pairingPath: pairingPath,
                     deviceIP: deviceIP,
@@ -96,7 +108,7 @@ enum LocationEngine {
         }
     }
 
-    private static func cleanup() {
+    private func cleanup() {
         if let locationSimulation {
             location_simulation_free(locationSimulation)
             self.locationSimulation = nil
@@ -115,7 +127,7 @@ enum LocationEngine {
         }
     }
 
-    private static func setLocked(
+    private func setLocked(
         latitude: Double,
         longitude: Double,
         pairingPath: String,
@@ -147,7 +159,7 @@ enum LocationEngine {
         return .success(())
     }
 
-    private static func openSessionLocked(
+    private func openSessionLocked(
         pairingPath: String,
         deviceIP: String,
         progress: @Sendable (LocationConnectionStage) -> Void
@@ -227,7 +239,7 @@ enum LocationEngine {
         return .success(())
     }
 
-    private static func clearLocked(
+    private func clearLocked(
         pairingPath: String,
         deviceIP: String,
         verifyRemotely: Bool
@@ -267,7 +279,7 @@ enum LocationEngine {
         return .success(())
     }
 
-    private static func ffiErrorDetail(_ error: UnsafeMutablePointer<IdeviceFfiError>) -> String {
+    private func ffiErrorDetail(_ error: UnsafeMutablePointer<IdeviceFfiError>) -> String {
         let message = error.pointee.message.map { String(cString: $0) } ?? "unknown error"
         return "code \(error.pointee.code), subcode \(error.pointee.sub_code): \(message)"
     }

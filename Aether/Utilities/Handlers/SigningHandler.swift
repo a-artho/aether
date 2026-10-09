@@ -29,7 +29,7 @@ final class SigningHandler: NSObject {
 	var appIconData: Data?
 	var appCertificate: SigningCertificateSnapshot?
 	
-	init(app: AppSnapshot, options: Options = OptionsManager.shared.options) {
+	init(app: AppSnapshot, options: Options) {
 		self._uuid = UUID().uuidString
 		self._app = app
 		self._options = options
@@ -187,7 +187,7 @@ final class SigningHandler: NSObject {
 		try? _fileManager.removeItem(at: _uniqueWorkDir)
 	}
 	
-	func addToDatabase(onCommitted: @MainActor () -> Void) async throws {
+	func addToDatabase(onCommitted: @MainActor @Sendable () -> Void) async throws {
 		try Task.checkCancellation()
 		let app = try await _directory()
 		
@@ -206,10 +206,11 @@ final class SigningHandler: NSObject {
 		let sourceURL = _app.source
 		let certificateUUID = _options.signingOption == .default ? appCertificate?.uuid : nil
 
+		let signedUUID = _uuid
 		try await MainActor.run {
 			try Task.checkCancellation()
 			try Storage.shared.addSigned(
-				uuid: _uuid,
+				uuid: signedUUID,
 				source: sourceURL,
 				certificateUUID: certificateUUID,
 				appName: metadata.name,
@@ -219,7 +220,7 @@ final class SigningHandler: NSObject {
 			)
 			Storage.shared.copySourceMetadata(
 				from: sourceUUID,
-				to: _uuid,
+				to: signedUUID,
 				kind: .signed
 			)
 			// Publish the row and its final operation state in one main-actor turn.

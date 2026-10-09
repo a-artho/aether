@@ -29,6 +29,7 @@ public enum HapticStrength: Int, CaseIterable, Identifiable {
 	}
 }
 
+@MainActor
 public final class HapticManager {
 	public static let shared = HapticManager()
 	public static let preferenceKey = "Aether.hapticStrength"

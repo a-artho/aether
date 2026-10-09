@@ -21,7 +21,7 @@ public enum PairingRecordSelection {
 }
 
 /// Identifies the exact saved record used by a connection attempt. Never log its contents.
-public struct PairingRecordIdentity: Equatable {
+public struct PairingRecordIdentity: Equatable, Sendable {
 	public let fileURL: URL
 	public let digest: Data
 
@@ -41,7 +41,7 @@ public struct PairingRecordIdentity: Equatable {
 	}
 }
 
-public struct DeviceConnectionCheck {
+public struct DeviceConnectionCheck: Sendable {
 	public let isConnected: Bool
 	public let error: String?
 	public let errorCode: Int32?

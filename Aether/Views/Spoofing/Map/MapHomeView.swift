@@ -342,7 +342,7 @@ struct MapHomeView: View {
             let request = MKLocalSearch.Request(completion: completion)
             if let response = try? await MKLocalSearch(request: request).start(),
                let item = response.mapItems.first {
-                let coord = item.placemark.coordinate
+                let coord = item.location.coordinate
                 let title = item.name ?? completion.title
                 await MainActor.run {
                     session.pin = coord
@@ -435,7 +435,7 @@ private extension UIWindowScene {
 }
 
 @MainActor
-final class PlaceSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
+final class PlaceSearchCompleter: NSObject, ObservableObject, @preconcurrency MKLocalSearchCompleterDelegate {
     @Published var results: [MKLocalSearchCompletion] = []
     private let completer = MKLocalSearchCompleter()
 
@@ -451,12 +451,11 @@ final class PlaceSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompl
         completer.resultTypes = [.address, .pointOfInterest]
     }
 
-    nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
-        let items = completer.results
-        Task { @MainActor in self.results = items }
+    func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        results = completer.results
     }
 
-    nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
-        Task { @MainActor in self.results = [] }
+    func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        results = []
     }
 }

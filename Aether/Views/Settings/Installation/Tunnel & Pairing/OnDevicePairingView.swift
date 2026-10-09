@@ -54,7 +54,7 @@ struct OnDevicePairingView: View {
 				}
 			}
 			.interactiveDismissDisabled(pairing.isActive)
-			.onChange(of: pairing.state) { state in
+			.onChange(of: pairing.state) { _, state in
 				if case .idle = state {
 					dismiss()
 				}

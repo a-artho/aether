@@ -20,8 +20,8 @@ with tempfile.TemporaryDirectory(prefix='aether-release-tests-') as temp:
     source += declaration('Aether/Backend/Storage/Storage.swift', 'func clearContext<T:') + '\n}\n'
     source += declaration('Aether/Views/Spoofing/Engine/SpoofSession.swift', 'private func offset(').replace('private func', 'func', 1) + '\n'
     certificate = (repo/'Aether/Backend/Storage/Storage+Certificate.swift').read_text()
-    condition = certificate.split('guard !cert.isDeleted, ')[1].split(' else {')[0]
-    source += 'func acceptsRevocation(_ cert: NSManagedObject, context: NSManagedObjectContext) -> Bool { return !cert.isDeleted && ' + condition.replace('self.context', 'context') + ' }\n'
+    condition = certificate.split('!certificate.isDeleted, ')[1].split(' else {')[0]
+    source += 'func acceptsRevocation(_ cert: NSManagedObject, context: NSManagedObjectContext) -> Bool { return !cert.isDeleted && ' + condition.replace('self.context', 'context').replace('certificate.', 'cert.') + ' }\n'
     callback = declaration('Aether/Backend/Observable/CellularAssistManager.swift', 'public func handleCallback(')
     block = callback[callback.index('guard let components'):callback.index('guard let rawID')]
     source += 'final class CallbackProbe { var values: [String:String]?; func _log(_ s: String, level: Level) {}\nfunc handle(_ url: URL) {\n' + block + 'self.values = values\n}\n}\n'

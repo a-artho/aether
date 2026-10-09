@@ -49,7 +49,7 @@ struct ConfigurationView: View {
 		.alert(_optionsManager.options.ppqString, isPresented: $isRandomAlertPresenting) {
 			_randomMenuAlert()
 		}
-		.onChange(of: _optionsManager.options) { _ in
+		.onChange(of: _optionsManager.options) { _, _ in
 			_optionsManager.saveOptions()
 		}
 	}

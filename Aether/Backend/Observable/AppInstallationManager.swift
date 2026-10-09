@@ -416,13 +416,13 @@ final class AppInstallationManager: ObservableObject {
 				try Task.checkCancellation()
 				let handler = ArchiveHandler(app: appSnapshot, viewModel: statusVM, purpose: .install)
 				currentHandler = handler
-				guard await MainActor.run(body: {
+				guard await MainActor.run(body: { [weak self] in
 					self?.installGeneration == generation && !Task.isCancelled
 				}) else {
 					handler.clean()
 					return
 				}
-				await MainActor.run {
+				await MainActor.run { [weak self] in
 					self?.archiveHandler = handler
 				}
 				let preparationStarted = diagnosticLog == nil ? 0 : ProcessInfo.processInfo.systemUptime
@@ -439,24 +439,24 @@ final class AppInstallationManager: ObservableObject {
 				try Task.checkCancellation()
 				
 				if context.method == 0 {
-					let serverInstaller = try await MainActor.run {
+					let serverInstaller = try await MainActor.run { [weak self] in
 						try ServerInstaller(app: appSnapshot, viewModel: statusVM, serverMethod: context.serverMethod)
 					}
-					guard await MainActor.run(body: {
+					guard await MainActor.run(body: { [weak self] in
 						self?.installGeneration == generation && !Task.isCancelled
 					}) else {
 						handler.clean()
 						return
 					}
-					await MainActor.run {
+					await MainActor.run { [weak self] in
 						self?.installer = serverInstaller
 						serverInstaller.packageUrl = packageUrl
 						statusVM.status = .ready
 					}
 				} else {
 					defer { handler.clean() }
-					let proxy = await InstallationProxy(viewModel: statusVM)
-					await MainActor.run {
+					let proxy = InstallationProxy(viewModel: statusVM)
+					await MainActor.run { [weak self] in
 						self?._log("Sending install to the connected device.", category: "Install", level: .notice)
 					}
 					try await proxy.install(
@@ -470,11 +470,11 @@ final class AppInstallationManager: ObservableObject {
 				currentHandler?.clean()
 			} catch {
 				currentHandler?.clean()
-				guard await MainActor.run(body: {
+				guard await MainActor.run(body: { [weak self] in
 					self?.installGeneration == generation && !Task.isCancelled
 				}) else { return }
 				
-				await MainActor.run {
+				await MainActor.run { [weak self] in
 					self?.progressTask?.cancel()
 					self?.archiveHandler = nil
 					self?.installer = nil

@@ -36,6 +36,7 @@ private enum StartupDiagnostic { case checking,pairingMissing,tunnelUnavailable 
  func _hasRequiredTunnelProfile() async -> Bool { await gate.wait();return profile }
  func setConnection(enabled:Bool) { starts += 1 }
 '''
+handoff=vpn[vpn.index('// The system callback transfers'):vpn.index('@MainActor', vpn.index('deinit { cancel() }'))]
 preferences=r'''
 }
 private enum NEVPNStatus { case invalid,disconnected,connecting,connected }
@@ -49,8 +50,9 @@ private extension Notification.Name { static let NEVPNStatusDidChange=Self("Tunn
 @MainActor private final class VPNFixture {
  var manager:NETunnelProviderManager?=NETunnelProviderManager()
  var cachedManagers:[NETunnelProviderManager]?;var managersLoadedAt:TimeInterval=0;var managersRevision=UUID()
- var managersLoad:(id:UUID,task:Task<[NETunnelProviderManager],Error>)?
+ var managersLoad:(id:UUID,task:Task<TunnelManagersHandoff,Error>)?
 '''
+preferences=preferences.replace('@MainActor private final class VPNFixture', handoff+'@MainActor private final class VPNFixture')
 tests=r'''
 }
 final class TunnelOptimizationTests:XCTestCase {

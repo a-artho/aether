@@ -141,7 +141,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		
 	}
 	
-	deinit {
+	isolated deinit {
 		_prepareTask?.cancel()
 		for observer in _dateObservers { NotificationCenter.default.removeObserver(observer) }
 	}
@@ -170,7 +170,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		var source = row.source
 		source.apps = []
 		source.news = nil
-		cell.backgroundConfiguration = .listPlainCell()
+		cell.backgroundConfiguration = .listCell()
 		cell.contentConfiguration = UIHostingConfiguration {
 			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app, showSourceBadge: showBadge)
 				.tint(Color(hex: UserDefaults.standard.string(forKey: "Aether.userTintColor") ?? "#848ef9"))

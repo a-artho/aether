@@ -57,6 +57,21 @@ public enum EmbeddedTunnelError: LocalizedError {
 	}
 }
 
+// The system callback transfers these managers once; all subsequent access is main-actor owned.
+private struct TunnelManagersHandoff: @unchecked Sendable {
+    private let values: [NETunnelProviderManager]
+    init(_ values: [NETunnelProviderManager]) { self.values = values }
+    @MainActor var managers: [NETunnelProviderManager] { values }
+}
+
+// NotificationCenter permits removal from any thread; the token is immutable.
+private final class TunnelStatusObservation: @unchecked Sendable {
+    private let token: NSObjectProtocol
+    init(_ token: NSObjectProtocol) { self.token = token }
+    func cancel() { NotificationCenter.default.removeObserver(token) }
+    deinit { cancel() }
+}
+
 @MainActor
 public final class EmbeddedTunnelManager: ObservableObject {
 	public static let shared = EmbeddedTunnelManager()
@@ -88,7 +103,7 @@ public final class EmbeddedTunnelManager: ObservableObject {
 	private var cachedManagers: [NETunnelProviderManager]?
 	private var managersLoadedAt: TimeInterval = 0
 	private var managersRevision = UUID()
-	private var managersLoad: (id: UUID, task: Task<[NETunnelProviderManager], Error>)?
+	private var managersLoad: (id: UUID, task: Task<TunnelManagersHandoff, Error>)?
 	#endif
 
 	private init() {
@@ -111,9 +126,11 @@ public final class EmbeddedTunnelManager: ObservableObject {
 			queue: .main
 		) { [weak self] notification in
 			guard let connection = notification.object as? NEVPNConnection else { return }
+			let identity = ObjectIdentifier(connection)
+			let status = connection.status
 			Task { @MainActor [weak self] in
-				guard let self, connection == self.manager?.connection else { return }
-				self.updateState(for: connection.status)
+				guard let self, let current = self.manager?.connection, identity == ObjectIdentifier(current) else { return }
+				self.updateState(for: status)
 			}
 		}
 		configurationObserver = NotificationCenter.default.addObserver(
@@ -126,7 +143,7 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		#endif
 	}
 
-	deinit {
+	isolated deinit {
 		#if os(iOS) && !targetEnvironment(macCatalyst)
 		if let statusObserver {
 			NotificationCenter.default.removeObserver(statusObserver)
@@ -469,7 +486,8 @@ private extension EmbeddedTunnelManager {
 				guard let changed = notification.object as? NEVPNConnection else { return }
 				continuation.yield(changed.status)
 			}
-			continuation.onTermination = { _ in NotificationCenter.default.removeObserver(observer) }
+			let observation = TunnelStatusObservation(observer)
+			continuation.onTermination = { _ in observation.cancel() }
 			// Subscribe before reading status to cover changes during registration.
 			continuation.yield(connection.status)
 		}
@@ -495,20 +513,20 @@ private extension EmbeddedTunnelManager {
 		if let cachedManagers, ProcessInfo.processInfo.systemUptime - managersLoadedAt < 60 {
 			return cachedManagers
 		}
-		if let managersLoad { return try await managersLoad.task.value }
+		if let managersLoad { return try await managersLoad.task.value.managers }
 		let revision = managersRevision
 		let id = UUID()
-		let task = Task<[NETunnelProviderManager], Error> {
+		let task = Task<TunnelManagersHandoff, Error> {
 			try await withCheckedThrowingContinuation { continuation in
 				NETunnelProviderManager.loadAllFromPreferences { managers, error in
 					if let error { continuation.resume(throwing: error) }
-					else { continuation.resume(returning: managers ?? []) }
+					else { continuation.resume(returning: TunnelManagersHandoff(managers ?? [])) }
 				}
 			}
 		}
 		managersLoad = (id, task)
 		defer { if managersLoad?.id == id { managersLoad = nil } }
-		let managers = try await task.value
+		let managers = try await task.value.managers
 		if managersRevision == revision {
 			cachedManagers = managers
 			managersLoadedAt = ProcessInfo.processInfo.systemUptime

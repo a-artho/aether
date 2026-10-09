@@ -8,11 +8,11 @@
 import UniformTypeIdentifiers
 
 extension UTType {
-	static var dylib: UTType = .init(filenameExtension: "dylib")!
-	static var deb: UTType = .init(filenameExtension: "deb")!
-	static var ipa: UTType = .init(filenameExtension: "ipa")!
-	static var tipa: UTType = .init(filenameExtension: "tipa")!
-	static var entitlements: UTType = .init(filenameExtension: "entitlements", conformingTo: .data)!
-	static var p12: UTType = .init(filenameExtension: "p12", conformingTo: .data)!
-	static var mobileProvision: UTType = .init(filenameExtension: "mobileprovision", conformingTo: .data)!
+	static let dylib: UTType = .init(filenameExtension: "dylib")!
+	static let deb: UTType = .init(filenameExtension: "deb")!
+	static let ipa: UTType = .init(filenameExtension: "ipa")!
+	static let tipa: UTType = .init(filenameExtension: "tipa")!
+	static let entitlements: UTType = .init(filenameExtension: "entitlements", conformingTo: .data)!
+	static let p12: UTType = .init(filenameExtension: "p12", conformingTo: .data)!
+	static let mobileProvision: UTType = .init(filenameExtension: "mobileprovision", conformingTo: .data)!
 }

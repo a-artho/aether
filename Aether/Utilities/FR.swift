@@ -47,12 +47,13 @@ private actor PackageProcessingGate {
 	}
 }
 
+@MainActor
 enum FR {
-	private static let packageProcessingGate = PackageProcessingGate()
+	nonisolated private static let packageProcessingGate = PackageProcessingGate()
 
 	static func recoverPackageImport(
 		download: Download,
-		completion: @escaping (Result<Bool, Error>) -> Void
+		completion: @escaping @MainActor @Sendable (Result<Bool, Error>) -> Void
 	) {
 		Task.detached {
 			let handler = await AppFileHandler(
@@ -79,7 +80,7 @@ enum FR {
 		sourceProvenance: SourceAppProvenance? = nil,
 		transactionIdentifier: String? = nil,
 		copySource: Bool = true,
-		completion: @escaping (Error?) -> Void
+		completion: @escaping @MainActor @Sendable (Error?) -> Void
 	) -> Task<Void, Never> {
 		Task.detached(priority: .utility) {
 			let diagnosticID = transactionIdentifier ?? download?.importIdentifier ?? UUID().uuidString
@@ -161,8 +162,8 @@ enum FR {
 		using options: Options,
 		iconData: Data?,
 		certificate: SigningCertificateSnapshot?,
-		progress: @escaping @MainActor (Double) -> Void,
-		completion: @escaping (Result<String, Error>) -> Void
+		progress: @escaping @MainActor @Sendable (Double) -> Void,
+		completion: @escaping @MainActor @Sendable (Result<String, Error>) -> Void
 	) -> Task<Void, Never> {
 		let signingStartedAt = Date()
 		DebugLogManager.shared.log("Signing started state=\(UIApplication.shared.applicationState.rawValue).", category: "Signing", level: .info)
@@ -173,6 +174,7 @@ enum FR {
 				let handler = SigningHandler(app: appSnapshot, options: options)
 				handler.appCertificate = certificate
 				handler.appIconData = iconData
+				let signedUUID = handler.signedUUID
 
 				do {
 					try Task.checkCancellation()
@@ -188,16 +190,16 @@ enum FR {
 						progressPublisher.cancel()
 						progress(1)
 						DebugLogManager.shared.log("Signing completed elapsed=\(Date().timeIntervalSince(signingStartedAt)) state=\(UIApplication.shared.applicationState.rawValue).", category: "Signing", level: .info)
-						completion(.success(handler.signedUUID))
+						completion(.success(signedUUID))
 					}
 				} catch {
 					progressPublisher.cancel()
 					try? await handler.clean()
 					await MainActor.run {
-						if let signed = Storage.shared.signedApp(uuid: handler.signedUUID) {
+						if let signed = Storage.shared.signedApp(uuid: signedUUID) {
 							Storage.shared.deleteApp(for: signed)
 						} else {
-							try? FileManager.default.removeFileIfNeeded(at: FileManager.default.signed(handler.signedUUID))
+							try? FileManager.default.removeFileIfNeeded(at: FileManager.default.signed(signedUUID))
 						}
 						DebugLogManager.shared.log("Signing stopped elapsed=\(Date().timeIntervalSince(signingStartedAt)) state=\(UIApplication.shared.applicationState.rawValue) cancelled=\(error is CancellationError) error=\(error.localizedDescription).", category: "Signing", level: .error)
 						completion(.failure(error))
@@ -213,7 +215,7 @@ enum FR {
 		p12Password: String,
 		certificateName: String = "",
 		isDefault: Bool = false,
-		completion: @escaping (Error?) -> Void
+		completion: @escaping @MainActor @Sendable (Error?) -> Void
 	) {
 		Task.detached {
 			let handler = CertificateFileHandler(
@@ -283,7 +285,7 @@ enum FR {
 
 	static func downloadSSLCertificates(
 		from urlString: String,
-		completion: @escaping (Bool) -> Void
+		completion: @escaping @MainActor @Sendable (Bool) -> Void
 	) {
 		NBFetchService().fetch(from: urlString) { (result: Result<ServerView.ServerPackModel, Error>) in
 			switch result {
@@ -312,7 +314,7 @@ enum FR {
 
 	static func handleSource(
 		_ urlString: String,
-		completion: ((Bool) -> Void)? = nil
+		completion: (@MainActor @Sendable (Bool) -> Void)? = nil
 	) {
 		var trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !trimmed.isEmpty else {
@@ -367,7 +369,7 @@ enum FR {
 
 	static func exportCertificateAndOpenUrl(using template: String) {
 		// Helper that performs the export for a given certificate
-		func performExport(for certificate: CertificatePair) {
+		@MainActor @Sendable func performExport(for certificate: CertificatePair) {
 			guard
 				let certificateKeyFile = Storage.shared.getFile(.certificate, from: certificate),
 				let certificateKeyFileData = try? Data(contentsOf: certificateKeyFile)

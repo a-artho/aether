@@ -112,7 +112,7 @@ struct SourceAppsView: View {
 			searchOnLeading: false
 		) { _titleMenuActions() })
 
-		.onChange(of: router.searchTarget) { target in
+		.onChange(of: router.searchTarget) { _, target in
 			if target != .collection(collectionRoute) {
 				searchFocus.wrappedValue = false
 				_searchText = ""
@@ -131,16 +131,16 @@ struct SourceAppsView: View {
 			await viewModel.ensureSourcesLoaded(object)
 			_load()
 		}
-		.onChange(of: viewModel.isFinished) { finished in
+		.onChange(of: viewModel.isFinished) { _, finished in
 			if finished { _load() }
 		}
-		.onChange(of: viewModel.catalogRevision) { _ in
+		.onChange(of: viewModel.catalogRevision) { _, _ in
 			if object.contains(where: { viewModel.repository(for: $0) != nil }) { _load() }
 		}
-		.onChange(of: _sortOption) { newValue in
+		.onChange(of: _sortOption) { _, newValue in
 			_sortOptionRawValue = newValue.rawValue
 		}
-		.onChange(of: router.pendingAppRequest) { _ in
+		.onChange(of: router.pendingAppRequest) { _, _ in
 			_consumePendingAppRequestIfPossible()
 		}
 	}

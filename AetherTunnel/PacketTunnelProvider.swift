@@ -3,13 +3,18 @@ import Darwin
 import Network
 import NetworkExtension
 
-final class PacketTunnelProvider: NEPacketTunnelProvider {
+// NetworkExtension callbacks may use different threads. Custom lifecycle state is locked.
+final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 	private static let interfaceAddressKey = "TunnelIfaceIP"
 	private static let peerAddressKey = "TunnelPeerIP"
 	private static let defaultInterfaceAddress = "10.7.1.1/32"
 	private static let defaultPeerAddress = "10.7.0.1/32"
 
-	private var isRunning = false
+	private let stateLock = NSLock()
+	private var runningGeneration: UUID?
+	private func isRunning(_ generation: UUID) -> Bool {
+		stateLock.withLock { runningGeneration == generation }
+	}
 
 	override func startTunnel(
 		options: [String: NSObject]?,
@@ -35,22 +40,29 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 		let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: peer.address)
 		settings.ipv4Settings = ipv4
 
+		let generation = UUID()
+		stateLock.withLock { runningGeneration = generation }
+		let completion = TunnelCompletion(completionHandler)
 		setTunnelNetworkSettings(settings) { [weak self] error in
-			guard let self else { return }
-			guard error == nil else {
-				completionHandler(error)
+			guard let self, self.isRunning(generation) else {
+				completion.call(CancellationError())
 				return
 			}
-			self.isRunning = true
-			self.readPackets()
-			completionHandler(nil)
+			guard error == nil else {
+				self.stateLock.withLock { if self.runningGeneration == generation { self.runningGeneration = nil } }
+				completion.call(error)
+				return
+			}
+			self.readPackets(generation: generation)
+			completion.call(nil)
 		}
 	}
 
 	override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
-		isRunning = false
+		stateLock.withLock { runningGeneration = nil }
+		let completion = TunnelCompletion<Void> { _ in completionHandler() }
 		setTunnelNetworkSettings(nil) { _ in
-			completionHandler()
+			completion.call(())
 		}
 	}
 
@@ -58,10 +70,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 		completionHandler?(nil)
 	}
 
-	private func readPackets() {
-		guard isRunning else { return }
+	private func readPackets(generation: UUID) {
+		guard isRunning(generation) else { return }
 		packetFlow.readPackets { [weak self] packets, protocols in
-			guard let self, self.isRunning else { return }
+			guard let self, self.isRunning(generation) else { return }
 			var reflectedPackets = packets
 
 			for index in reflectedPackets.indices where protocols[index].int32Value == AF_INET {
@@ -77,7 +89,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 			}
 
 			self.packetFlow.writePackets(reflectedPackets, withProtocols: protocols)
-			self.readPackets()
+			self.readPackets(generation: generation)
 		}
 	}
 }
@@ -128,4 +140,15 @@ private enum TunnelError: LocalizedError {
 	var errorDescription: String? {
 		"Invalid Aether tunnel address."
 	}
+}
+
+// The SDK's completion is consumed once under a lock, then invoked outside the lock.
+private final class TunnelCompletion<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var callback: ((Value) -> Void)?
+    init(_ callback: @escaping (Value) -> Void) { self.callback = callback }
+    func call(_ value: Value) {
+        let callback = lock.withLock { let result = self.callback; self.callback = nil; return result }
+        callback?(value)
+    }
 }

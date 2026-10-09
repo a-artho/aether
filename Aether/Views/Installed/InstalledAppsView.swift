@@ -25,7 +25,11 @@ struct InstalledAppsView: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@State private var isSpoofingPresented = false
 	@State private var isModeSwitchBlocked = false
-	@State private var selectedAppBundleId: String?
+	@State private var appNavigationPath: [String] = []
+	private var selectedAppBundleId: String? {
+		get { appNavigationPath.last }
+		nonmutating set { appNavigationPath = newValue.map { [$0] } ?? [] }
+	}
 	@State private var isRootListVisible = false
 	@State private var visibleInstallRows = Set<UUID>()
 	private let loadsApps: Bool
@@ -65,7 +69,7 @@ struct InstalledAppsView: View {
 			store.apps.isEmpty ? nil : .sideloaded
 		].compactMap { $0 }
 		let layout = DeviceLayout(sections: sections, cards: cards.map(\.id), activeCard: installationManager.currentRequest?.id)
-		NBNavigationView(_installationMethodName, displayMode: .inline) {
+		NavigationStack(path: $appNavigationPath) {
 			ScrollViewReader { scrollProxy in
 				List {
 					ForEach(sections) { section in
@@ -98,19 +102,7 @@ struct InstalledAppsView: View {
 								secondary: store.apps.count.description
 							) {
 								ForEach(store.apps) { app in
-									NavigationLink(
-										destination: InstalledAppDetailView(app: app, store: store),
-										isActive: Binding(
-											get: { selectedAppBundleId == app.bundleIdentifier },
-											set: { isActive in
-												if isActive {
-													selectedAppBundleId = app.bundleIdentifier
-												} else if selectedAppBundleId == app.bundleIdentifier {
-													selectedAppBundleId = nil
-												}
-											}
-										)
-									) {
+									NavigationLink(value: app.bundleIdentifier) {
 										InstalledAppCellView(app: app, loadsIcon: loadsIcons, hasUpdate: appsWithUpdates.contains(app.bundleIdentifier))
 									}
 									.buttonStyle(.plain)
@@ -118,6 +110,18 @@ struct InstalledAppsView: View {
 								}
 							}
 						}
+					}
+				}
+				.navigationTitle(_installationMethodName)
+				.navigationBarTitleDisplayMode(.inline)
+				.navigationDestination(for: String.self) { identifier in
+					if let app = store.apps.first(where: { $0.bundleIdentifier == identifier }) {
+						InstalledAppDetailView(app: app, store: store)
+					}
+				}
+				.onChange(of: store.apps.map(\.bundleIdentifier)) { _, identifiers in
+					if let selectedAppBundleId, !identifiers.contains(selectedAppBundleId) {
+						self.selectedAppBundleId = nil
 					}
 				}
 				.listStyle(.plain)
@@ -720,7 +724,7 @@ private struct _HomeCardButtonStyleBody: View {
 					.fill(.black.opacity(isPressed ? 0.08 : 0))
 			}
 			.animation(.spring(response: 0.2, dampingFraction: 0.82), value: isPressed)
-			.onChange(of: configuration.isPressed) { pressed in
+			.onChange(of: configuration.isPressed) { _, pressed in
 				if pressed {
 					releaseTask?.cancel()
 					keepsPressedAppearance = true

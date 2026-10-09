@@ -112,10 +112,10 @@ struct PairingFileView: View {
 		.onAppear {
 			_refreshPairingState()
 		}
-		.onChange(of: _connection.pairingVerification) { _ in
+		.onChange(of: _connection.pairingVerification) { _, _ in
 			_refreshPairingState()
 		}
-		.onChange(of: _onDevicePairing.state) { state in
+		.onChange(of: _onDevicePairing.state) { _, state in
 			if case .completed = state {
 				_refreshPairingState()
 			}

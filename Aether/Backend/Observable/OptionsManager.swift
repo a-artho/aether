@@ -9,7 +9,8 @@ import Foundation
 import UIKit
 
 // MARK: - OptionsManager
-class OptionsManager: ObservableObject {
+@MainActor
+final class OptionsManager: ObservableObject {
 	static let shared = OptionsManager()
 
 	private let _key = "signing_options"

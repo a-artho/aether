@@ -41,7 +41,8 @@ private actor FRIconRenderGate {
 	}
 }
 
-final class FRIconCache: NSObject {
+// NSCache serializes access; this owner has no other mutable state.
+final class FRIconCache: NSObject, @unchecked Sendable {
 	static let shared = FRIconCache()
 	private let cache = NSCache<NSString, UIImage>()
 
@@ -61,19 +62,19 @@ final class FRIconCache: NSObject {
 		NotificationCenter.default.removeObserver(self)
 	}
 
-	private func key(url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool) -> NSString {
-		"\(url.path)#\(appearance.rawValue)#\(tint)#\(isTinted)#\(dynamic)" as NSString
+	private func key(url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat) -> NSString {
+		"\(url.path)#\(appearance.rawValue)#\(tint)#\(isTinted)#\(dynamic)#\(displayScale)" as NSString
 	}
 
-	func image(for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool) -> UIImage? {
-		cache.object(forKey: key(url: url, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic))
+	func image(for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) -> UIImage? {
+		cache.object(forKey: key(url: url, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic, displayScale: displayScale))
 	}
 
-	func insert(_ image: UIImage, for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool) {
+	func insert(_ image: UIImage, for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) {
 		let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 1
 		cache.setObject(
 			image,
-			forKey: key(url: url, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic),
+			forKey: key(url: url, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic, displayScale: displayScale),
 			cost: cost
 		)
 	}
@@ -89,12 +90,12 @@ final class FRAppIconLoader: ObservableObject {
 	private var task: Task<Void, Never>?
 	private var generation = UUID()
 
-	func load(bundleURL: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool) {
+	func load(bundleURL: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) {
 		task?.cancel()
 		task = nil
 		generation = UUID()
 		let generation = self.generation
-		if let cached = FRIconCache.shared.image(for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic) {
+		if let cached = FRIconCache.shared.image(for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic, displayScale: displayScale) {
 			self.image = cached
 			return
 		}
@@ -106,13 +107,13 @@ final class FRAppIconLoader: ObservableObject {
 				return
 			}
 
-			let generated = iconTest(bundleURL)
+			let generated = iconTest(bundleURL, displayScale, appearance == .dark ? 2 : 1)
 			await FRIconRenderGate.shared.release()
 			guard !Task.isCancelled, let generated else { return }
 
 			await MainActor.run { [weak self] in
 				guard !Task.isCancelled, self?.generation == generation else { return }
-				FRIconCache.shared.insert(generated, for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic)
+				FRIconCache.shared.insert(generated, for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic, displayScale: displayScale)
 				self?.image = generated
 			}
 		}
@@ -129,6 +130,7 @@ struct FRAppIconView: View {
 	private let app: AppInfoPresentable?
 	private let size: CGFloat
 
+	@Environment(\.displayScale) private var displayScale
 	@Environment(\.colorScheme) private var colorScheme
 	@StateObject private var loader = FRAppIconLoader()
 	
@@ -155,7 +157,7 @@ struct FRAppIconView: View {
 					.appIconStyle(size: size)
 			}
 		}
-		.task(id: "\(appearance.rawValue)\(selectedColorHex)\(shouldTintIcons)\(shouldChangeIconsBasedOffStyle)") {
+		.task(id: "\(appearance.rawValue)\(selectedColorHex)\(shouldTintIcons)\(shouldChangeIconsBasedOffStyle)\(displayScale)") {
 			_load()
 		}
 		.onDisappear {
@@ -178,7 +180,8 @@ struct FRAppIconView: View {
 			appearance: appearance,
 			tint: selectedColorHex,
 			isTinted: shouldTintIcons,
-			dynamic: shouldChangeIconsBasedOffStyle
+			dynamic: shouldChangeIconsBasedOffStyle,
+			displayScale: displayScale
 		)
 	}
 

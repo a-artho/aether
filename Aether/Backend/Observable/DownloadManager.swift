@@ -84,7 +84,7 @@ class DownloadManager: NSObject, ObservableObject {
 		}
 	}
 
-	deinit {
+	isolated deinit {
 		if let _backgroundObserver { NotificationCenter.default.removeObserver(_backgroundObserver) }
 		if let _foregroundObserver { NotificationCenter.default.removeObserver(_foregroundObserver) }
 	}
@@ -340,7 +340,7 @@ class DownloadManager: NSObject, ObservableObject {
 		let checkpoint = DownloadCheckpointLease()
 		#endif
 		task.cancel(byProducingResumeData: { [weak self, weak download] resumeData in
-			DispatchQueue.main.async {
+			DispatchQueue.main.async { [weak self, weak download] in
 				#if !targetEnvironment(macCatalyst)
 				defer { checkpoint.end() }
 				#endif
@@ -421,7 +421,7 @@ class DownloadManager: NSObject, ObservableObject {
 
 	private func _restoreSessionTasks() {
 		_session.getAllTasks { [weak self] tasks in
-			DispatchQueue.main.async {
+			DispatchQueue.main.async { [weak self] in
 				guard let self else { return }
 				var restoredIDs = Set(self.downloads.filter { $0.task != nil }.map(\.id))
 				defer { self._restorableTransferIDs.removeAll(); self._restoringTransferIDs.removeAll() }
@@ -735,7 +735,7 @@ class DownloadManager: NSObject, ObservableObject {
 				.restart
 			)
 			_stopContinuedTask(for: download, success: false)
-			await DebugLogManager.shared.log(
+			DebugLogManager.shared.log(
 				"Could not persist download before resuming: \(error.localizedDescription)",
 				category: "Download",
 				level: .error

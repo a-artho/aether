@@ -22,10 +22,10 @@ source += r'''
 enum FRIconAppearance: Int { case light, dark }
 final class UIImage: @unchecked Sendable { let id: String; init(_ id: String) {self.id=id} }
 final class FRIconCache { static let shared = FRIconCache(); var images: [String:UIImage]=[:]
- func image(for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool) -> UIImage? {images[url.path]}
- func insert(_ image: UIImage, for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool) {images[url.path]=image}
+ func image(for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) -> UIImage? {images[url.path]}
+ func insert(_ image: UIImage, for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) {images[url.path]=image}
 }
-func iconTest(_ url: URL) -> UIImage? { Thread.sleep(forTimeInterval: 0.08); return UIImage(url.path) }
+func iconTest(_ url: URL, _ scale: CGFloat, _ style: Int) -> UIImage? { Thread.sleep(forTimeInterval: 0.08); return UIImage(url.path) }
 '''
 source += declaration('Aether/Views/Common/FRAppIconView.swift','private actor FRIconRenderGate')+'\n'
 source += '@MainActor\n'+declaration('Aether/Views/Common/FRAppIconView.swift','final class FRAppIconLoader')+'\n'

@@ -140,7 +140,7 @@ struct SettingsView: View {
 			.onAppear {
 				_presentRequestedPageIfNeeded()
 			}
-			.onChange(of: _tabManager.requestedSettingsPage) { _ in
+			.onChange(of: _tabManager.requestedSettingsPage) { _, _ in
 				_presentRequestedPageIfNeeded()
 			}
 		}

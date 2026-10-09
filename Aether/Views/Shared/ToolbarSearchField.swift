@@ -88,7 +88,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 				}
 			}
 			.onAppear { transition.restore(isPresented: isPresented) }
-			.onChange(of: isPresented) { transition.setPresented($0, keyboardExpected: focus.wrappedValue) }
+			.onChange(of: isPresented) { _, presented in transition.setPresented(presented, keyboardExpected: focus.wrappedValue) }
 			.onScrollPhaseChange { _, phase in
 				if phase == .interacting { focus.wrappedValue = false }
 			}
@@ -172,10 +172,8 @@ final class SearchToolbarTransition: ObservableObject {
 		}
 	}
 
-	func keyboardWillChange(_ notification: Notification) {
-		guard waitingForKeyboard, let info = notification.userInfo else { return }
-		let duration = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
-		let curve = info[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 0
+	func keyboardWillChange(duration: Double, curve: UInt) {
+		guard waitingForKeyboard else { return }
 		waitingForKeyboard = false
 		let token = generation
 		// Responder changes can deliver this notification inside updateUIView.
@@ -226,7 +224,9 @@ struct KeyboardSearchField: UIViewRepresentable {
 	func updateUIView(_ field: SearchTextField, context: Context) {
 		field.textChanged = { text = $0 }
 		field.focusChanged = { focus.wrappedValue = $0 }
-		field.keyboardChanged = { [weak transition] in transition?.keyboardWillChange($0) }
+		field.keyboardChanged = { [weak transition] duration, curve in
+			transition?.keyboardWillChange(duration: duration, curve: curve)
+		}
 		if field.text != text { field.text = text }
 		if field.attributedPlaceholder?.string != prompt {
 			field.attributedPlaceholder = NSAttributedString(string: prompt, attributes: [
@@ -250,7 +250,7 @@ final class SearchTextField: UITextField, UITextFieldDelegate {
 	var wantsFocus = false
 	var textChanged: ((String) -> Void)?
 	var focusChanged: ((Bool) -> Void)?
-	var keyboardChanged: ((Notification) -> Void)?
+	var keyboardChanged: ((Double, UInt) -> Void)?
 	private var keyboardObserver: NSObjectProtocol?
 
 	override init(frame: CGRect) {
@@ -260,11 +260,13 @@ final class SearchTextField: UITextField, UITextFieldDelegate {
 		keyboardObserver = NotificationCenter.default.addObserver(
 			forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
 		) { [weak self] notification in
-			MainActor.assumeIsolated { self?.keyboardChanged?(notification) }
+			let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+			let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 0
+			MainActor.assumeIsolated { self?.keyboardChanged?(duration, curve) }
 		}
 	}
 	required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-	deinit { if let keyboardObserver { NotificationCenter.default.removeObserver(keyboardObserver) } }
+	isolated deinit { if let keyboardObserver { NotificationCenter.default.removeObserver(keyboardObserver) } }
 	override func didMoveToWindow() { super.didMoveToWindow(); updateFocus() }
 	func updateFocus() {
 		guard window != nil else { return }

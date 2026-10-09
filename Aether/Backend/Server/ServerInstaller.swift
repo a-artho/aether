@@ -26,7 +26,8 @@ private enum ServerInstallerError: LocalizedError {
 }
 
 // MARK: - Class
-class ServerInstaller: Identifiable, ObservableObject {
+@MainActor
+final class ServerInstaller: Identifiable, ObservableObject {
 	let id = UUID()
 	let port = Int.random(in: 4000...8000)
 	private var _needsShutdown = false
@@ -34,7 +35,7 @@ class ServerInstaller: Identifiable, ObservableObject {
 	var packageUrl: URL?
 	var app: AppInfoPresentable
 	private let serverMethod: Int
-	@ObservedObject var viewModel: InstallerStatusViewModel
+	let viewModel: InstallerStatusViewModel
 	private var _server: Application?
 
 	init(app: AppInfoPresentable, viewModel: InstallerStatusViewModel, serverMethod: Int) throws {
@@ -52,7 +53,7 @@ class ServerInstaller: Identifiable, ObservableObject {
 		}
 	}
 	
-	deinit {
+	isolated deinit {
 		_shutdownServer()
 	}
 	
@@ -65,24 +66,33 @@ class ServerInstaller: Identifiable, ObservableObject {
 			throw ServerInstallerError.unavailable
 		}
 
-		server.get("*") { [weak self] req in
+		// Render UIKit assets once on the main actor. Routes consume immutable snapshots.
+		let manifestPath = plistEndpoint.path
+		let smallPath = displayImageSmallEndpoint.path
+		let largePath = displayImageLargeEndpoint.path
+		let payloadPath = payloadEndpoint.path
+		let manifest = installManifestData
+		let smallImage = displayImageSmallData
+		let largeImage = displayImageLargeData
+		let installHTML = html
+		server.get("*") { [weak self] req async -> Response in
 			guard let self else { return Response(status: .badGateway) }
 			switch req.url.path {
-			case plistEndpoint.path:
+			case manifestPath:
 				self._updateStatus(.sendingManifest)
 				return Response(status: .ok, version: req.version, headers: [
 					"Content-Type": "text/xml",
-				], body: .init(data: installManifestData))
-			case displayImageSmallEndpoint.path:
+				], body: .init(data: manifest))
+			case smallPath:
 				return Response(status: .ok, version: req.version, headers: [
 					"Content-Type": "image/png",
-				], body: .init(data: displayImageSmallData))
-			case displayImageLargeEndpoint.path:
+				], body: .init(data: smallImage))
+			case largePath:
 				return Response(status: .ok, version: req.version, headers: [
 					"Content-Type": "image/png",
-				], body: .init(data: displayImageLargeData))
-			case payloadEndpoint.path:
-				guard let packageUrl = packageUrl else {
+				], body: .init(data: largeImage))
+			case payloadPath:
+				guard let packageUrl = await self.packageUrl else {
 					return Response(status: .notFound)
 				}
 				
@@ -91,14 +101,14 @@ class ServerInstaller: Identifiable, ObservableObject {
 			case "/install":
 				var headers = HTTPHeaders()
 				headers.add(name: .contentType, value: "text/html")
-				return Response(status: .ok, headers: headers, body: .init(string: self.html))
+				return Response(status: .ok, headers: headers, body: .init(string: installHTML))
 			default:
 				return Response(status: .notFound)
 			}
 		}
 	}
 	
-	private func _streamPayload(at url: URL, for request: Request) -> Response {
+	nonisolated private func _streamPayload(at url: URL, for request: Request) -> Response {
 		// Keep Vapor's existing range, cache and content headers. Replace only the
 		// body producer so successful writes can report bounded byte progress.
 		let response = request.fileio.streamFile(at: url.path)
@@ -162,7 +172,7 @@ class ServerInstaller: Identifiable, ObservableObject {
 		_server?.shutdown()
 	}
 	
-	private func _updateStatus(_ newStatus: InstallerStatusViewModel.InstallerStatus) {
+	nonisolated private func _updateStatus(_ newStatus: InstallerStatusViewModel.InstallerStatus) {
 		DispatchQueue.main.async {
 			self.viewModel.status = newStatus
 		}

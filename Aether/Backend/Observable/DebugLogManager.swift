@@ -12,13 +12,13 @@ import UIKit
 
 // MARK: - DebugLogItem
 
-public struct DebugLogItem: Identifiable, Hashable {
-	public enum Source: String, Hashable {
+public struct DebugLogItem: Identifiable, Hashable, Sendable {
+	public enum Source: String, Hashable, Sendable {
 		case diagnostics = "Diagnostics"
 		case appActivity = "App Activity"
 	}
 
-	public enum Level: String, CaseIterable, Codable {
+	public enum Level: String, CaseIterable, Codable, Sendable {
 		case debug = "Debug"
 		case info = "Info"
 		case notice = "Notice"
@@ -259,9 +259,7 @@ public final class DebugLogManager: ObservableObject {
 		isLoading = true
 		defer { isLoading = false }
 
-		_lock.lock()
-		let memoryItems = _inMemoryEntries
-		_lock.unlock()
+		let memoryItems = _lock.withLock { _inMemoryEntries }
 
 		let fetched = await Task.detached(priority: .userInitiated) { () -> [DebugLogItem] in
 			var results: [DebugLogItem] = []
