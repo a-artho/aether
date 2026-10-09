@@ -1,5 +1,8 @@
 # iOS 26 cleanup: remaining build warnings
 
+This is the historical baseline. All 240 application source warning locations were resolved in the [build warning cleanup](build-warning-cleanup.md); that report contains final verification and the remaining upstream/tool diagnostics.
+
+
 Verified commit: `646f59c`. [Successful validation run](https://github.com/a-artho/aether/actions/runs/37863138508).
 
 The fresh Release iPhone build, 83 Swift regression tests, additional native/flow checks, and unsigned IPA validation passed. Publishing was disabled. This report lists unique warning locations/messages, with duplicate compiler emissions removed.
