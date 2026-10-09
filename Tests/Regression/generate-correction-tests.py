@@ -3,7 +3,7 @@ import pathlib,sys
 repo=pathlib.Path(__file__).resolve().parents[2]
 out=pathlib.Path(sys.argv[1])
 fr=(repo/'Aether/Utilities/FR.swift').read_text()
-gate=fr[fr.index('private actor PackageProcessingGate'):fr.index('\nenum FR')].replace('private actor','actor',1)
+gate=fr[fr.index('private actor PackageProcessingGate'):fr.index('\n@MainActor\nenum FR')].replace('private actor','actor',1)
 proxy=(repo/'IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/InstallationProxy.swift').read_text()
 publisher=proxy[proxy.index('private final class UploadProgressPublisher'):proxy.index('\npublic class InstallationProxy')].replace('private final class','final class',1)
 store=(repo/'Aether/Backend/Observable/DownloadStore.swift').read_text()
