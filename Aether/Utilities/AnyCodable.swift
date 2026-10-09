@@ -9,13 +9,14 @@ import Foundation
 
 struct AnyCodable: Codable, Sendable {
 	private indirect enum Value: Sendable {
-		case null, bool(Bool), int(Int), uint(UInt), double(Double), string(String)
+		case null, bool(Bool), int(Int), uint(UInt), double(Double), string(String), number(NSNumber)
 		case array([AnyCodable]), dictionary([String: AnyCodable]), unsupported(String)
 	}
 	private let stored: Value
 	var value: Any {
 		switch stored {
 		case .null: return NSNull()
+		case .number(let v): return v
 		case .bool(let v): return v
 		case .int(let v): return v
 		case .uint(let v): return v
@@ -26,6 +27,11 @@ struct AnyCodable: Codable, Sendable {
 		}
 	}
 	init(_ value: Any) {
+		// Preserve Foundation number identity/type when reading raw plist entitlements.
+		if type(of: value) is NSNumber.Type, let number = value as? NSNumber {
+			stored = .number(number)
+			return
+		}
 		switch value {
 		case is NSNull: stored = .null
 		case let v as Bool: stored = .bool(v)
@@ -68,6 +74,12 @@ struct AnyCodable: Codable, Sendable {
 		switch self.stored {
 		case .null:
 			try container.encodeNil()
+		case .number(let number):
+			// Keep the original NSNumber encoding order for existing plist values.
+			if let value = number as? Bool { try container.encode(value) }
+			else if let value = number as? Int { try container.encode(value) }
+			else if let value = number as? UInt { try container.encode(value) }
+			else { try container.encode(number.doubleValue) }
 		case .bool(let bool):
 			try container.encode(bool)
 		case .int(let int):

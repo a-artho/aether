@@ -12,6 +12,11 @@ nested["name"] = "after"
 let dictionary = snapshot.value as! [String:Any]
 precondition(dictionary["name"] as? String == "before")
 precondition((dictionary["items"] as? [String]) == ["first"])
+for number in [NSNumber(value: 1), NSNumber(value: 42), NSNumber(value: 3.25)] {
+ let preserved = AnyCodable(number)
+ precondition(preserved.value is NSNumber)
+ precondition((preserved.value as? NSNumber) == number)
+}
 let encoded = try JSONEncoder().encode(snapshot)
 let decoded = try JSONDecoder().decode(AnyCodable.self, from:encoded)
 precondition((decoded.value as! [String:Any])["name"] as? String == "before")
