@@ -24,6 +24,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	@Binding var sortOption: SourceAppsView.SortOption
 	var sortAscending: Bool
 	var showSourceBadge: Bool = false
+	var listStore: SourceAppListStore = .shared
 	var onSelect: (SourceAppsView.SourceAppSelection) -> Void
 	
 	func makeUIView(context: Context) -> UITableView {
@@ -52,6 +53,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	
 	func updateUIView(_ tableView: UITableView, context: Context) {
 		context.coordinator.uiTableView = tableView
+		context.coordinator.onSelect = onSelect
 		
 		let sourcesChanged = context.coordinator.sourceContexts != sourceContexts
 		let searchChanged = context.coordinator.searchText != searchText
@@ -87,6 +89,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 			sortAscending: sortAscending,
 			showSourceBadge: showSourceBadge,
 			showsDownloadButtons: showsDownloadButtons,
+			listStore: listStore,
 			onSelect: onSelect
 		)
 	}
@@ -104,7 +107,8 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	var sortAscending: Bool
 	var showSourceBadge: Bool
 	var showsDownloadButtons: Bool
-	let onSelect: (SourceAppsView.SourceAppSelection) -> Void
+	let listStore: SourceAppListStore
+	var onSelect: (SourceAppsView.SourceAppSelection) -> Void
 	
 	private var _dataSource: DataSource?
 	private var _displayed: PreparedSourceAppList?
@@ -136,6 +140,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		sortAscending: Bool,
 		showSourceBadge: Bool,
 		showsDownloadButtons: Bool,
+		listStore: SourceAppListStore,
 		onSelect: @escaping (SourceAppsView.SourceAppSelection) -> Void
 	) {
 		self.sourceContexts = sourceContexts
@@ -144,6 +149,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		self.sortAscending = sortAscending
 		self.showSourceBadge = showSourceBadge
 		self.showsDownloadButtons = showsDownloadButtons
+		self.listStore = listStore
 		self.onSelect = onSelect
 		super.init()
 		
@@ -206,10 +212,10 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		let sort = sortOption.rawValue
 		let ascending = sortAscending
 		let previous = _displayed
+		let store = listStore
 		_prepareTask = Task { [weak self] in
 			do {
 				if debouncingSearch { try await Task.sleep(for: .milliseconds(120)) }
-				let store = SourceAppListStore.shared
 				let list = try await store.list(contexts: contexts, sort: sort, ascending: ascending,
 					query: query, unknownDate: .localized("Unknown Date"))
 				let changed = await store.changedRows(in: list, comparedTo: previous)

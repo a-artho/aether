@@ -1,110 +1,54 @@
 import Foundation
 import AltSourceKit
 
-struct InstalledAppUpdateCandidate: Identifiable, Sendable {
-	let id: String
-	let sourceURL: URL
-	let repository: ASRepository
-	let app: ASRepository.App
-}
-
-struct InstalledAppUpdateDateGroup: Identifiable {
-	let date: Date?
-	let updates: [InstalledAppUpdateCandidate]
-	var id: Date? { date }
-}
-
-extension InstalledAppUpdateCandidate {
-	static func groupedByDate(_ updates: [Self], calendar: Calendar = .current) -> [InstalledAppUpdateDateGroup] {
-		let grouped = Dictionary(grouping: updates) { update in
-			(update.app.currentDate?.date).map { calendar.startOfDay(for: $0) }
-		}
-		return grouped.keys.sorted { lhs, rhs in
-			switch (lhs, rhs) {
-			case (let lhs?, let rhs?): return lhs > rhs
-			case (.some, .none): return true
-			default: return false
-			}
-		}.map { date in
-			let rows = grouped[date, default: []].sorted {
-				let order = ($0.app.currentVersion ?? "").compare($1.app.currentVersion ?? "", options: .numeric)
-				return order == .orderedSame ? $0.id < $1.id : order == .orderedDescending
-			}
-			return InstalledAppUpdateDateGroup(date: date, updates: rows)
-		}
-	}
-}
-
-/// Shared across detail pages. Catalog indexing runs off the main actor and is
-/// rebuilt only when source membership, URLs, or catalog revisions change.
+/// Scan loaded catalogs once per source/installed-version change, off the UI thread.
+/// Retain only matching updates, never another copy of the entire source catalog.
 actor InstalledAppUpdateCatalog {
 	static let shared = InstalledAppUpdateCatalog()
 	private var signature: [String] = []
-	private var index: [String: [InstalledAppUpdateCandidate]] = [:]
+	private var cached: [String: [SourceAppCatalogContext]] = [:]
 	private var removedSources = Set<String>()
 
 	func removeSource(_ key: String) {
 		removedSources.insert(key)
-		// Clear immediately, including when no update screen is currently mounted.
 		signature = []
-		index = [:]
+		cached = [:]
 	}
 
-	func updates(for bundleIdentifier: String, installedVersion: String?, contexts: [SourceAppCatalogContext]) throws -> [InstalledAppUpdateCandidate] {
+	func updates(installedVersions: [String: String], contexts: [SourceAppCatalogContext]) throws -> [String: [SourceAppCatalogContext]] {
 		try Task.checkCancellation()
+		guard !installedVersions.isEmpty else { signature = []; cached = [:]; return [:] }
 		let contexts = contexts.filter { !removedSources.contains($0.sourceObjectURI) }
-		let nextSignature = contexts.flatMap { [$0.sourceObjectURI, $0.sourceURL?.absoluteString ?? "", $0.revision] }
-		if nextSignature != signature {
-			var nextIndex: [String: [InstalledAppUpdateCandidate]] = [:]
-			var seen = Set<String>()
-			for context in contexts {
-				guard let sourceURL = context.sourceURL else { continue }
-				// Rows and detail pages need repository metadata, not another retained catalog.
+		let nextSignature = installedVersions.sorted { $0.key < $1.key }.flatMap { [$0.key, $0.value] }
+			+ contexts.flatMap { [$0.sourceObjectURI, $0.sourceURL?.absoluteString ?? "", $0.revision] }
+		if signature == nextSignature { return cached }
+		var result: [String: [SourceAppCatalogContext]] = [:]
+		for context in contexts {
+			guard context.sourceURL != nil else { continue }
+			var matches: [String: [ASRepository.App]] = [:]
+			for app in context.repository.apps {
+				try Task.checkCancellation()
+				guard let identifier = app.id, let installed = installedVersions[identifier],
+					Self.isNewer(app.currentVersion, than: installed),
+					let url = app.currentDownloadUrl, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { continue }
+				matches[identifier, default: []].append(app)
+			}
+			for (identifier, apps) in matches {
 				var repository = context.repository
-				repository.apps = []
+				repository.apps = apps
 				repository.news = nil
-				for app in context.repository.apps {
-					try Task.checkCancellation()
-					guard let bundleID = app.id, !bundleID.isEmpty,
-						let version = app.currentVersion,
-						let downloadURL = app.currentDownloadUrl,
-						["https", "http"].contains(downloadURL.scheme?.lowercased() ?? "")
-					else { continue }
-					let id = [context.sourceObjectURI, bundleID, version, downloadURL.absoluteString].joined(separator: "\u{1F}")
-					guard seen.insert(id).inserted else { continue }
-					SourceAppBodyText.prepare(body: app.localizedDescription, subtitle: app.currentDescription)
-					nextIndex[bundleID, default: []].append(InstalledAppUpdateCandidate(
-						id: id, sourceURL: sourceURL, repository: repository, app: app
-					))
-				}
-			}
-			signature = nextSignature
-			index = nextIndex
-		}
-		return (index[bundleIdentifier] ?? []).filter {
-			Self.isNewer($0.app.currentVersion, than: installedVersion)
-		}.sorted {
-			let order = ($0.app.currentVersion ?? "").compare($1.app.currentVersion ?? "", options: .numeric)
-			return order == .orderedSame ? $0.id < $1.id : order == .orderedDescending
-		}
-	}
-
-	/// One indexed pass for all visible installed apps; no per-row catalog scans.
-	func bundleIdentifiersWithUpdates(installedVersions: [String: String], contexts: [SourceAppCatalogContext]) throws -> Set<String> {
-		guard let first = installedVersions.first else { return [] }
-		_ = try updates(for: first.key, installedVersion: first.value, contexts: contexts)
-		var result = Set<String>()
-		for (identifier, version) in installedVersions {
-			try Task.checkCancellation()
-			if (index[identifier] ?? []).contains(where: { Self.isNewer($0.app.currentVersion, than: version) }) {
-				result.insert(identifier)
+				result[identifier, default: []].append(SourceAppCatalogContext(
+					sourceObjectURI: context.sourceObjectURI, sourceURL: context.sourceURL,
+					repository: repository, revision: context.revision + "|updates|" + identifier + "|" + installedVersions[identifier, default: ""]))
 			}
 		}
+		try Task.checkCancellation()
+		signature = nextSignature
+		cached = result
 		return result
 	}
 
-	/// Compare numeric dotted versions without treating 1.2.0 as newer than 1.2.
-	/// Unstructured labels and missing versions cannot establish an update.
+	/// Missing or unstructured version labels cannot reliably establish an update.
 	static func isNewer(_ remote: String?, than installed: String?) -> Bool {
 		guard let remote = components(remote), let installed = components(installed) else { return false }
 		for offset in 0..<max(remote.count, installed.count) {

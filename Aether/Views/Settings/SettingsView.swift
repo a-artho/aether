@@ -11,11 +11,14 @@ import UIKit
 
 // MARK: - View
 struct SettingsView: View {
+	enum Presentation { case modal, tab }
+	let presentation: Presentation
+	init(presentation: Presentation = .modal) { self.presentation = presentation }
 	@Environment(\.dismiss) private var dismiss
 	@AppStorage("aether.selectedCertUUID") private var _storedSelectedCertUUID: String = ""
 	@AppStorage("aether.selectedCert") private var _storedSelectedCert: Int = 0
 	@State private var _currentIcon: String? = UIApplication.shared.alternateIconName
-	@State private var _activeSettingsPage: AppTabManager.SettingsPage? = nil
+	@State private var _settingsPath: [AppTabManager.SettingsPage] = []
 	@ObservedObject private var _tabManager = AppTabManager.shared
 	
 	// MARK: Fetch
@@ -41,7 +44,7 @@ struct SettingsView: View {
 	}
 	// MARK: Body
 	var body: some View {
-		NBNavigationView(.localized("Settings"), displayMode: .inline) {
+		NavigationStack(path: $_settingsPath) {
 			Form {
 				Section { InstallationModePickerRow() }
 				Section {
@@ -52,37 +55,37 @@ struct SettingsView: View {
 							.font(.footnote)
 							.foregroundColor(.disabled())
 					}
-					NavigationLink(destination: CertificatesView()) {
+					NavigationLink(value: AppTabManager.SettingsPage.certificates) {
 						SettingsRowLabel(.localized("Certificates"), systemImage: "checkmark.seal.fill", backgroundColor: .green)
 					}
 				}
                 
 				Section {
-					NavigationLink(destination: ConfigurationView()) {
+					NavigationLink(value: AppTabManager.SettingsPage.signing) {
 						SettingsRowLabel(.localized("Signing Options"), systemImage: "signature", backgroundColor: .orange)
 					}
-					NavigationLink(destination: ArchiveView()) {
+					NavigationLink(value: AppTabManager.SettingsPage.archive) {
 						SettingsRowLabel(.localized("Archive & Compression"), systemImage: "archivebox.fill", backgroundColor: .cyan)
 					}
-					NavigationLink(destination: PairingFileView()) {
+					NavigationLink(value: AppTabManager.SettingsPage.pairingFile) {
 						SettingsRowLabel(.localized("Pairing File"), systemImage: "key.fill", backgroundColor: .purple)
 					}
-					NavigationLink(destination: TunnelView()) {
+					NavigationLink(value: AppTabManager.SettingsPage.tunnel) {
 						SettingsRowLabel(.localized("Tunneling"), systemImage: "network", backgroundColor: .green)
 					}
 				}
 
 				Section {
-					NavigationLink(destination: AppearanceView()) {
+					NavigationLink(value: AppTabManager.SettingsPage.appearance) {
 						SettingsRowLabel(.localized("Appearance"), systemImage: "paintbrush.fill", backgroundColor: .blue)
 					}
 				}
                 
 				Section {
-					NavigationLink(destination: LogsView()) {
+					NavigationLink(value: AppTabManager.SettingsPage.logs) {
 						SettingsRowLabel(.localized("Logs"), systemImage: "doc.text.magnifyingglass", backgroundColor: .purple)
 					}
-					NavigationLink(destination: ResetView()) {
+					NavigationLink(value: AppTabManager.SettingsPage.reset) {
 						SettingsRowLabel(.localized("Reset"), systemImage: "trash.fill", backgroundColor: .red)
 					}
 				}
@@ -107,39 +110,45 @@ struct SettingsView: View {
 					.buttonStyle(.plain)
 				}
 			}
-			.navigationDestination(isPresented: Binding(
-				get: { _activeSettingsPage != nil },
-				set: { if !$0 { _activeSettingsPage = nil } }
-			)) {
-				if let page = _activeSettingsPage {
-					switch page {
-					case .appearance: AppearanceView()
-					case .appIcon: AppIconView(currentIcon: $_currentIcon)
-					case .certificates: CertificatesView()
-					case .signing: ConfigurationView()
-					case .archive: ArchiveView()
-					case .installation: InstallationView()
-					case .serverConfig: EmptyView()
-					case .pairingFile: PairingFileView()
-					case .tunnel: TunnelView()
-					case .logs: LogsView()
-					case .reset: ResetView()
-					case .root: EmptyView()
-					}
+			.navigationTitle(String.localized("Settings"))
+			.navigationBarTitleDisplayMode(.inline)
+			// Native grouped page colors adapt to light/dark mode and presentation elevation.
+			.scrollContentBackground(.visible)
+			.background(Color(uiColor: .systemGroupedBackground))
+			.navigationDestination(for: AppTabManager.SettingsPage.self) { page in
+				switch page {
+				case .appearance: AppearanceView()
+				case .appIcon: AppIconView(currentIcon: $_currentIcon)
+				case .certificates: CertificatesView()
+				case .signing: ConfigurationView()
+				case .archive: ArchiveView()
+				case .installation: InstallationView()
+				case .serverConfig: EmptyView()
+				case .pairingFile: PairingFileView()
+				case .tunnel: TunnelView()
+				case .logs: LogsView()
+				case .reset: ResetView()
+				case .root: EmptyView()
 				}
 			}
 			.toolbar {
-				ToolbarItem(placement: .topBarTrailing) {
-					Button {
-						dismiss()
-					} label: {
-						Image(systemName: "xmark")
+				if presentation == .modal {
+					ToolbarItem(placement: .topBarTrailing) {
+						Button {
+							dismiss()
+						} label: {
+							Image(systemName: "xmark")
+						}
+						.accessibilityLabel(.localized("Close Settings"))
 					}
-					.accessibilityLabel(.localized("Close Settings"))
 				}
 			}
 			.onAppear {
 				_presentRequestedPageIfNeeded()
+				_tabManager.visibleSettingsPage = _settingsPath.last ?? .root
+			}
+			.onChange(of: _settingsPath) { _, path in
+				_tabManager.visibleSettingsPage = path.last ?? .root
 			}
 			.onChange(of: _tabManager.requestedSettingsPage) { _, _ in
 				_presentRequestedPageIfNeeded()
@@ -148,14 +157,11 @@ struct SettingsView: View {
 	}
 
 	private func _presentRequestedPageIfNeeded() {
-		guard let page = _tabManager.requestedSettingsPage else { return }
-		DispatchQueue.main.async {
-			if page == .root {
-				_activeSettingsPage = nil
-			} else {
-				_activeSettingsPage = page
-			}
-			_tabManager.requestedSettingsPage = nil
-		}
+		let ownsPresentation = presentation == .tab
+			? _tabManager.usesSettingsTab && _tabManager.selectedTab == .settings
+			: !_tabManager.usesSettingsTab && _tabManager.isSettingsPresented
+		guard ownsPresentation, let page = _tabManager.requestedSettingsPage else { return }
+		_settingsPath = page == .root ? [] : [page]
+		_tabManager.requestedSettingsPage = nil
 	}
 }

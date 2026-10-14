@@ -34,7 +34,7 @@ struct TabPlaceholderView<Actions: View>: View {
 				.font(.headline)
 				.foregroundStyle(.primary)
 			Text(description)
-				.font(.subheadline)
+				.nbFont(.subheadline)
 				.foregroundStyle(.secondary)
 				.multilineTextAlignment(.center)
 				.padding(.horizontal, 28)

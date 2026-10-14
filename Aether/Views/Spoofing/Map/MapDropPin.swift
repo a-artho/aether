@@ -1,5 +1,6 @@
 import MapKit
 import SwiftUI
+import NimbleViews
 
 /// Map pin with Liquid Glass “Remove Pin” menu and long-press drag.
 struct MapDropPin: View {
@@ -16,7 +17,7 @@ struct MapDropPin: View {
             if selected && !isDragging {
                 Button(action: onRemove) {
                     Label("Remove Pin", systemImage: "trash.fill")
-                        .font(.subheadline.weight(.semibold))
+                        .nbFont(.subheadline, weight: .semibold)
                         .foregroundStyle(LocusTheme.danger)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)

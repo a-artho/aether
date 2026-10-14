@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import NimbleViews
 import Combine
 import NimbleExtensions
 
@@ -50,7 +51,7 @@ struct DownloadItemView: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: 4) {
 			Text(download.fileName)
-				.font(.subheadline)
+				.nbFont(.subheadline)
 				.lineLimit(1)
 			
 			ProgressView(value: overallProgress)

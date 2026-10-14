@@ -64,7 +64,7 @@ struct SourceAppsDetailView: View {
 								) {
 									HStack(spacing: 8) {
 										Text(.localized("Version History"))
-											.font(.subheadline.weight(.medium))
+											.nbFont(.subheadline, weight: .medium)
 
 										Spacer()
 
@@ -111,7 +111,7 @@ struct SourceAppsDetailView: View {
 								)
 							} else {
 								Text(.localized("No Entitlements listed."))
-									.font(.subheadline)
+									.nbFont(.subheadline)
 									.foregroundStyle(.secondary)
 							}
 							if let privacyItems = appPermissions.privacy {
@@ -123,7 +123,7 @@ struct SourceAppsDetailView: View {
 								}
 							} else {
 								Text(.localized("No Privacy Permissions listed."))
-									.font(.subheadline)
+									.nbFont(.subheadline)
 									.foregroundStyle(.secondary)
 							}
 						}
@@ -262,7 +262,7 @@ extension SourceAppsDetailView {
 	) -> some View {
 		VStack(alignment: .leading, spacing: 10) {
 			Text(title)
-				.font(.title3.weight(.semibold))
+				.font(NBTypography.sectionHeading)
 				.foregroundStyle(.primary)
 
 			content()
@@ -279,7 +279,7 @@ extension SourceAppsDetailView {
 		VStack(alignment: .leading, spacing: 10) {
 			HStack(alignment: .firstTextBaseline, spacing: 12) {
 				Text(title)
-					.font(.title3.weight(.semibold))
+					.font(NBTypography.sectionHeading)
 					.foregroundStyle(.primary)
 
 				Spacer(minLength: 8)
@@ -359,7 +359,7 @@ extension SourceAppsDetailView {
 							.lineLimit(1)
 
 						Text(SourceAppBodyText.replacingEmoji(in: metric.value))
-							.font(.subheadline.weight(.semibold))
+							.nbFont(.subheadline, weight: .semibold)
 							.foregroundStyle(.primary)
 							.lineLimit(1)
 							.minimumScaleFactor(0.8)
@@ -388,7 +388,7 @@ extension SourceAppsDetailView {
 						.font(.caption2.weight(.semibold))
 						.foregroundStyle(Color.accentColor)
 				}
-				.font(.subheadline)
+				.nbFont(.subheadline)
 			}
 			.buttonStyle(.plain)
 		}
@@ -445,14 +445,14 @@ extension SourceAppsDetailView {
 	) -> some View {
 		HStack(alignment: .firstTextBaseline, spacing: 16) {
 			Text(title)
-				.font(.subheadline)
+				.nbFont(.subheadline)
 				.foregroundStyle(.secondary)
 				.layoutPriority(1)
 
 			Spacer(minLength: 12)
 
 			Text(SourceAppBodyText.replacingEmoji(in: value))
-				.font(.subheadline)
+				.nbFont(.subheadline)
 				.foregroundStyle(.primary)
 				.multilineTextAlignment(.trailing)
 				.lineLimit(2)

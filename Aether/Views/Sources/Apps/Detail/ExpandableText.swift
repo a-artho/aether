@@ -7,6 +7,7 @@
 
 
 import SwiftUI
+import NimbleViews
 
 enum SourceAppBodyText {
 	private final class DisplayText: NSObject {
@@ -130,20 +131,20 @@ struct ExpandableText: View {
 		let displayText = SourceAppBodyText.replacingEmoji(in: text)
 		VStack(alignment: .leading, spacing: 4) {
 			Text(displayText)
-				.font(.system(textStyle))
+				.nbFont(textStyle)
 				.foregroundStyle(.secondary)
 				.lineSpacing(3)
 				.lineLimit(expanded ? nil : lineLimit)
 				.background {
 					Text(displayText)
-						.font(.system(textStyle))
+						.nbFont(textStyle)
 						.lineSpacing(3)
 						.lineLimit(lineLimit)
 						.fixedSize(horizontal: false, vertical: true)
 						.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { constrainedHeight = $0 }
 						.hidden()
 					Text(displayText)
-						.font(.system(textStyle))
+						.nbFont(textStyle)
 						.lineSpacing(3)
 						.lineLimit(nil)
 						.fixedSize(horizontal: false, vertical: true)
@@ -163,7 +164,7 @@ struct ExpandableText: View {
 					}
 				}) {
 					Text(expanded ? .localized("Less") : .localized("More"))
-						.font(.subheadline.weight(.medium))
+						.nbFont(.subheadline, weight: .medium)
 						.foregroundColor(.accentColor)
 				}
 			}

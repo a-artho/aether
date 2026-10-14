@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import NimbleViews
 import UIKit
 
 struct OnDevicePairingView: View {
@@ -72,7 +73,7 @@ struct OnDevicePairingView: View {
 				Text(.localized("Aether is ready to pair"))
 					.font(.title3.weight(.semibold))
 				Text(.localized("To pair this device, follow these steps in Settings:"))
-					.font(.subheadline)
+					.nbFont(.subheadline)
 					.foregroundStyle(.secondary)
 			}
 
@@ -120,7 +121,7 @@ struct OnDevicePairingView: View {
 
 			VStack(alignment: .leading, spacing: 2) {
 				Text(title)
-					.font(.subheadline.weight(.semibold))
+					.nbFont(.subheadline, weight: .semibold)
 					.foregroundStyle(.primary)
 
 				Text(detail)

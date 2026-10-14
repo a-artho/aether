@@ -85,7 +85,7 @@ final class NativeProxy:@unchecked Sendable {
  }
 '''
 s += declaration('IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/InstallationAppProxy.swift','public func fetchApps(').replace('public func','func',1)+'\n}\n'
-s += 'struct Search {var _searchText:String\n' +declaration('Aether/Views/Library/LibraryView.swift','private func matchesSearch(').replace('private func','func',1)+'\n}\n'
+s += 'struct Search {var searchText:String\n' +declaration('Aether/Views/Library/LibraryView.swift','private func matchesSearch(').replace('private func','func',1)+'\n}\n'
 s += r'''
 struct PairingRecordIdentity:Equatable,Sendable {let id:String}
 enum State {case connected,disconnected}
@@ -105,21 +105,21 @@ callback=connection[connection.index('let publishReadiness: @Sendable'):connecti
 s += 'func callback(includeApps:Bool,verificationID:UUID,reconciliationGeneration:UUID?,checkedRecord:PairingRecordIdentity?,cellularAssistTransaction:Bool,verificationStarted:Double)->@Sendable ()->Void {\n'+callback+'\nreturn publishReadiness\n}\n}\n'
 
 library = (repo/'Aether/Views/Library/LibraryView.swift').read_text()
-prelude = library[library.index('let signedApps = _filteredSignedApps'):library.index('NBNavigationView(.localized("Library")')]
+prelude = library[library.index('let sections: [LibrarySection] ='):library.index('let layout = LibraryLayout')]
 s += r'''
 struct LibrarySearchFixture {
- enum LibrarySection {case exports,downloads,signed,imported}
- var _searchText="query"
- var _filteredSignedApps:[Int]=[];var _filteredImportedApps:[Int]=[];var _filteredExports:[Int]=[];var _filteredDownloads:[Int]=[]
+ enum LibrarySection {case allApps,status,imports,updates}
+ var searchText="query";var showAllApps=false;var installationMethod=1;var showsDevicePlaceholder=true
+ var importRows:[Int]=[];var appsWithUpdates:[Int]=[]
  func results()->(Int,Bool) {
-''' + prelude + 'return (sections.count,searchHasNoResults)\n}\n}\n'
+''' + prelude + 'return (sections.count,!searchText.isEmpty && sections.isEmpty)\n}\n}\n'
 s += r'''
 func check(_ value:@autoclosure ()->Bool,_ message:String){precondition(value(),message)}
 @main struct Checks {
  @MainActor static func main() async throws {
   let empty=LibrarySearchFixture().results()
   check(empty.0==0 && empty.1,"No-results placeholder uses the filtered section membership")
-  var searched=LibrarySearchFixture();searched._filteredDownloads=[1]
+  var searched=LibrarySearchFixture();searched.importRows=[1]
   check(!searched.results().1,"Matching download suppresses no-results placeholder")
   let readiness=ReadyDriver(), verificationID=UUID(), record=PairingRecordIdentity(id:"one")
   readiness.activeVerificationID=verificationID;readiness.currentRecord=record
@@ -162,8 +162,8 @@ func check(_ value:@autoclosure ()->Bool,_ message:String){precondition(value(),
   check(vm.sources.isEmpty && vm.refreshErrors.isEmpty,"Cancellation publishes neither stale catalog nor failure")
   let reads=await vm._repositoryService.reads
   check(reads==8,"Navigation does not repeat cache-miss restoration")
-  check(Search(_searchText:"fixture").matchesSearch("Other",identifier:"com.fixture.app"),"Library search matches bundle identifiers")
-  check(!Search(_searchText:"absent").matchesSearch("Fixture"),"Unmatched entries are excluded")
+  check(Search(searchText:"fixture").matchesSearch("Other","com.fixture.app"),"Library search matches bundle identifiers")
+  check(!Search(searchText:"absent").matchesSearch("Fixture"),"Unmatched entries are excluded")
   print("Whole-app restore/cancellation/search checks passed")
  }
 }

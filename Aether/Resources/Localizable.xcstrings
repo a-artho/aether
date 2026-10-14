@@ -1,9 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Start Sideloaded Collapsed" : {
-      "extractionState" : "manual"
-    },
     "Show Download Buttons" : {
       "extractionState" : "manual"
     },
@@ -19,12 +16,6 @@
     "Loading Installed Apps" : {
       "extractionState" : "manual"
     },
-    "Simplified Mode" : {
-      "extractionState" : "manual"
-    },
-    "Hide Mode Switch" : {
-      "extractionState" : "manual"
-    },
     "Installation Mode" : {
       "extractionState" : "manual"
     },
@@ -34,19 +25,7 @@
     "Show Unsigned IPA" : {
       "extractionState" : "manual"
     },
-    "Simplified Mode keeps the unsigned original alongside signed variants." : {
-      "extractionState" : "manual"
-    },
     "This removes downloads and signed and unsigned imports. Sideloaded apps are kept." : {
-      "extractionState" : "manual"
-    },
-    "Simplified Mode combines Library and Device. Hold Settings for selection and deletion; when the mode switch is hidden, it is available there too. When Settings is hidden, hold the Device tab—or Library in simplified mode—to open it. Search Placement applies to pages that support search." : {
-      "extractionState" : "manual"
-    },
-    "Day Group Cards" : {
-      "extractionState" : "manual"
-    },
-    "Group available updates into a card for each day in sideloaded app details." : {
       "extractionState" : "manual"
     },
     "Navigation" : {
@@ -4044,65 +4023,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "删除"
-          }
-        }
-      }
-    },
-    "Delete After Signing" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "حذف بعد التوقيع"
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nach dem Signieren löschen"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Delete After Signing"
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Elimina dopo la firma"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "서명 후 삭제"
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Usuń po podpisaniu"
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "İmzaladıktan Sonra Sil"
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Xóa sau khi ký"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "签名后删除"
           }
         }
       }
@@ -14637,25 +14557,25 @@
         }
       }
     },
-    "Server (Recommended):\nUses a locally hosted server and itms-services:// to install applications.\n\nIDevice (advanced):\nUses a VPN and a pairing file. Writes to AFC and manually calls installd, while monitoring install progress by using a callback\nAdvantage : It is very reliable, does not need SSL certificates or a externally hosted server. Rather, works similarly to a computer." : {
+    "Server (Recommended):\nUses a locally hosted server and itms-services:// to install applications.\n\nIDevice (advanced):\nUses a VPN and a pairing file. Writes to AFC and manually calls installd, while monitoring install progress by using a callback\nAdvantage          : It is very reliable, does not need SSL certificates or a externally hosted server. Rather, works similarly to a computer." : {
       "extractionState" : "manual",
       "localizations" : {
         "ar" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Server (موصى به):\nيستخدم خادمًا محليًا و itms-services:// لتثبيت التطبيقات.\n\nIDevice (متقدم):\nيستخدم VPN وملف اقتران. يكتب إلى AFC ويستدعي installd يدويًا، مع مراقبة تقدم التثبيت عبر callback.\nالميزة : موثوق جدًا، ولا يحتاج إلى شهادات SSL أو خادم مستضاف خارجيًا، بل يعمل بطريقة مشابهة للكمبيوتر."
+            "value" : "Server (موصى به):\nيستخدم خادمًا محليًا و itms-services:// لتثبيت التطبيقات.\n\nIDevice (متقدم):\nيستخدم VPN وملف اقتران. يكتب إلى AFC ويستدعي installd يدويًا، مع مراقبة تقدم التثبيت عبر callback.\nالميزة          : موثوق جدًا، ولا يحتاج إلى شهادات SSL أو خادم مستضاف خارجيًا، بل يعمل بطريقة مشابهة للكمبيوتر."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Server (Empfohlen):\nVerwendet einen lokal gehosteten Server und itms-services://, um Apps zu installieren.\n\nIDevice (fortgeschritten):\nVerwendet ein VPN und eine Pairing-Datei. Verwendet AFC und ruft installd manuell auf, während der Installationsfortschritt über einen Callback überwacht wird.\nVorteil : Es ist sehr zuverlässig, benötigt keine SSL-Zertifikate oder extern gehostete Server."
+            "value" : "Server (Empfohlen):\nVerwendet einen lokal gehosteten Server und itms-services://, um Apps zu installieren.\n\nIDevice (fortgeschritten):\nVerwendet ein VPN und eine Pairing-Datei. Verwendet AFC und ruft installd manuell auf, während der Installationsfortschritt über einen Callback überwacht wird.\nVorteil          : Es ist sehr zuverlässig, benötigt keine SSL-Zertifikate oder extern gehostete Server."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Server (Recommended):\nUses a locally hosted server and itms-services:// to install applications.\n\nIDevice (advanced):\nUses a VPN and a pairing file. Writes to AFC and manually calls installd, while monitoring install progress by using a callback\nAdvantage : It is very reliable, does not need SSL certificates or a externally hosted server. Rather, works similarly to a computer."
+            "value" : "Server (Recommended):\nUses a locally hosted server and itms-services:// to install applications.\n\nIDevice (advanced):\nUses a VPN and a pairing file. Writes to AFC and manually calls installd, while monitoring install progress by using a callback\nAdvantage          : It is very reliable, does not need SSL certificates or a externally hosted server. Rather, works similarly to a computer."
           }
         },
         "it" : {
@@ -14667,25 +14587,25 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "서버 (추천):\n로컬에 호스팅된 서버와 itms-services://를 사용하여 애플리케이션을 설치합니다.\n\nIDevice (고급):\nVPN과 페어링 파일을 사용합니다. AFC에 데이터를 기록하고 수동으로 installd를 호출하며, 콜백을 통해 설치 진행 상황을 모니터링합니다.\n장점 : 매우 안정적이며, SSL 인증서나 외부 호스팅 서버가 필요하지 않습니다. 오히려 컴퓨터와 비슷한 방식으로 작동합니다."
+            "value" : "서버 (추천):\n로컬에 호스팅된 서버와 itms-services://를 사용하여 애플리케이션을 설치합니다.\n\nIDevice (고급):\nVPN과 페어링 파일을 사용합니다. AFC에 데이터를 기록하고 수동으로 installd를 호출하며, 콜백을 통해 설치 진행 상황을 모니터링합니다.\n장점          : 매우 안정적이며, SSL 인증서나 외부 호스팅 서버가 필요하지 않습니다. 오히려 컴퓨터와 비슷한 방식으로 작동합니다."
           }
         },
         "pl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Serwer (zalecane):\nUżywa lokalnie hostowanego serwera i itms-services:// do instalowania aplikacji.\n\nIDevice (zaawansowane):\nUżywa VPN i pliku parowania. Zapisuje do AFC i ręcznie wywołuje installd, monitorując postęp instalacji przez callback.\nZaleta : Jest bardzo niezawodny, nie wymaga certyfikatów SSL ani zewnętrznego serwera. Działa podobnie do komputera."
+            "value" : "Serwer (zalecane):\nUżywa lokalnie hostowanego serwera i itms-services:// do instalowania aplikacji.\n\nIDevice (zaawansowane):\nUżywa VPN i pliku parowania. Zapisuje do AFC i ręcznie wywołuje installd, monitorując postęp instalacji przez callback.\nZaleta          : Jest bardzo niezawodny, nie wymaga certyfikatów SSL ani zewnętrznego serwera. Działa podobnie do komputera."
           }
         },
         "tr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sunucu (Önerilen):\nUygulamaları yüklemek için yerel olarak barındırılan bir sunucu ve itms-services:// kullanır.\n\nIDevice (Gelişmiş):\nBir VPN ve eşleştirme dosyası kullanır. Kurulum AFC aracılığıyla gerçekleştirilir ve ilerleme izlenebilir.\nAvantajı : Çok güvenilirdir, SSL sertifikalarına veya harici olarak barındırılan bir sunucuya ihtiyaç duymaz. Aksine, bir bilgisayara benzer şekilde çalışır."
+            "value" : "Sunucu (Önerilen):\nUygulamaları yüklemek için yerel olarak barındırılan bir sunucu ve itms-services:// kullanır.\n\nIDevice (Gelişmiş):\nBir VPN ve eşleştirme dosyası kullanır. Kurulum AFC aracılığıyla gerçekleştirilir ve ilerleme izlenebilir.\nAvantajı          : Çok güvenilirdir, SSL sertifikalarına veya harici olarak barındırılan bir sunucuya ihtiyaç duymaz. Aksine, bir bilgisayara benzer şekilde çalışır."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Máy chủ (Khuyến nghị):\nSử dụng máy chủ lưu trữ cục bộ và itms-services:// để cài đặt ứng dụng.\n\nIDevice (nâng cao):\nSử dụng VPN và tệp ghép nối. Ghi vào AFC và gọi installd theo cách thủ công, đồng thời theo dõi tiến trình cài đặt bằng cách sử dụng lệnh gọi lại\nƯu điểm : Rất đáng tin cậy, không cần chứng chỉ SSL hoặc máy chủ lưu trữ bên ngoài. Thay vào đó, hoạt động tương tự như máy tính."
+            "value" : "Máy chủ (Khuyến nghị):\nSử dụng máy chủ lưu trữ cục bộ và itms-services:// để cài đặt ứng dụng.\n\nIDevice (nâng cao):\nSử dụng VPN và tệp ghép nối. Ghi vào AFC và gọi installd theo cách thủ công, đồng thời theo dõi tiến trình cài đặt bằng cách sử dụng lệnh gọi lại\nƯu điểm          : Rất đáng tin cậy, không cần chứng chỉ SSL hoặc máy chủ lưu trữ bên ngoài. Thay vào đó, hoạt động tương tự như máy tính."
           }
         },
         "zh-Hans" : {
@@ -16878,65 +16798,6 @@
         }
       }
     },
-    "This will delete your imported application after signing, to save on using unneeded space." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "ar" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "سيؤدي هذا إلى حذف التطبيق المستورد بعد التوقيع لتوفير المساحة غير الضرورية."
-          }
-        },
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dies wird deine importierte Datei nach der Signierung löschen, um Speicherplatz zu sparen."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "This will delete your imported application after signing, to save on using unneeded space."
-          }
-        },
-        "it" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Questo elimina l'applicazione importata dopo la firma, per salvare spazio usato inutilmente."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "서명 절차가 완료되면 불필요한 저장 공간을 절약하기 위해 가져온 애플리케이션을 삭제합니다."
-          }
-        },
-        "pl" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Spowoduje to usunięcie zaimportowanej aplikacji po jej podpisaniu, co pozwoli zwolnić miejsce."
-          }
-        },
-        "tr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Bu, imzaladıktan sonra içe aktarılan uygulamayı silerek gereksiz alanı geri kazanmanıza yardımcı olur."
-          }
-        },
-        "vi" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Thao tác này sẽ xóa ứng dụng đã nhập của bạn sau khi ký, để tiết kiệm dung lượng không cần thiết."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在签名后删除导入的应用来节省空间。"
-          }
-        }
-      }
-    },
     "Tinted Icons" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -18120,6 +17981,36 @@
           }
         }
       }
+    },
+    "All Apps" : {
+      "extractionState" : "manual"
+    },
+    "Move device controls into the header. Liquid Glass Tiles applies when controls are shown as tiles." : {
+      "extractionState" : "manual"
+    },
+    "Switch" : {
+      "extractionState" : "manual"
+    },
+    "Switch to Local installation mode." : {
+      "extractionState" : "manual"
+    },
+    "Requires Local mode" : {
+      "extractionState" : "manual"
+    },
+    "Settings Placement" : {
+      "extractionState" : "manual"
+    },
+    "Header" : {
+      "extractionState" : "manual"
+    },
+    "Newer Versions" : {
+      "extractionState" : "manual"
+    },
+    "See all sideloaded apps" : {
+      "extractionState" : "manual"
+    },
+    "Choose where Settings and search controls appear. Hold Settings for installation mode, selection, and deletion options." : {
+      "extractionState" : "manual"
     }
   },
   "version" : "1.0"

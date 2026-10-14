@@ -42,6 +42,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 
 	func body(content: Content) -> some View {
 		content
+			.scrollDismissesKeyboard(.immediately)
 			.navigationTitle(title)
 			.navigationBarTitleDisplayMode(.inline)
 			.navigationBarBackButtonHidden(transition.expanded)

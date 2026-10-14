@@ -12,9 +12,7 @@ import UIKit
 // MARK: - View
 // dear god help me
 struct AppearanceView: View {
-	@AppStorage("Aether.simplifiedMode") private var _simplifiedMode = false
-	@AppStorage("Aether.collapseSideloaded") private var _collapseSideloaded = false
-	@AppStorage("Aether.hideModeSwitch") private var _hideModeSwitch = false
+	@AppStorage("Aether.settingsPlacement") private var _settingsPlacement: SettingsPlacement = .header
 	@AppStorage("Aether.userInterfaceStyle")
 	private var _userInterfaceStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
 
@@ -28,9 +26,6 @@ struct AppearanceView: View {
 	private var _searchPlacement: SearchPlacement = .right
 	@AppStorage("Aether.hideTitleSearchIcon")
 	private var _hideTitleSearchIcon = false
-
-	@AppStorage("Aether.updateDayCards")
-	private var _updateDayCards: Bool = false
 
 	@AppStorage("Aether.controlsInHeader")
 	private var _controlsInHeader: Bool = false
@@ -102,17 +97,16 @@ struct AppearanceView: View {
 			}
 
 			NBSection(.localized("Navigation")) {
-				Toggle(isOn: $_simplifiedMode) {
-					SettingsRowLabel(.localized("Simplified Mode"), systemImage: "rectangle.compress.vertical", backgroundColor: .blue)
-				}
-				if _simplifiedMode {
-					Toggle(isOn: $_collapseSideloaded) {
-						SettingsRowLabel(.localized("Start Sideloaded Collapsed"), systemImage: "chevron.right", backgroundColor: .indigo)
+				Picker(selection: $_settingsPlacement) {
+					ForEach(SettingsPlacement.allCases) { placement in
+						Text(placement.label).tag(placement)
 					}
+				} label: {
+					SettingsRowLabel(String.localized("Settings Placement"), systemImage: "gearshape", backgroundColor: .gray)
 				}
-				Toggle(isOn: $_hideModeSwitch) {
-					SettingsRowLabel(.localized("Hide Mode Switch"), systemImage: "arrow.left.arrow.right", backgroundColor: .purple)
-				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+
 				Picker(selection: $_searchPlacement) {
 					ForEach(SearchPlacement.allCases) { placement in
 						Text(placement.label).tag(placement)
@@ -128,7 +122,7 @@ struct AppearanceView: View {
 					}
 				}
 			} footer: {
-				Text(.localized("Simplified Mode combines Library and Device. Hold Settings for selection and deletion; when the mode switch is hidden, it is available there too. When Settings is hidden, hold the Device tab—or Library in simplified mode—to open it. Search Placement applies to pages that support search."))
+				Text(.localized("Choose where Settings and search controls appear. Hold Settings for installation mode, selection, and deletion options."))
 			}
 
 			NBSection(.localized("Device Controls")) {
@@ -140,15 +134,7 @@ struct AppearanceView: View {
 				}
 				.disabled(_controlsInHeader)
 			} footer: {
-				Text(.localized("Move device and app information controls into the header. Liquid Glass Tiles applies when controls are shown as tiles."))
-			}
-
-			NBSection(.localized("Updates")) {
-				Toggle(isOn: $_updateDayCards) {
-					SettingsRowLabel(.localized("Day Group Cards"), systemImage: "rectangle.stack", backgroundColor: .indigo)
-				}
-			} footer: {
-				Text(.localized("Group available updates into a card for each day in sideloaded app details."))
+				Text(.localized("Move device controls into the header. Liquid Glass Tiles applies when controls are shown as tiles."))
 			}
 
 			NBSection(.localized("Library")) {

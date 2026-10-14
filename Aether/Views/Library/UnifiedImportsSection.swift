@@ -30,7 +30,6 @@ struct UnifiedImportEntry: Identifiable {
 
 @MainActor
 final class UnifiedImportsController: ObservableObject {
-	@Published var isExpanded = true
 	@Published var selectedRows: Set<String> = []
 	@Published var editMode: EditMode = .inactive
 	@Published var infoApp: AnyApp?
@@ -60,7 +59,7 @@ final class UnifiedImportsController: ObservableObject {
 		selectedRows.formIntersection(visibleRows.map(\.id))
 	}
 
-	func select() { withAnimation { isExpanded = true; editMode = .active } }
+	func select() { withAnimation { editMode = .active } }
 	func finishSelection() { withAnimation { editMode = .inactive; selectedRows.removeAll() } }
 	func toggle(_ id: String) {
 		if selectedRows.contains(id) { selectedRows.remove(id) }
@@ -157,18 +156,8 @@ final class UnifiedImportsController: ObservableObject {
 	}
 }
 
-struct UnifiedImportsDataSourceMount: ViewModifier {
-	let controller: UnifiedImportsController
-	let isEnabled: Bool
-
-	@ViewBuilder func body(content: Content) -> some View {
-		if isEnabled { content.modifier(UnifiedImportsDataSource(controller: controller)) }
-		else { content }
-	}
-}
-
 /// Observe the catalog on the persistent list, even when it has no sections.
-private struct UnifiedImportsDataSource: ViewModifier {
+struct UnifiedImportsDataSource: ViewModifier {
 	@ObservedObject var controller: UnifiedImportsController
 	@ObservedObject private var downloads = DownloadManager.shared
 	@ObservedObject private var installations = AppInstallationManager.shared
@@ -242,6 +231,7 @@ struct UnifiedImportsRows: View {
 					if let old { visibleOperation(old, entry.id, false) }
 					if let new { visibleOperation(new, entry.id, true) }
 				}
+				.onAppear { if let operation = entry.operation { visibleOperation(operation.id, entry.id, true) } }
 				.onDisappear { if let operation = entry.operation { visibleOperation(operation.id, entry.id, false) } }
 		}
 	}
@@ -436,6 +426,23 @@ private struct UnifiedImportMetadata: View {
 		return (certificateStatus, false)
 	}
 
+	/// Progress values update in place; only changes of phase animate the status.
+	private var numericProgressPhase: String? {
+		if entry.operation != nil, !entry.signOnlyCompleted(model: model) { return nil }
+		if let export = entry.export {
+			if case .exporting = export.state { return "export-processing" }
+			return nil
+		}
+		if let download = entry.download {
+			switch download.state {
+			case .downloading: return "downloading"
+			case .processing where !download.waitingForForeground: return "download-processing"
+			default: return nil
+			}
+		}
+		return nil
+	}
+
 	private var showsTaskStatus: Bool {
 		(entry.operation != nil && !entry.signOnlyCompleted(model: model)) || entry.download != nil || entry.export != nil
 	}
@@ -471,6 +478,8 @@ private struct UnifiedImportMetadata: View {
 			isFailed: !showsTaskStatus && status.failed,
 			animatesStatus: true,
 			thirdLineStatus: showsTaskStatus ? status.text : nil,
+			thirdLineAnimationKey: numericProgressPhase ?? status.text,
+			showsNumericProgress: numericProgressPhase != nil,
 			statusColor: statusColor
 		)
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
@@ -500,7 +509,8 @@ private struct UnifiedImportAccessory: View {
 	}
 
 	var body: some View {
-		Group {
+		ZStack(alignment: .trailing) {
+			Group {
 			if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
 				if let model = model {
 					if case .broken = model.status {
@@ -524,7 +534,9 @@ private struct UnifiedImportAccessory: View {
 				.buttonStyle(.borderless)
 			}
 		}
-		.contentTransition(.interpolate)
+			.id(stage)
+			.transition(.opacity)
+		}
 		.animation(reduceMotion ? nil : .smooth(duration: 0.25), value: stage)
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
 		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }

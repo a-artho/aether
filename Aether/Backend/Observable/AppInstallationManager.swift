@@ -199,14 +199,10 @@ final class AppInstallationManager: ObservableObject {
 	}
 
 	func startSigning(app: AppInfoPresentable, options: Options, icon: UIImage?, certificate: CertificatePair?) -> Bool {
-		var effectiveOptions = options
-		if UserDefaults.standard.bool(forKey: "Aether.simplifiedMode") {
-			effectiveOptions.post_deleteAppAfterSigned = false
-		}
 		let request = InstallationRequest(app: AppSnapshot(app),
 			method: UserDefaults.standard.integer(forKey: "Aether.installationMethod"),
 			serverMethod: UserDefaults.standard.object(forKey: "Aether.serverMethod") as? Int ?? 1,
-			signing: SigningInput(options: effectiveOptions, iconData: icon?.pngData(), certificateUUID: certificate?.uuid),
+			signing: SigningInput(options: options, iconData: icon?.pngData(), certificateUUID: certificate?.uuid),
 			installRequested: options.post_installAppAfterSigned)
 		return _enqueue(request)
 	}
@@ -327,8 +323,6 @@ final class AppInstallationManager: ObservableObject {
 					signedRequest.signing = nil
 					self.currentRequest = signedRequest
 					self.activeApp = signedRequest.app
-					if signing.options.post_deleteAppAfterSigned, !request.app.isSigned,
-						!UserDefaults.standard.bool(forKey: "Aether.simplifiedMode") { Storage.shared.deleteApp(for: request.app) }
 					if signing.options.post_installAppAfterSigned {
 						self._persistInstallQueue()
 						AppTabManager.shared.showInstallQueue()

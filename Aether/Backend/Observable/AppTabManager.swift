@@ -38,32 +38,32 @@ final class AppTabManager: ObservableObject {
 	}
 	@Published var isSettingsPresented = false
 	@Published var requestedSettingsPage: SettingsPage? = nil
+	@Published var visibleSettingsPage: SettingsPage = .root
+	var usesSettingsTab: Bool { SettingsPlacement.usesTab }
 	@Published var isLibrarySearchPresented = false
-	@Published var isDeviceSearchPresented = false
-	enum LibraryAction: Equatable { case select, deleteAll }
-	@Published var requestedLibraryAction: LibraryAction?
 	@Published private(set) var installationFocusRequest: UUID?
 	@Published private(set) var libraryFocusRequest: UUID?
 
 	private init() {}
 
-	func switchTo(_ tab: TabEnum) {
+	func switchTo(_ tab: TabEnum, focusImports: Bool = true) {
 		if tab == .settings {
 			openSettings()
 			return
 		}
 		isSettingsPresented = false
-		if tab == .library && UserDefaults.standard.bool(forKey: "Aether.simplifiedMode") {
+		if tab == .library && focusImports {
 			libraryFocusRequest = UUID()
 		}
 		withAnimation(.easeInOut(duration: 0.25)) {
-			self.selectedTab = tab == .library && UserDefaults.standard.bool(forKey: "Aether.simplifiedMode") ? .installed : tab
+			self.selectedTab = tab
 		}
 	}
 
 	func showInstallQueue() {
+		libraryFocusRequest = nil
 		installationFocusRequest = UUID()
-		switchTo(.installed)
+		switchTo(.library, focusImports: false)
 	}
 
 	func consumeInstallationFocusRequest(_ request: UUID) {
@@ -77,8 +77,13 @@ final class AppTabManager: ObservableObject {
 	}
 
 	func openSettings(page: SettingsPage? = nil) {
-		requestedSettingsPage = page
-		isSettingsPresented = true
+		requestedSettingsPage = page ?? .root
+		if usesSettingsTab {
+			isSettingsPresented = false
+			selectedTab = .settings
+		} else {
+			isSettingsPresented = true
+		}
 	}
 
 	func openInstallationSettings() {
@@ -89,8 +94,6 @@ final class AppTabManager: ObservableObject {
 		switch selectedTab {
 		case .library:
 			isLibrarySearchPresented = true
-		case .installed:
-			isDeviceSearchPresented = true
 		case .sources:
 			SourcesRouter.shared.openSearchForVisibleScreen()
 		default:
@@ -102,7 +105,6 @@ final class AppTabManager: ObservableObject {
 
 	func closeSearch() {
 		isLibrarySearchPresented = false
-		isDeviceSearchPresented = false
 		SourcesRouter.shared.closeSearch()
 	}
 }

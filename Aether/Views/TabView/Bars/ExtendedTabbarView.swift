@@ -12,7 +12,7 @@ struct ExtendedTabbarView: View {
 	@Environment(\.horizontalSizeClass) var horizontalSizeClass
 	@AppStorage("Aether.tabCustomization") var customization = TabViewCustomization()
 	@AppStorage("Aether.hideTabBarLabels") private var hideTabBarLabels = false
-	@AppStorage("Aether.simplifiedMode") private var simplifiedMode = false
+	@AppStorage("Aether.settingsPlacement") private var settingsPlacement: SettingsPlacement = .header
 	@AppStorage("Aether.installationMethod") private var installationMethod = 0
 	@AppStorage("Aether.serverMethod") private var serverMethod = 1
 	@AppStorage("Aether.userTintColor") private var themeTint = "#848ef9"
@@ -33,9 +33,15 @@ struct ExtendedTabbarView: View {
 		)
 	}
 		
+	private var settingsTabEnabled: Bool { SettingsPlacement.usesTab(placement: settingsPlacement) }
+	private var defaultTabs: [TabEnum] {
+		let tabs = TabEnum.defaultTabs
+		return settingsTabEnabled ? tabs + [.settings] : tabs
+	}
+
 	var body: some View {
 		TabView(selection: _selectedTabBinding) {
-			ForEach(TabEnum.defaultTabs.filter { !simplifiedMode || $0 != .library }, id: \.hashValue) { tab in
+			ForEach(defaultTabs, id: \.self) { tab in
 				Tab(value: tab.rawValue) {
 					TabEnum.view(for: tab)
 				} label: {
@@ -58,8 +64,14 @@ struct ExtendedTabbarView: View {
 		}
 		.tabViewStyle(.sidebarAdaptable)
 		.tabViewCustomization($customization)
-		.onChange(of: simplifiedMode) { _, enabled in
-			if enabled && tabManager.selectedTab == .library { tabManager.selectedTab = .installed }
+		.onChange(of: settingsTabEnabled) { _, enabled in
+			let page = tabManager.requestedSettingsPage ?? tabManager.visibleSettingsPage
+			if enabled && tabManager.isSettingsPresented {
+				tabManager.openSettings(page: page)
+			} else if !enabled && tabManager.selectedTab == .settings {
+				tabManager.selectedTab = .library
+				tabManager.openSettings(page: page)
+			}
 		}
 		.sheet(isPresented: $tabManager.isSettingsPresented) {
 			SettingsView()
@@ -68,7 +80,7 @@ struct ExtendedTabbarView: View {
 
 	@ViewBuilder
 	private func tabLabel(for tab: TabEnum) -> some View {
-		let icon = simplifiedMode && tab == .installed ? TabEnum.library.icon : tab.icon
+		let icon = tab.icon
 		if hideTabBarLabels && horizontalSizeClass == .compact {
 			label(for: tab, icon: icon)
 				.labelStyle(.iconOnly)
@@ -78,12 +90,12 @@ struct ExtendedTabbarView: View {
 	}
 
 	@ViewBuilder private func label(for tab: TabEnum, icon: String) -> some View {
-		if tab == .installed {
+		if tab == .library {
 			Label {
-				Text(simplifiedMode ? TabEnum.library.title : tab.title)
+				Text(tab.title)
 			} icon: {
-				Image(uiImage: DeviceTabStatusIcon.image(symbol: simplifiedMode ? icon + ".fill" : icon, ready: installationReady,
-					selected: tabManager.selectedTab == .installed, tint: Color(hex: themeTint),
+				Image(uiImage: DeviceTabStatusIcon.image(symbol: icon + ".fill", ready: installationReady,
+					selected: tabManager.selectedTab == .library, tint: Color(hex: themeTint),
 					colorScheme: colorScheme, scale: displayScale))
 			}
 		} else { Label(tab.title, systemImage: icon) }

@@ -10,7 +10,7 @@ def declaration(path, start):
     return text[p:e]
 locator = declaration('Aether/Backend/Observable/SourcesRouter.swift', 'struct AppLocator:')
 publish = declaration('Aether/Backend/Observable/DebugLogManager.swift', 'private func _publish(').replace('private func', 'func', 1)
-focus = declaration('Aether/Views/Installed/InstalledAppsView.swift', '.task(id: installationFocusState)').replace('.task(id: installationFocusState)', 'func focus()', 1)
+focus = declaration('Aether/Views/Library/LibraryView.swift', '.task(id: installationFocusState)').replace('.task(id: installationFocusState)', 'func focus()', 1)
 audio = declaration('Aether/Utilities/BackgroundAudioManager.swift', 'final class BackgroundAudioManager')
 fixture = r'''
 import Foundation
@@ -66,8 +66,8 @@ final class AVAudioEngine {
 struct Transaction { var disablesAnimations = false }
 func withTransaction(_ transaction: Transaction, _ body: () -> Void) { body() }
 final class FocusTab {
- enum Tab { case installed, library }
- var selectedTab = Tab.installed
+ enum Tab { case library, sources }
+ var selectedTab = Tab.library
  var installationFocusRequest: UUID? = UUID()
  func consumeInstallationFocusRequest(_ request: UUID) {
   if installationFocusRequest == request { installationFocusRequest = nil }
@@ -83,25 +83,23 @@ final class FocusProxy {
 final class FocusFixture {
  struct Card { let id: UUID }
  final class Imports {
-  var isExpanded=true
   struct Row { let id:String; let operation:Card? }
   var rows:[Row]=[]
   var visibleRows:[Row] { rows }
   var selectionFinished=false
+  var infoApp:String?
   func finishSelection() { selectionFinished=true }
  }
- var simplifiedMode=false
  let imports=Imports()
  var visibleUnifiedInstallRows=[UUID:Set<String>]()
  let tabManager = FocusTab()
  let scrollProxy = FocusProxy()
  var cards = [Card(id:UUID())]
- var selectedAppBundleId: String?
+ var appNavigationPath: [InstalledAppsRoute] = []
  var isSpoofingPresented = false
  var isRootListVisible = false
- var visibleInstallRows = Set<UUID>()
  func operationIsVisible(_ id:UUID)->Bool {
-  simplifiedMode ? visibleUnifiedInstallRows[id]?.isEmpty == false : visibleInstallRows.contains(id)
+  visibleUnifiedInstallRows[id]?.isEmpty == false
  }
  FOCUS
 }
@@ -170,33 +168,47 @@ final class AuditFixTests: XCTestCase {
  }
  func testInstallFocusWaitsForRootAndTargetAppearance() {
   let view = FocusFixture()
-  view.selectedAppBundleId = "app.details"
+  view.imports.rows=[.init(id:"app:original",operation:view.cards.first!)]
+  view.appNavigationPath = [.allApps]
   view.focus()
-  XCTAssertNil(view.selectedAppBundleId)
+  XCTAssertTrue(view.appNavigationPath.isEmpty)
   XCTAssertTrue(view.scrollProxy.targets.isEmpty)
   XCTAssertNotNil(view.tabManager.installationFocusRequest)
   view.focus()
   XCTAssertTrue(view.scrollProxy.targets.isEmpty)
   view.isRootListVisible = true
   view.focus()
-  XCTAssertEqual(view.scrollProxy.targets.last,view.cards.first!.id)
+  XCTAssertEqual(view.scrollProxy.rowTargets.last,"app:original")
   XCTAssertNotNil(view.tabManager.installationFocusRequest)
-  view.visibleInstallRows.insert(view.cards.first!.id)
+  view.visibleUnifiedInstallRows[view.cards.first!.id]=["app:original"]
   view.focus()
   XCTAssertNil(view.tabManager.installationFocusRequest)
  }
- func testManualTabNavigationPreservesDetailAndScroll() {
+
+
+ func testInstallFocusDismissesInfoBeforeScrolling() {
+  let view=FocusFixture()
+  view.isRootListVisible=true
+  view.imports.infoApp="app-info"
+  view.imports.rows=[.init(id:"app:original",operation:view.cards.first!)]
+  view.focus()
+  XCTAssertNil(view.imports.infoApp)
+  XCTAssertTrue(view.scrollProxy.rowTargets.isEmpty)
+  XCTAssertNotNil(view.tabManager.installationFocusRequest)
+  view.focus()
+  XCTAssertEqual(view.scrollProxy.rowTargets,["app:original"])
+ }
+ func testManualTabNavigationPreservesCollectionAndScroll() {
   let view = FocusFixture()
   view.tabManager.installationFocusRequest = nil
-  view.selectedAppBundleId = "app.details"
+  view.appNavigationPath = [.allApps]
   view.isRootListVisible = true
   view.focus()
-  XCTAssertEqual(view.selectedAppBundleId,"app.details")
+  XCTAssertEqual(view.appNavigationPath,[.allApps])
   XCTAssertTrue(view.scrollProxy.targets.isEmpty)
  }
- func testSimplifiedFocusUsesStableArtifactRowAndWaitsForAppearance() {
+ func testLibraryFocusUsesStableArtifactRowAndWaitsForAppearance() {
   let view=FocusFixture()
-  view.simplifiedMode=true
   view.isRootListVisible=true
   let card=view.cards.first!
   view.imports.rows=[.init(id:"app:original",operation:card)]
@@ -211,14 +223,14 @@ final class AuditFixTests: XCTestCase {
  }
  func testInstallFocusDoesNotActInAnotherTabOrWithoutJobs() {
   let view = FocusFixture()
-  view.tabManager.selectedTab = .library
-  view.selectedAppBundleId = "app.details"
+  view.tabManager.selectedTab = .sources
+  view.appNavigationPath = [.allApps]
   view.focus()
-  XCTAssertEqual(view.selectedAppBundleId,"app.details")
-  view.tabManager.selectedTab = .installed
+  XCTAssertEqual(view.appNavigationPath,[.allApps])
+  view.tabManager.selectedTab = .library
   view.cards = []
   view.focus()
-  XCTAssertEqual(view.selectedAppBundleId,"app.details")
+  XCTAssertEqual(view.appNavigationPath,[.allApps])
   XCTAssertNotNil(view.tabManager.installationFocusRequest)
  }
  func testAudioStaysActiveUntilLastRequesterStops() {
@@ -233,4 +245,161 @@ final class AuditFixTests: XCTestCase {
  }
 }
 '''.replace(' PUBLISH',publish).replace(' FOCUS',focus)
-(out/'AuditFixTests.swift').write_text(fixture+'\n'+locator+'\n'+audio+'\n')
+route = declaration('Aether/Views/Installed/AllInstalledAppsView.swift', 'enum InstalledAppsRoute:')
+delete = declaration('Aether/Views/Installed/AllInstalledAppsView.swift', 'private func delete(').replace('private func', 'func', 1).replace('DebugLogManager', 'AuditDebugLogManager')
+delete_checks = r'''
+struct InstalledApp { let bundleIdentifier:String; var id:String { bundleIdentifier } }
+@MainActor final class DeleteStore {
+ var apps=[InstalledApp(bundleIdentifier:"installed.fixture")]
+ var shouldFail=false
+ var calls=0
+ func delete(app:InstalledApp) async throws {
+  calls += 1
+  if shouldFail { throw NSError(domain:"uninstall",code:1) }
+  apps.removeAll { $0.id == app.id }
+ }
+}
+@MainActor final class AuditDebugLogManager {
+ enum Level { case error }
+ static let shared=AuditDebugLogManager()
+ func log(_ message:String, category:String, level:Level) {}
+}
+@MainActor final class DeleteFixture {
+ let store=DeleteStore()
+ var deletingIDs=Set<String>()
+ var deletionError:String?
+ DELETE
+}
+final class InstalledRowDeletionTests:XCTestCase {
+ @MainActor func testSuccessfulUninstallRemovesAppAndReleasesBusyState() async {
+  let view=DeleteFixture(), app=InstalledApp(bundleIdentifier:"installed.fixture")
+  await view.delete(app)
+  XCTAssertTrue(view.store.apps.isEmpty)
+  XCTAssertTrue(view.deletingIDs.isEmpty)
+  XCTAssertNil(view.deletionError)
+ }
+ @MainActor func testFailedUninstallKeepsAppAndAllowsRetry() async {
+  let view=DeleteFixture(), app=InstalledApp(bundleIdentifier:"installed.fixture")
+  view.store.shouldFail=true
+  await view.delete(app)
+  XCTAssertEqual(view.store.apps.map(\.id),[app.id])
+  XCTAssertTrue(view.deletingIDs.isEmpty)
+  XCTAssertNotNil(view.deletionError)
+ }
+ @MainActor func testInFlightUninstallCannotBeStartedTwice() async {
+  let view=DeleteFixture(), app=InstalledApp(bundleIdentifier:"installed.fixture")
+  view.deletingIDs.insert(app.id)
+  await view.delete(app)
+  XCTAssertEqual(view.store.calls,0)
+  XCTAssertEqual(view.store.apps.map(\.id),[app.id])
+ }
+}
+'''.replace(' DELETE',delete)
+placement = declaration('Aether/Views/Settings/Appearance/SettingsPlacement.swift', 'enum SettingsPlacement:')
+open_settings = declaration('Aether/Backend/Observable/AppTabManager.swift', 'func openSettings(')
+settings_page = declaration('Aether/Backend/Observable/AppTabManager.swift', 'enum SettingsPage:')
+consume_settings = declaration('Aether/Views/Settings/SettingsView.swift', 'private func _presentRequestedPageIfNeeded()').replace('private func', 'func', 1)
+handoff = declaration('Aether/Views/TabView/Bars/ExtendedTabbarView.swift', '.onChange(of: settingsTabEnabled)').replace('.onChange(of: settingsTabEnabled) { _, enabled in', 'func handoff(enabled: Bool) {', 1)
+tab_list = declaration('Aether/Views/TabView/Bars/ExtendedTabbarView.swift', 'private var defaultTabs:').replace('private var', 'var', 1)
+settings_checks = r'''
+extension String { fileprivate static func localized(_ key:String)->String {key} }
+enum TabEnum {case sources,library,settings; static var defaultTabs:[Self] {[.sources,.library]} }
+@MainActor final class SettingsRoutingFixture {
+ SETTINGS_PAGE
+ var requestedSettingsPage:SettingsPage?
+ var visibleSettingsPage=SettingsPage.root
+ var usesSettingsTab=false
+ var selectedTab=TabEnum.library
+ var isSettingsPresented=false
+ OPEN_SETTINGS
+}
+@MainActor final class SettingsOwnerFixture {
+ enum Presentation {case modal,tab}
+ var presentation=Presentation.modal
+ let _tabManager=SettingsRoutingFixture()
+ var _settingsPath=[SettingsRoutingFixture.SettingsPage]()
+ CONSUME_SETTINGS
+}
+@MainActor final class SettingsHandoffFixture {
+ let tabManager=SettingsRoutingFixture()
+ HANDOFF
+}
+final class TabLayoutFixture {
+ var placement=SettingsPlacement.header
+ var settingsTabEnabled:Bool {SettingsPlacement.usesTab(placement:placement)}
+ TAB_LIST
+}
+final class SettingsPlacementTests:XCTestCase {
+ func testSettingsPlacementControlsOptionalThirdTab() {
+  let layout=TabLayoutFixture()
+  XCTAssertEqual(layout.defaultTabs,[.sources,.library])
+  layout.placement = .tabBar
+  XCTAssertEqual(layout.defaultTabs,[.sources,.library,.settings])
+  layout.placement = .header
+  XCTAssertEqual(layout.defaultTabs,[.sources,.library])
+ }
+ @MainActor func testHeaderSettingsOpensModalAtRequestedPage() async {
+  let routing=SettingsRoutingFixture()
+  routing.openSettings(page:.pairingFile)
+  XCTAssertTrue(routing.isSettingsPresented)
+  XCTAssertEqual(routing.selectedTab,.library)
+  XCTAssertEqual(routing.requestedSettingsPage,.pairingFile)
+ }
+ @MainActor func testTabSettingsOpensRequestedPageWithoutModal() async {
+  let routing=SettingsRoutingFixture()
+  routing.usesSettingsTab=true
+  routing.openSettings(page:.tunnel)
+  XCTAssertFalse(routing.isSettingsPresented)
+  XCTAssertEqual(routing.selectedTab,.settings)
+  XCTAssertEqual(routing.requestedSettingsPage,.tunnel)
+ }
+ @MainActor func testOpeningSettingsWithoutPageRequestsRoot() async {
+  let routing=SettingsRoutingFixture()
+  routing.openSettings()
+  XCTAssertEqual(routing.requestedSettingsPage,.root)
+ }
+ @MainActor func testHandoffFromModalToTabRetainsAppearance() async {
+  let view=SettingsHandoffFixture()
+  view.tabManager.isSettingsPresented=true
+  view.tabManager.visibleSettingsPage = .appearance
+  view.tabManager.usesSettingsTab=true
+  view.handoff(enabled:true)
+  XCTAssertFalse(view.tabManager.isSettingsPresented)
+  XCTAssertEqual(view.tabManager.selectedTab,.settings)
+  XCTAssertEqual(view.tabManager.requestedSettingsPage,.appearance)
+ }
+ @MainActor func testHandoffFromRemovedSettingsTabRetainsCurrentPage() async {
+  let view=SettingsHandoffFixture()
+  view.tabManager.visibleSettingsPage = .reset
+  view.tabManager.selectedTab = .settings
+  view.handoff(enabled:false)
+  XCTAssertTrue(view.tabManager.isSettingsPresented)
+  XCTAssertEqual(view.tabManager.selectedTab,.library)
+  XCTAssertEqual(view.tabManager.requestedSettingsPage,.reset)
+ }
+ @MainActor func testDismissedModalCannotConsumeTabNavigationRequest() async {
+  let view=SettingsOwnerFixture()
+  view._tabManager.usesSettingsTab=true
+  view._tabManager.selectedTab = .settings
+  view._tabManager.requestedSettingsPage = .appearance
+  view._presentRequestedPageIfNeeded()
+  XCTAssertEqual(view._tabManager.requestedSettingsPage,.appearance)
+  view.presentation = .tab
+  view._presentRequestedPageIfNeeded()
+  XCTAssertEqual(view._settingsPath,[.appearance])
+  XCTAssertNil(view._tabManager.requestedSettingsPage)
+ }
+ @MainActor func testInactiveSettingsTabWaitsUntilSelected() async {
+  let view=SettingsOwnerFixture()
+  view.presentation = .tab
+  view._tabManager.usesSettingsTab=true
+  view._tabManager.requestedSettingsPage = .tunnel
+  view._presentRequestedPageIfNeeded()
+  XCTAssertEqual(view._tabManager.requestedSettingsPage,.tunnel)
+  view._tabManager.selectedTab = .settings
+  view._presentRequestedPageIfNeeded()
+  XCTAssertEqual(view._settingsPath,[.tunnel])
+ }
+}
+'''.replace(' SETTINGS_PAGE',settings_page).replace(' OPEN_SETTINGS',open_settings).replace(' CONSUME_SETTINGS',consume_settings).replace(' HANDOFF',handoff).replace(' TAB_LIST',tab_list)
+(out/'AuditFixTests.swift').write_text((fixture+'\n'+locator+'\n'+audio+'\n'+route+'\n'+delete_checks+'\n'+placement+'\n'+settings_checks+'\n').replace('.localized(', '.auditLocalized(').replace('static func localized(', 'static func auditLocalized('))

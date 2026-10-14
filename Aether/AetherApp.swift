@@ -155,7 +155,7 @@ struct AetherApp: App {
 				return
 			}
 			if url.host == "test-scroll" {
-				AppTabManager.shared.switchTo(.installed)
+				AppTabManager.shared.switchTo(.library)
 				DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
 					NotificationCenter.default.post(name: Notification.Name("Aether.testScrollDevice"), object: nil)
 				}
@@ -163,16 +163,16 @@ struct AetherApp: App {
 			}
 			if url.host == "mock-apps" {
 				NotificationCenter.default.post(name: Notification.Name("Aether.mockApps"), object: nil)
-				AppTabManager.shared.switchTo(.installed)
+				AppTabManager.shared.switchTo(.library)
 				return
 			}
 			if url.host == "clear-apps" {
 				NotificationCenter.default.post(name: Notification.Name("Aether.clearApps"), object: nil)
-				AppTabManager.shared.switchTo(.installed)
+				AppTabManager.shared.switchTo(.library)
 				return
 			}
 			if url.host == "open-app-detail" {
-				AppTabManager.shared.switchTo(.installed)
+				AppTabManager.shared.switchTo(.library)
 				let bundleId = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value
 				DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
 					NotificationCenter.default.post(name: Notification.Name("Aether.openAppDetail"), object: bundleId)
@@ -185,7 +185,7 @@ struct AetherApp: App {
 			}
 			if url.host == "mock-install" {
 				AppInstallationManager.shared.startMockInstall(progress: 0.62, status: .installing)
-				AppTabManager.shared.switchTo(.installed)
+				AppTabManager.shared.switchTo(.library)
 				return
 			}
 			if url.host == "mock-install-queue" {
@@ -205,7 +205,7 @@ struct AetherApp: App {
 			}
 			if url.host == "mock-install-done" {
 				AppInstallationManager.shared.startMockInstall(progress: 1.0, status: .completed(.success(())))
-				AppTabManager.shared.switchTo(.installed)
+				AppTabManager.shared.switchTo(.library)
 				return
 			}
 			#endif

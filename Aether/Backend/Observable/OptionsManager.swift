@@ -126,7 +126,6 @@ struct Options: Codable, Equatable, Sendable {
 
 	var post_installAppAfterSigned: Bool
 	/// This will delete your imported application after signing, to save on using unneeded space.
-	var post_deleteAppAfterSigned: Bool
 
 	// MARK: - Defaults
 	static let defaultOptions = Options(
@@ -168,8 +167,7 @@ struct Options: Codable, Equatable, Sendable {
 
 		// MARK: Post Modifications
 
-		post_installAppAfterSigned: false,
-		post_deleteAppAfterSigned: false
+		post_installAppAfterSigned: false
 	)
 
 	// MARK: duplicate values are not recommended!

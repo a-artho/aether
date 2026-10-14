@@ -104,7 +104,7 @@ struct LogsView: View {
 							.font(.headline)
 							.foregroundColor(.primary)
 						Text(.localized("Turn on Enable Logging above to record diagnostic events for installations, pairing, and tunneling."))
-							.font(.subheadline)
+							.nbFont(.subheadline)
 							.foregroundColor(.secondary)
 							.multilineTextAlignment(.center)
 							.padding(.horizontal)
@@ -117,7 +117,7 @@ struct LogsView: View {
 							.font(.system(size: 34))
 							.foregroundColor(.secondary)
 						Text(.localized("No logs found"))
-							.font(.subheadline)
+							.nbFont(.subheadline)
 							.foregroundColor(.secondary)
 						if !_logManager.searchText.isEmpty || _logManager.selectedLevel != .all || _logManager.selectedCategory != "All" {
 							Button(.localized("Reset Filters")) {
