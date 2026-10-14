@@ -61,5 +61,6 @@ extension Storage {
 		if context.hasChanges {
 			try context.save()
 		}
+		LibraryArtifactIndex.shared.remove(uuid: uuid, isSigned: false)
 	}
 }

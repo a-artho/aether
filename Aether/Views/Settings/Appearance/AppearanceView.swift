@@ -12,6 +12,9 @@ import UIKit
 // MARK: - View
 // dear god help me
 struct AppearanceView: View {
+	@AppStorage("Aether.simplifiedMode") private var _simplifiedMode = false
+	@AppStorage("Aether.collapseSideloaded") private var _collapseSideloaded = false
+	@AppStorage("Aether.hideModeSwitch") private var _hideModeSwitch = false
 	@AppStorage("Aether.userInterfaceStyle")
 	private var _userInterfaceStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
 
@@ -21,8 +24,10 @@ struct AppearanceView: View {
 	@AppStorage("Aether.hideTabBarLabels")
 	private var _hideTabBarLabels: Bool = false
 
-	@AppStorage("Aether.searchOnRight")
-	private var _searchOnRight: Bool = false
+	@AppStorage("Aether.searchPlacement")
+	private var _searchPlacement: SearchPlacement = .right
+	@AppStorage("Aether.hideTitleSearchIcon")
+	private var _hideTitleSearchIcon = false
 
 	@AppStorage("Aether.updateDayCards")
 	private var _updateDayCards: Bool = false
@@ -35,6 +40,9 @@ struct AppearanceView: View {
 
 	@AppStorage("Aether.shouldChangeIconsBasedOffStyle")
 	private var _shouldChangeIconsBasedOffStyle: Bool = false
+
+	@AppStorage("Aether.showRepoDownloadButtons")
+	private var _showRepoDownloadButtons = true
 
 	@AppStorage("Aether.storeCellAppearance")
 	private var _storeCellAppearance: Int = 0
@@ -94,11 +102,33 @@ struct AppearanceView: View {
 			}
 
 			NBSection(.localized("Navigation")) {
-				Toggle(isOn: $_searchOnRight) {
-					SettingsRowLabel(.localized("Search on Right"), systemImage: "magnifyingglass", backgroundColor: .blue)
+				Toggle(isOn: $_simplifiedMode) {
+					SettingsRowLabel(.localized("Simplified Mode"), systemImage: "rectangle.compress.vertical", backgroundColor: .blue)
+				}
+				if _simplifiedMode {
+					Toggle(isOn: $_collapseSideloaded) {
+						SettingsRowLabel(.localized("Start Sideloaded Collapsed"), systemImage: "chevron.right", backgroundColor: .indigo)
+					}
+				}
+				Toggle(isOn: $_hideModeSwitch) {
+					SettingsRowLabel(.localized("Hide Mode Switch"), systemImage: "arrow.left.arrow.right", backgroundColor: .purple)
+				}
+				Picker(selection: $_searchPlacement) {
+					ForEach(SearchPlacement.allCases) { placement in
+						Text(placement.label).tag(placement)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Search Placement"), systemImage: "magnifyingglass", backgroundColor: .blue)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+				if _searchPlacement == .pageTitle {
+					Toggle(isOn: $_hideTitleSearchIcon) {
+						SettingsRowLabel(.localized("Hide Search Icon"), systemImage: "magnifyingglass", backgroundColor: .blue)
+					}
 				}
 			} footer: {
-				Text(.localized("Place search on the right. When an Add button is present, search appears beside it in a shared button group."))
+				Text(.localized("Simplified Mode combines Library and Device. Hold Settings for selection and deletion; when the mode switch is hidden, it is available there too. When Settings is hidden, hold the Device tab—or Library in simplified mode—to open it. Search Placement applies to pages that support search."))
 			}
 
 			NBSection(.localized("Device Controls")) {
@@ -131,6 +161,9 @@ struct AppearanceView: View {
 			}
 
 			NBSection(.localized("Sources")) {
+				Toggle(isOn: $_showRepoDownloadButtons) {
+					SettingsRowLabel(.localized("Show Download Buttons"), systemImage: "icloud.and.arrow.down", backgroundColor: .blue)
+				}
 				Picker(.localized("Store Cell Appearance"), selection: $_storeCellAppearance) {
 					ForEach(0..<_storeCellAppearanceMethods.count, id: \.self) { index in
 						let method = _storeCellAppearanceMethods[index]

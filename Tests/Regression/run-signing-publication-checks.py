@@ -22,12 +22,13 @@ s += method(manager, 'func containsInstallation(for') + '\n' + method(manager, '
 s += '''
 enum SigningFileHandlerError: Error {case appNotFound}
 extension Bundle {var name:String? {nil};var version:String? {nil};var iconFileName:String? {nil}}
-struct Source {var uuid:String?;var source:URL?}
+struct Source {var uuid:String?;var source:URL?;var isSigned=false}
 struct Options {enum SigningOption {case `default`};var signingOption=SigningOption.default}
 struct Certificate {var uuid:String?}
 final class Files {var exists=true;func getPath(in:URL,for:String)->URL? {exists ? URL(fileURLWithPath:"/tmp/Fixture.app") : nil}}
 struct Log {func info(_ s:String){}}
 enum Logger {static let signing=Log()}
+@MainActor final class LibraryArtifactIndex { static let shared=LibraryArtifactIndex(); var recorded=false; func recordSigned(uuid:String,sourceUUID:String?,sourceIsSigned:Bool) { precondition(Storage.shared.inserted);recorded=true } }
 @MainActor final class Storage {
  static let shared=Storage();var inserted=false;var fails=false
  enum Kind {case signed}
@@ -57,10 +58,11 @@ s += '''
   precondition(m.containsInstallation(for:app) && !m.hasPendingInstallation(for:app),"Retiring job still protects files")
   var committed=false
   try await Handler().addToDatabase {precondition(Storage.shared.inserted);committed=true}
-  precondition(committed,"Publication delivers completion within the commit")
+  precondition(committed && LibraryArtifactIndex.shared.recorded,"Publication records lineage within the commit")
+  LibraryArtifactIndex.shared.recorded=false
   Storage.shared.inserted=false;Storage.shared.fails=true;committed=false
   do {try await Handler().addToDatabase {committed=true};preconditionFailure("Expected commit error")} catch {}
-  precondition(!committed && !Storage.shared.inserted,"Failed commit cannot report success")
+  precondition(!committed && !Storage.shared.inserted && !LibraryArtifactIndex.shared.recorded,"Failed commit cannot report success or record lineage")
   Storage.shared.fails=false
   let missing=Handler();missing._fileManager.exists=false
   do {try await missing.addToDatabase {committed=true};preconditionFailure("Expected missing output error")} catch {}

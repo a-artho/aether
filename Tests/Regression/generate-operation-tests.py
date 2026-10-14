@@ -28,6 +28,7 @@ import XCTest
   var queued:Bool { get { currentRequest != nil } set { currentRequest = newValue ? .init(appKey:"fixture") : nil } }
 ''' ,method(pathlib.Path('Aether/Backend/Observable/AppInstallationManager.swift'),'func containsInstallation(for'),r'''
  }
+ final class LibraryArtifactIndex { static let shared=LibraryArtifactIndex(); func remove(uuid:String,isSigned:Bool) {} }
  final class ExportManager { static let shared=ExportManager();func usesLibraryArtifact(_ app:AppInfoPresentable)->Bool {false} }
  final class DownloadManager { static let shared=DownloadManager(); var active=false; func usesLibraryArtifact(_ app:AppInfoPresentable)->Bool { active } }
  final class DebugLogManager { enum Level { case notice,error }; static let shared=DebugLogManager(); func log(_ message:String,category:String,level:Level) {} }
@@ -254,10 +255,11 @@ final class TLSRegressionTests:XCTestCase {
 
 parts.append(r"""
 @MainActor enum DownloadDeletionFixture {
+ @MainActor final class CompletionProbe { var done=false }
  final class Download { let id="fixture"; var task:Task<Void,Never>?; let importIdentifier="import-fixture" }
  enum AppFileHandler { static var removed:[String]=[]; static func removeImportTransaction(transactionIdentifier:String) async { removed.append(transactionIdentifier) } }
  struct Store { func cleanupArtifacts(for download:Download) {} }
- final class Manager {
+ @MainActor final class Manager {
   var downloads:[Download]=[]; var _processingTasks:[String:Task<Void,Never>]=[:]; var _archiveSourceCleanup:[String:@Sendable ()->Void]=[:]; let _store=Store(); var stopped=0
   func _isCurrent(_ download:Download)->Bool { downloads.contains { $0 === download } }
   func _stopContinuedTask(for download:Download,success:Bool) { stopped+=1 }
@@ -283,14 +285,16 @@ final class DownloadDeletionRegressionTests:XCTestCase {
    manager._processingTasks[download.id]=worker
    let source=ImportSourceCleanupProbe()
    manager._archiveSourceCleanup[download.id]={ source.cleanup() }
-   manager.deleteDownload(download)
+   let completion=DownloadDeletionFixture.CompletionProbe()
+   manager.deleteDownload(download) { completion.done=true }
    XCTAssertTrue(worker.isCancelled); XCTAssertTrue(manager.downloads.isEmpty)
    XCTAssertEqual(manager.stopped,1)
    for _ in 0..<20 { await Task.yield() }
    XCTAssertTrue(DownloadDeletionFixture.AppFileHandler.removed.isEmpty)
    XCTAssertEqual(source.cleanups,0)
+   XCTAssertFalse(completion.done,"UI completion must wait for cleanup")
    gate.release(1); await worker.value
-   while DownloadDeletionFixture.AppFileHandler.removed.isEmpty { await Task.yield() }
+   while !completion.done { await Task.yield() }
    XCTAssertEqual(DownloadDeletionFixture.AppFileHandler.removed,[download.importIdentifier])
    XCTAssertEqual(source.cleanups,1)
    XCTAssertTrue(manager._archiveSourceCleanup.isEmpty)
@@ -298,39 +302,4 @@ final class DownloadDeletionRegressionTests:XCTestCase {
  }
 }
 """)
-parts.extend([r"""
-@MainActor private final class BadgeFixture {
- struct Request { let installRequested:Bool }
- enum Failure:Error { case interrupted }
- enum Status { case signing,installing,broken,completed(Result<Void,Failure>) }
- final class Model { var status:Status = .installing }
- var currentRequest:Request?;var queuedInstalls:[Request]=[];var viewModel:Model?=Model()
-""", method(pathlib.Path('Aether/Backend/Observable/AppInstallationManager.swift'),'private var hasCompletedSuccessfully:'),
-method(pathlib.Path('Aether/Backend/Observable/AppInstallationManager.swift'),'var pendingInstallationCount:'),r"""
-}
-final class DeviceTabBadgeTests:XCTestCase {
- @MainActor func testPendingCountTracksQueueFailureAndCompletion() {
-  let manager=BadgeFixture()
-  XCTAssertEqual(manager.pendingInstallationCount,0)
-  manager.currentRequest = .init(installRequested:true)
-  manager.queuedInstalls=[.init(installRequested:true),.init(installRequested:true),.init(installRequested:false)]
-  XCTAssertEqual(manager.pendingInstallationCount,3)
-  manager.viewModel?.status = .broken
-  XCTAssertEqual(manager.pendingInstallationCount,3)
-  manager.viewModel?.status = .completed(.success(()))
-  XCTAssertEqual(manager.pendingInstallationCount,2)
-  manager.queuedInstalls=[]
-  XCTAssertEqual(manager.pendingInstallationCount,0)
- }
- @MainActor func testSignOnlyWorkDoesNotBadgeDevice() {
-  let manager=BadgeFixture()
-  manager.currentRequest = .init(installRequested:false)
-  manager.viewModel?.status = .signing
-  manager.queuedInstalls=[.init(installRequested:false)]
-  XCTAssertEqual(manager.pendingInstallationCount,0)
-  manager.queuedInstalls.append(.init(installRequested:true))
-  XCTAssertEqual(manager.pendingInstallationCount,1)
- }
-}
-"""])
 (out/'OperationRegressionTests.swift').write_text('\n'.join(parts))

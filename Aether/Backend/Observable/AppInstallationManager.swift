@@ -50,14 +50,6 @@ final class AppInstallationManager: ObservableObject {
 		currentRequest.map { [$0] + queuedInstalls } ?? queuedInstalls
 	}
 	
-	/// Pending installation work, including a paused job awaiting Retry/Cancel.
-	/// Completed cards and sign-only jobs do not contribute to the Device badge.
-	var pendingInstallationCount: Int {
-		let queued = queuedInstalls.filter { $0.installRequested }.count
-		let current = currentRequest?.installRequested == true && !hasCompletedSuccessfully ? 1 : 0
-		return queued + current
-	}
-
 	@Published var activeApp: AppInfoPresentable?
 	@Published var viewModel: InstallerStatusViewModel?
 	@Published var installer: ServerInstaller?
@@ -207,10 +199,14 @@ final class AppInstallationManager: ObservableObject {
 	}
 
 	func startSigning(app: AppInfoPresentable, options: Options, icon: UIImage?, certificate: CertificatePair?) -> Bool {
+		var effectiveOptions = options
+		if UserDefaults.standard.bool(forKey: "Aether.simplifiedMode") {
+			effectiveOptions.post_deleteAppAfterSigned = false
+		}
 		let request = InstallationRequest(app: AppSnapshot(app),
 			method: UserDefaults.standard.integer(forKey: "Aether.installationMethod"),
 			serverMethod: UserDefaults.standard.object(forKey: "Aether.serverMethod") as? Int ?? 1,
-			signing: SigningInput(options: options, iconData: icon?.pngData(), certificateUUID: certificate?.uuid),
+			signing: SigningInput(options: effectiveOptions, iconData: icon?.pngData(), certificateUUID: certificate?.uuid),
 			installRequested: options.post_installAppAfterSigned)
 		return _enqueue(request)
 	}
@@ -262,7 +258,8 @@ final class AppInstallationManager: ObservableObject {
 		let generation = UUID()
 		installGeneration = generation
 		let context = InstallationContext(method: request.method, serverMethod: request.serverMethod)
-		let statusVM = InstallerStatusViewModel(isIdevice: request.method == 1)
+		let statusVM = InstallerStatusViewModel(isIdevice: request.method == 1,
+			signsBeforeInstalling: request.signing != nil && request.installRequested)
 		viewModel = statusVM
 		activeApp = request.app
 		currentRequest = request
@@ -330,7 +327,8 @@ final class AppInstallationManager: ObservableObject {
 					signedRequest.signing = nil
 					self.currentRequest = signedRequest
 					self.activeApp = signedRequest.app
-					if signing.options.post_deleteAppAfterSigned, !request.app.isSigned { Storage.shared.deleteApp(for: request.app) }
+					if signing.options.post_deleteAppAfterSigned, !request.app.isSigned,
+						!UserDefaults.standard.bool(forKey: "Aether.simplifiedMode") { Storage.shared.deleteApp(for: request.app) }
 					if signing.options.post_installAppAfterSigned {
 						self._persistInstallQueue()
 						AppTabManager.shared.showInstallQueue()
@@ -589,8 +587,8 @@ final class AppInstallationManager: ObservableObject {
 			await worker?.value
 			guard !Task.isCancelled, let self, self.installGeneration == generation else { return }
 			self._cleanupInstallResources()
-			// Keep the final success card briefly; a waiting app advances immediately.
-			if self.queuedInstalls.isEmpty {
+			// Retain installation success briefly; signing returns directly to its signed row.
+			if self.queuedInstalls.isEmpty && self.currentRequest?.installRequested == true {
 				do { try await Task.sleep(nanoseconds: 3_000_000_000) } catch { return }
 			}
 			guard !Task.isCancelled, self.installGeneration == generation else { return }
@@ -769,7 +767,7 @@ extension AppInstallationManager {
 }
 #endif
 
-private struct InstallationBackgroundError: LocalizedError {
+struct InstallationBackgroundError: LocalizedError {
 	var errorDescription: String? {
 		.localized("iOS interrupted background installation. Open Aether and retry. If the app was already installed, refresh the Device list first.")
 	}

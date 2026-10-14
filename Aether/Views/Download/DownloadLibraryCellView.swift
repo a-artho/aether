@@ -11,6 +11,7 @@ struct DownloadLibraryCellView: View {
 	@ObservedObject var download: Download
 	@Environment(\.editMode) private var editMode
 	@Binding var selectedDownloadIDs: Set<String>
+	var showsActions = true
 
 	private var isEditing: Bool { editMode?.wrappedValue.isEditing == true }
 	private var isSelected: Bool { selectedDownloadIDs.contains(download.id) }
@@ -22,7 +23,7 @@ struct DownloadLibraryCellView: View {
 
 	var body: some View {
 		HStack(spacing: 18) {
-			if isEditing {
+			if isEditing && showsActions {
 				Button { toggleSelection() } label: {
 					Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
 						.foregroundColor(isSelected ? .accentColor : .secondary)
@@ -52,10 +53,10 @@ struct DownloadLibraryCellView: View {
 			}
 		}
 		.contentShape(Rectangle())
-		.onTapGesture { if isEditing { toggleSelection() } }
+		.onTapGesture { if isEditing && showsActions { toggleSelection() } }
 		.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-			if !isEditing {
-				Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
+			if !isEditing && showsActions {
+				Button(.localized("Cancel"), systemImage: "xmark", role: .destructive) {
 					DownloadManager.shared.deleteDownload(download)
 				}
 			}

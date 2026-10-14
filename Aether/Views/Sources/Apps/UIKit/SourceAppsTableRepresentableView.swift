@@ -18,6 +18,7 @@ private final class SourceAppTableCell: UITableViewCell {
 
 // MARK: - Representable
 struct SourceAppsTableRepresentableView: UIViewRepresentable {
+	@AppStorage("Aether.showRepoDownloadButtons") private var showsDownloadButtons = true
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
 	@Binding var searchText: String
 	@Binding var sortOption: SourceAppsView.SortOption
@@ -57,13 +58,16 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		let sortOptionChanged = context.coordinator.sortOption != sortOption
 		let sortDirectionChanged = context.coordinator.sortAscending != sortAscending
 		let badgeChanged = context.coordinator.showSourceBadge != showSourceBadge
+		let accessoryChanged = context.coordinator.showsDownloadButtons != showsDownloadButtons
 		
 		context.coordinator.sourceContexts = sourceContexts
 		context.coordinator.searchText = searchText
 		context.coordinator.sortOption = sortOption
 		context.coordinator.sortAscending = sortAscending
 		context.coordinator.showSourceBadge = showSourceBadge
+		context.coordinator.showsDownloadButtons = showsDownloadButtons
 		context.coordinator.updateNewsHeader(for: tableView)
+		if accessoryChanged { context.coordinator.refreshVisibleAccessories() }
 		
 		if sourcesChanged || searchChanged || sortOptionChanged || sortDirectionChanged || badgeChanged {
 			context.coordinator.prepareList(
@@ -82,6 +86,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 			sortOption: sortOption,
 			sortAscending: sortAscending,
 			showSourceBadge: showSourceBadge,
+			showsDownloadButtons: showsDownloadButtons,
 			onSelect: onSelect
 		)
 	}
@@ -98,6 +103,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	var sortOption: SourceAppsView.SortOption
 	var sortAscending: Bool
 	var showSourceBadge: Bool
+	var showsDownloadButtons: Bool
 	let onSelect: (SourceAppsView.SourceAppSelection) -> Void
 	
 	private var _dataSource: DataSource?
@@ -129,6 +135,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		sortOption: SourceAppsView.SortOption,
 		sortAscending: Bool,
 		showSourceBadge: Bool,
+		showsDownloadButtons: Bool,
 		onSelect: @escaping (SourceAppsView.SourceAppSelection) -> Void
 	) {
 		self.sourceContexts = sourceContexts
@@ -136,6 +143,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		self.sortOption = sortOption
 		self.sortAscending = sortAscending
 		self.showSourceBadge = showSourceBadge
+		self.showsDownloadButtons = showsDownloadButtons
 		self.onSelect = onSelect
 		super.init()
 		
@@ -166,14 +174,26 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 
 	private func configureVisibleCell(_ cell: UITableViewCell, row: SourceAppRow) {
 		let showBadge = showSourceBadge
+		let showDownload = showsDownloadButtons
+		cell.accessoryType = showDownload ? .none : .disclosureIndicator
 		// A cell needs repository metadata, not its entire app/news catalog.
 		var source = row.source
 		source.apps = []
 		source.news = nil
 		cell.backgroundConfiguration = .listCell()
 		cell.contentConfiguration = UIHostingConfiguration {
-			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app, showSourceBadge: showBadge)
+			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app, showSourceBadge: showBadge, showsDownloadButton: showDownload)
 				.tint(Color(hex: UserDefaults.standard.string(forKey: "Aether.userTintColor") ?? "#848ef9"))
+		}
+	}
+
+	// Update only visible controls; changing appearance must not rebuild the
+	// catalog projection or reset its search, grouping, or scroll position.
+	func refreshVisibleAccessories() {
+		guard let table = uiTableView else { return }
+		for indexPath in table.indexPathsForVisibleRows ?? [] {
+			guard let cell = table.cellForRow(at: indexPath), let row = row(at: indexPath) else { continue }
+			configureVisibleCell(cell, row: row)
 		}
 	}
 
@@ -356,16 +376,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		let title = sections[section].displayTitle(today: .localized("Today"), yesterday: .localized("Yesterday"))
 		header.backgroundConfiguration = .clear()
 		header.contentConfiguration = UIHostingConfiguration {
-			if sortOption == .latest {
-				SourceAppDateChip(title: title)
-			} else {
-				HStack {
-					Text(verbatim: title)
-					Spacer()
-				}
-				.font(.headline)
-				.padding(.vertical, 2)
-			}
+			SourceAppDateChip(title: title)
 		}
 		.margins(.vertical, 4)
 	}

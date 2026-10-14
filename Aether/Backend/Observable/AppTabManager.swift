@@ -39,7 +39,11 @@ final class AppTabManager: ObservableObject {
 	@Published var isSettingsPresented = false
 	@Published var requestedSettingsPage: SettingsPage? = nil
 	@Published var isLibrarySearchPresented = false
+	@Published var isDeviceSearchPresented = false
+	enum LibraryAction: Equatable { case select, deleteAll }
+	@Published var requestedLibraryAction: LibraryAction?
 	@Published private(set) var installationFocusRequest: UUID?
+	@Published private(set) var libraryFocusRequest: UUID?
 
 	private init() {}
 
@@ -49,8 +53,11 @@ final class AppTabManager: ObservableObject {
 			return
 		}
 		isSettingsPresented = false
+		if tab == .library && UserDefaults.standard.bool(forKey: "Aether.simplifiedMode") {
+			libraryFocusRequest = UUID()
+		}
 		withAnimation(.easeInOut(duration: 0.25)) {
-			self.selectedTab = tab
+			self.selectedTab = tab == .library && UserDefaults.standard.bool(forKey: "Aether.simplifiedMode") ? .installed : tab
 		}
 	}
 
@@ -62,6 +69,11 @@ final class AppTabManager: ObservableObject {
 	func consumeInstallationFocusRequest(_ request: UUID) {
 		guard installationFocusRequest == request else { return }
 		installationFocusRequest = nil
+	}
+
+	func consumeLibraryFocusRequest(_ request: UUID) {
+		guard libraryFocusRequest == request else { return }
+		libraryFocusRequest = nil
 	}
 
 	func openSettings(page: SettingsPage? = nil) {
@@ -77,6 +89,8 @@ final class AppTabManager: ObservableObject {
 		switch selectedTab {
 		case .library:
 			isLibrarySearchPresented = true
+		case .installed:
+			isDeviceSearchPresented = true
 		case .sources:
 			SourcesRouter.shared.openSearchForVisibleScreen()
 		default:
@@ -88,6 +102,7 @@ final class AppTabManager: ObservableObject {
 
 	func closeSearch() {
 		isLibrarySearchPresented = false
+		isDeviceSearchPresented = false
 		SourcesRouter.shared.closeSearch()
 	}
 }

@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import NukeUI
 
 enum FRIconAppearance: Int {
 	case light = 0
@@ -129,6 +130,8 @@ final class FRAppIconLoader: ObservableObject {
 struct FRAppIconView: View {
 	private let app: AppInfoPresentable?
 	private let size: CGFloat
+	private let remoteIconURL: URL?
+	private let usesDefaultApp: Bool
 
 	@Environment(\.displayScale) private var displayScale
 	@Environment(\.colorScheme) private var colorScheme
@@ -138,9 +141,11 @@ struct FRAppIconView: View {
 	@AppStorage("Aether.shouldTintIcons") private var shouldTintIcons: Bool = false
 	@AppStorage("Aether.shouldChangeIconsBasedOffStyle") private var shouldChangeIconsBasedOffStyle: Bool = false
 	
-	init(app: AppInfoPresentable? = nil, size: CGFloat = 87) {
+	init(app: AppInfoPresentable? = nil, size: CGFloat = 87, remoteIconURL: URL? = nil, usesDefaultApp: Bool = true) {
 		self.app = app
 		self.size = size
+		self.remoteIconURL = remoteIconURL
+		self.usesDefaultApp = usesDefaultApp
 	}
 
 	private var appearance: FRIconAppearance {
@@ -152,12 +157,16 @@ struct FRAppIconView: View {
 			if let image = loader.image {
 				Image(uiImage: image)
 					.appIconStyle(size: size)
+			} else if let remoteIconURL {
+				LazyImage(url: remoteIconURL) { state in
+					if let image = state.image { image.appIconStyle(size: size) }
+					else { Image("App_Unknown").appIconStyle(size: size) }
+				}.processors([.resize(width: size * displayScale)])
 			} else {
-				Image("App_Unknown")
-					.appIconStyle(size: size)
+				Image("App_Unknown").appIconStyle(size: size)
 			}
 		}
-		.task(id: "\(appearance.rawValue)\(selectedColorHex)\(shouldTintIcons)\(shouldChangeIconsBasedOffStyle)\(displayScale)") {
+		.task(id: "\(app?.uuid ?? "")|\(app?.isSigned ?? false)|\(appearance.rawValue)\(selectedColorHex)\(shouldTintIcons)\(shouldChangeIconsBasedOffStyle)\(displayScale)") {
 			_load()
 		}
 		.onDisappear {
@@ -172,6 +181,7 @@ struct FRAppIconView: View {
 			guard let url = Storage.shared.getAppDirectory(for: app) else { return }
 			bundleURL = url
 		} else {
+			guard usesDefaultApp else { return }
 			bundleURL = Bundle.main.bundleURL
 		}
 

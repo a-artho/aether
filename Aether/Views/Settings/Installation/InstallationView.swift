@@ -82,3 +82,29 @@ struct InstallationView: View {
 		}
 	}
 }
+
+/// All mode controls use the connection manager's active-job and spoofing guards.
+struct InstallationModePickerRow: View {
+	@AppStorage("Aether.installationMethod") private var method = 0
+	@ObservedObject private var installations = AppInstallationManager.shared
+	@State private var blocked = false
+
+	var body: some View {
+		Picker(selection: Binding(get: { method }, set: { value in
+			guard value != method else { return }
+			if DeviceConnectionManager.shared.setInstallationMode(value) { HapticManager.shared.selection() }
+			else { blocked = true }
+		})) {
+			Text(String.localized("Server")).tag(0)
+			Text(String.localized("Local")).tag(1)
+		} label: {
+			SettingsRowLabel(.localized("Installation Mode"), systemImage: "arrow.left.arrow.right", backgroundColor: .purple)
+		}
+		.pickerStyle(.menu)
+		.tint(.secondary)
+		.disabled(installations.hasPendingInstalls)
+		.alert(.localized("Stop Spoofing First"), isPresented: $blocked) {
+			Button(.localized("OK"), role: .cancel) {}
+		} message: { Text(.localized("Stop the simulated location before switching to Server mode.")) }
+	}
+}

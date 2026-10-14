@@ -10,6 +10,10 @@ import UIKit
 
 @MainActor
 struct InstalledAppsView: View {
+	@AppStorage("Aether.simplifiedMode") private var simplifiedMode = false
+	@AppStorage("Aether.collapseSideloaded") private var collapseSideloaded = false
+	@AppStorage("Aether.hideModeSwitch") private var hideModeSwitch = false
+	@StateObject private var imports = UnifiedImportsController()
 	@AppStorage("Aether.controlsInHeader") private var controlsInHeader = false
 	@AppStorage("Aether.installationMethod") private var installationMethod = 0
 	@AppStorage("Aether.serverMethod") private var serverMethod = 1
@@ -23,6 +27,9 @@ struct InstalledAppsView: View {
 	@FetchRequest(sortDescriptors: []) private var sources: FetchedResults<AltSource>
 	@State private var appsWithUpdates = Set<String>()
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@State private var searchText = ""
+	@State private var searchFocused = false
+	@State private var toolbarWidth: CGFloat = 320
 	@State private var isSpoofingPresented = false
 	@State private var isModeSwitchBlocked = false
 	@State private var appNavigationPath: [String] = []
@@ -30,8 +37,10 @@ struct InstalledAppsView: View {
 		get { appNavigationPath.last }
 		nonmutating set { appNavigationPath = newValue.map { [$0] } ?? [] }
 	}
+	@State private var sideloadedExpanded = !UserDefaults.standard.bool(forKey: "Aether.collapseSideloaded")
 	@State private var isRootListVisible = false
 	@State private var visibleInstallRows = Set<UUID>()
+	@State private var visibleUnifiedInstallRows: [UUID: Set<String>] = [:]
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
 
@@ -52,7 +61,7 @@ struct InstalledAppsView: View {
 	}
 
 	private enum DeviceSection: Identifiable {
-		case installation, sideloaded
+		case status, imports, installation, sideloaded
 		var id: Self { self }
 	}
 
@@ -60,20 +69,42 @@ struct InstalledAppsView: View {
 		let sections: [DeviceSection]
 		let cards: [UUID]
 		let activeCard: UUID?
+		let imports: [String]
 	}
 
 	var body: some View {
-		let cards = installationManager.installationCards
-		let sections: [DeviceSection] = [
+		let cards = installationManager.installationCards.filter { matchesSearch($0.app.name, $0.app.identifier, $0.app.version) }
+		let sideloadedApps = store.apps.filter { matchesSearch($0.name, $0.bundleIdentifier, $0.version, $0.build) }
+		let importRows = imports.visibleRows.filter { entry in
+			let app = entry.app ?? entry.operation?.app ?? entry.export?.app
+			return matchesSearch(app?.name, app?.identifier, app?.version,
+				entry.download?.sourceProvenance?.sourceAppName, entry.download?.sourceProvenance?.sourceAppIdentifier,
+				entry.download?.sourceProvenance?.sourceAppVersion, entry.download?.fileName)
+		}
+		let sections: [DeviceSection] = simplifiedMode ? [
+			searchText.isEmpty && !importRows.isEmpty && showsDevicePlaceholder ? .status : nil,
+			importRows.isEmpty ? nil : .imports,
+			showsDevicePlaceholder || sideloadedApps.isEmpty ? nil : .sideloaded
+		].compactMap { $0 } : [
 			cards.isEmpty ? nil : .installation,
-			store.apps.isEmpty ? nil : .sideloaded
+			sideloadedApps.isEmpty ? nil : .sideloaded
 		].compactMap { $0 }
-		let layout = DeviceLayout(sections: sections, cards: cards.map(\.id), activeCard: installationManager.currentRequest?.id)
+		let layout = DeviceLayout(sections: sections, cards: cards.map(\.id), activeCard: installationManager.currentRequest?.id,
+			imports: simplifiedMode ? importRows.map(\.id) : [])
 		NavigationStack(path: $appNavigationPath) {
 			ScrollViewReader { scrollProxy in
 				List {
 					ForEach(sections) { section in
 						switch section {
+						case .status:
+							compactDeviceStatus
+						case .imports:
+							NBSection(.localized("Imports"), secondary: importRows.count.description, isExpanded: searchText.isEmpty ? $imports.isExpanded : nil) {
+								UnifiedImportsRows(entries: importRows, controller: imports, visibleOperation: recordVisibleImportOperation)
+							}
+							.listSectionSeparator(.hidden)
+							.environment(\.editMode, $imports.editMode)
+							.id("deviceImports")
 						case .installation:
 							NBSection(.localized("Installs"), secondary: cards.count.description) {
 								ForEach(cards) { request in
@@ -97,18 +128,7 @@ struct InstalledAppsView: View {
 							.id("deviceInstalls")
 
 						case .sideloaded:
-							NBSection(
-								.localized("Sideloaded"),
-								secondary: store.apps.count.description
-							) {
-								ForEach(store.apps) { app in
-									NavigationLink(value: app.bundleIdentifier) {
-										InstalledAppCellView(app: app, loadsIcon: loadsIcons, hasUpdate: appsWithUpdates.contains(app.bundleIdentifier))
-									}
-									.buttonStyle(.plain)
-									.id(app.id)
-								}
-							}
+							sideloadedSection(sideloadedApps)
 						}
 					}
 				}
@@ -127,6 +147,26 @@ struct InstalledAppsView: View {
 				.listStyle(.plain)
 				.onAppear { isRootListVisible = true }
 				.onDisappear { isRootListVisible = false }
+				.task(id: libraryFocusState) {
+					guard simplifiedMode, !Task.isCancelled, let request = tabManager.libraryFocusRequest,
+						tabManager.selectedTab == .installed else { return }
+					var transaction = Transaction()
+					transaction.disablesAnimations = true
+					if selectedAppBundleId != nil || isSpoofingPresented || imports.infoApp != nil {
+						withTransaction(transaction) {
+							selectedAppBundleId = nil
+							isSpoofingPresented = false
+							imports.infoApp = nil
+						}
+						return
+					}
+					guard isRootListVisible, imports.hasRows else { return }
+					withTransaction(transaction) {
+						imports.isExpanded = true
+						scrollProxy.scrollTo("deviceImports", anchor: .top)
+					}
+					tabManager.consumeLibraryFocusRequest(request)
+				}
 				.task(id: installationFocusState) {
 					guard !Task.isCancelled, let request = tabManager.installationFocusRequest,
 						tabManager.selectedTab == .installed, let firstCard = cards.first else { return }
@@ -140,20 +180,31 @@ struct InstalledAppsView: View {
 						return
 					}
 					guard isRootListVisible else { return }
-					withTransaction(transaction) { scrollProxy.scrollTo(firstCard.id, anchor: .top) }
+					withTransaction(transaction) {
+						if simplifiedMode {
+							imports.finishSelection()
+							imports.isExpanded = true
+							if let row = imports.visibleRows.first(where: { $0.operation?.id == firstCard.id }) {
+								scrollProxy.scrollTo(row.id, anchor: .top)
+							}
+						} else { scrollProxy.scrollTo(firstCard.id, anchor: .top) }
+					}
 					// Appearance confirms the lazy list has materialized the target.
 					// Keep the request pending while navigation/layout catches up.
-					if visibleInstallRows.contains(firstCard.id) {
+					if operationIsVisible(firstCard.id) {
 						tabManager.consumeInstallationFocusRequest(request)
 					}
 				}
 				.overlay {
-					if cards.isEmpty && store.apps.isEmpty {
+					if !searchText.isEmpty && sections.isEmpty {
+						TabPlaceholderView(title: .localized("No Results"), description: .localized("Try another search."), systemImage: "magnifyingglass")
+					} else if searchText.isEmpty && (simplifiedMode ? (!imports.hasRows && showsDevicePlaceholder) : (cards.isEmpty && store.apps.isEmpty)) {
 						_placeholderContent
-							.transition(.opacity.animation(.easeInOut(duration: 0.2)))
+							.transition(simplifiedMode ? .opacity : .opacity.animation(.easeInOut(duration: 0.2)))
 					}
 				}
 				.animation(reduceMotion ? nil : .snappy, value: layout)
+				.modifier(UnifiedImportsDataSourceMount(controller: imports, isEnabled: simplifiedMode))
 				.refreshable {
 					guard loadsApps else { return }
 					await store.refresh(force: true)
@@ -197,38 +248,36 @@ struct InstalledAppsView: View {
 					// New installed versions or catalog revisions supersede this lookup.
 				} catch { appsWithUpdates = [] }
 			}
-			.toolbar {
-				ToolbarItem(placement: .topBarLeading) {
-					Button {
-						_toggleInstallationMode()
-					} label: {
-						Image(systemName: "arrow.left.arrow.right")
-					}
-					.accessibilityLabel(.localized("Switch Installation Mode"))
-					.disabled(installationManager.hasPendingInstalls)
-				}
-
-				ToolbarItem(placement: .principal) {
-					HStack(spacing: 6) {
-						Circle()
-							.fill(_installationMethodIsReady ? .green : .red)
-							.frame(width: 8, height: 8)
-						Text(_installationMethodName)
-							.font(.headline)
-					}
-					.accessibilityElement(children: .combine)
-					.accessibilityLabel(_installationMethodAccessibilityLabel)
-				}
-
-				ToolbarItemGroup(placement: .topBarTrailing) {
-					if controlsInHeader { spoofingHeaderButton }
-					Button {
-						tabManager.openSettings()
-					} label: {
-						Image(systemName: "gear")
-					}
-					.accessibilityLabel(.localized("Settings"))
-				}
+			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { toolbarWidth = $0 }
+			.modifier(SearchToolbarModifier(
+				text: $searchText, isPresented: $tabManager.isDeviceSearchPresented,
+				focus: $searchFocused, title: _installationMethodName, width: toolbarWidth,
+				enabled: !imports.editMode.isEditing, isScreenActive: isRootListVisible && appNavigationPath.isEmpty,
+				hasTitleMenu: false,
+				secondaryAction: simplifiedMode ? { imports.importing = true } : nil,
+				secondaryURLAction: simplifiedMode ? { imports.urlText = ""; imports.importingURL = true } : nil
+			) { EmptyView() })
+			.toolbar { deviceToolbar }
+			.onChange(of: tabManager.isDeviceSearchPresented) { _, presented in
+				if !presented { searchFocused = false; searchText = "" }
+			}
+			.onChange(of: appNavigationPath) { _, path in
+				if !path.isEmpty { searchFocused = false }
+			}
+			.onChange(of: tabManager.installationFocusRequest) { _, request in
+				if request != nil { resetSearch() }
+			}
+			.onChange(of: tabManager.libraryFocusRequest) { _, request in
+				if request != nil { resetSearch() }
+			}
+			.modifier(UnifiedImportsPresentation(controller: imports))
+			.onChange(of: simplifiedMode) { _, enabled in
+				imports.finishSelection()
+				if enabled { sideloadedExpanded = !collapseSideloaded }
+				if !enabled { imports.updateRows([]) }
+			}
+			.onChange(of: collapseSideloaded) { _, collapsed in
+				withAnimation(reduceMotion ? nil : .snappy) { sideloadedExpanded = !collapsed }
 			}
 			.sheet(isPresented: $isSpoofingPresented) {
 				SpoofingEntryView()
@@ -244,13 +293,106 @@ struct InstalledAppsView: View {
 		}
 	}
 
+	@ToolbarContentBuilder private var deviceToolbar: some ToolbarContent {
+		ToolbarItemGroup(placement: .topBarLeading) {
+			if simplifiedMode && imports.editMode.isEditing {
+				Button(String.localized("Done")) { imports.finishSelection() }
+			} else if !tabManager.isDeviceSearchPresented {
+				if !hideModeSwitch { modeSwitchButton }
+				if simplifiedMode || hideModeSwitch { settingsButton }
+			}
+		}
+
+		ToolbarItemGroup(placement: .topBarTrailing) {
+			if simplifiedMode && imports.editMode.isEditing {
+				Button(role: .destructive) { imports.deleteSelected() } label: { Image(systemName: "trash") }
+					.disabled(imports.selectedRows.isEmpty)
+					.accessibilityLabel(String.localized("Delete"))
+			} else if !tabManager.isDeviceSearchPresented {
+				if controlsInHeader { spoofingHeaderButton }
+				if !simplifiedMode && !hideModeSwitch { settingsButton }
+			}
+		}
+	}
+
+	private var showsDevicePlaceholder: Bool {
+		installationMethod == 0 || store.apps.isEmpty
+	}
+
+	private func sideloadedSection(_ apps: [InstalledApp]) -> some View {
+		NBSection(String.localized("Sideloaded"), secondary: apps.count.description, isExpanded: simplifiedMode && searchText.isEmpty ? $sideloadedExpanded : nil) {
+			ForEach(apps) { app in
+				NavigationLink(value: app.bundleIdentifier) {
+					InstalledAppCellView(app: app, loadsIcon: loadsIcons, hasUpdate: appsWithUpdates.contains(app.bundleIdentifier))
+				}
+				.buttonStyle(.plain).id(app.id)
+			}
+		}
+	}
+
+	private var modeSwitchButton: some View {
+		Button(action: _toggleInstallationMode) { Image(systemName: "arrow.left.arrow.right") }
+			.accessibilityLabel(String.localized("Switch Installation Mode"))
+			.disabled(installationManager.hasPendingInstalls)
+	}
+
+	private var settingsButton: some View {
+		Menu("Settings", systemImage: "gearshape") {
+			if hideModeSwitch {
+				Button(String.localized("Switch Installation Mode"), systemImage: "arrow.left.arrow.right", action: _toggleInstallationMode)
+					.disabled(installationManager.hasPendingInstalls)
+				Divider()
+			}
+			Button(String.localized("Select"), systemImage: "checkmark.circle") {
+				if simplifiedMode { imports.select() }
+				else { tabManager.requestedLibraryAction = .select; tabManager.switchTo(.library) }
+			}
+			.disabled(simplifiedMode && !imports.hasRows)
+			Button(String.localized("Delete All"), systemImage: "trash", role: .destructive) {
+				if simplifiedMode { imports.confirmingDeleteAll = true }
+				else { tabManager.requestedLibraryAction = .deleteAll; tabManager.switchTo(.library) }
+			}
+			.disabled(simplifiedMode && !imports.hasRows)
+		} primaryAction: {
+			tabManager.openSettings()
+		}
+		.menuIndicator(.hidden)
+		.accessibilityLabel(String.localized("Settings"))
+	}
+
+	private func matchesSearch(_ fields: String?...) -> Bool {
+		let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+		return query.isEmpty || fields.compactMap { $0 }.contains { $0.localizedCaseInsensitiveContains(query) }
+	}
+
+	private func resetSearch() {
+		searchFocused = false
+		searchText = ""
+		tabManager.isDeviceSearchPresented = false
+	}
+
 	private var installationFocusState: [String] {
-		[tabManager.installationFocusRequest?.uuidString ?? "",
+		[searchText, String(tabManager.isDeviceSearchPresented), tabManager.installationFocusRequest?.uuidString ?? "",
 		 tabManager.selectedTab.rawValue,
 		 installationManager.installationCards.first?.id.uuidString ?? "",
 		 selectedAppBundleId ?? "",
-		 String(isSpoofingPresented), String(isRootListVisible),
-		 String(installationManager.installationCards.first.map { visibleInstallRows.contains($0.id) } ?? false)]
+		 String(isSpoofingPresented), String(isRootListVisible), String(imports.revision), String(imports.isExpanded),
+		 String(installationManager.installationCards.first.map { operationIsVisible($0.id) } ?? false)]
+	}
+
+	private var libraryFocusState: [String] {
+		[searchText, String(tabManager.isDeviceSearchPresented), tabManager.libraryFocusRequest?.uuidString ?? "", tabManager.selectedTab.rawValue,
+		 selectedAppBundleId ?? "", String(isRootListVisible), String(isSpoofingPresented), imports.infoApp?.id ?? "", String(imports.revision)]
+	}
+
+	private func recordVisibleImportOperation(_ id: UUID, _ rowID: String, _ visible: Bool) {
+		if visible { visibleUnifiedInstallRows[id, default: []].insert(rowID) }
+		else { visibleUnifiedInstallRows[id]?.remove(rowID) }
+		if visibleUnifiedInstallRows[id]?.isEmpty == true { visibleUnifiedInstallRows.removeValue(forKey: id) }
+	}
+
+	private func operationIsVisible(_ id: UUID) -> Bool {
+		simplifiedMode ? visibleUnifiedInstallRows[id]?.isEmpty == false : visibleInstallRows.contains(id)
 	}
 
 	private var updateIndicatorRequest: [String] {
@@ -355,129 +497,92 @@ struct InstalledAppsView: View {
 	}
 
 	private var _installationMethodName: String {
-		installationMethod == 1 ? .localized("Local") : .localized("Server")
+		simplifiedMode ? .localized("Library") : (installationMethod == 1 ? .localized("Local") : .localized("Server"))
 	}
 
-	private var _installationMethodIsReady: Bool {
-		if installationMethod == 1 {
-			return connection.isConnected
-		}
-
-		if serverMethod == 1 {
-			return true
-		}
-
-		return ServerInstaller.getUrl("server", ext: "crt") != nil
-			&& ServerInstaller.getUrl("server", ext: "pem") != nil
-			&& ServerInstaller.getUrl("commonName", ext: "txt") != nil
+	private struct DeviceStatus {
+		enum Action { case switchMode, pair, setupVPN, reconnect, reload }
+		let title: String
+		let description: String
+		let icon: String
+		var busy = false
+		var action: Action?
+		var buttonTitle: String?
 	}
 
-	private var _installationMethodAccessibilityLabel: String {
-		let status = _installationMethodIsReady
-			? String.localized("Ready")
-			: String.localized("Needs attention")
-		return "\(_installationMethodName), \(status)"
-	}
-
-	@ViewBuilder
-	private var _placeholderContent: some View {
+	private var deviceStatus: DeviceStatus {
 		if installationMethod == 0 {
-			TabPlaceholderView(
-				title: .localized("Switch to Local"),
-				description: .localized("Use Local mode to view sideloaded apps or spoof your device location."),
-				systemImage: "iphone"
-			) {
-				Button {
-					_switchToIDeviceMode()
-				} label: {
-					NBButton(.localized("Use Local"), style: .text)
-				}
-				.buttonStyle(.borderless)
-				.disabled(installationManager.hasPendingInstalls)
-			}
+			return DeviceStatus(title: .localized("Switch to Local"), description: .localized("Use Local mode to view sideloaded apps or spoof your device location."), icon: "iphone", action: .switchMode, buttonTitle: .localized("Use Local"))
 		} else if store.isLoading && store.apps.isEmpty {
-			ProgressView()
-				.padding(.vertical, 20)
+			return DeviceStatus(title: .localized("Loading Installed Apps"), description: "", icon: "iphone", busy: true)
 		} else if !connection.hasPairingFile && store.apps.isEmpty {
-			TabPlaceholderView(
-				title: .localized("Pairing File Missing"),
-				description: .localized("Add a pairing file to view sideloaded apps or spoof device location."),
-				systemImage: "key.slash"
-			) {
-				Button {
-					tabManager.openSettings(page: .pairingFile)
-				} label: {
-					NBButton(.localized("Pair"), style: .text)
-				}
-				.buttonStyle(.borderless)
-			}
+			return DeviceStatus(title: .localized("Pairing File Missing"), description: .localized("Add a pairing file to view sideloaded apps or spoof device location."), icon: "key.slash", action: .pair, buttonTitle: .localized("Pair"))
 		} else if connection.requiresInAppTunnelSetup && store.apps.isEmpty {
-			TabPlaceholderView(
-				title: .localized("VPN Setup Required"),
-				description: .localized("Set up Aether’s VPN profile to connect to your device."),
-				systemImage: "network.badge.shield.half.filled"
-			) {
-				Button {
-					connection.setUpInAppTunnel()
-				} label: {
-					NBButton(.localized("Set Up"), style: .text)
-				}
-				.buttonStyle(.borderless)
-			}
+			return DeviceStatus(title: .localized("VPN Setup Required"), description: .localized("Set up Aether’s VPN profile to connect to your device."), icon: "network.badge.shield.half.filled", action: .setupVPN, buttonTitle: .localized("Set Up"))
 		} else if _showsCellularConnectionGuidance && store.apps.isEmpty {
-			TabPlaceholderView(
-				title: _needsManualCellularRefresh
-					? .localized("Refresh Cellular Connection")
-					: .localized("Connecting on Cellular"),
-				description: _needsManualCellularRefresh
-					? .localized("Turn off Mobile Data or briefly enable Airplane Mode. Switch it back on once Aether connects.")
-					: .localized("Aether is refreshing the cellular connection to reach your device."),
-				systemImage: "antenna.radiowaves.left.and.right"
-			) {
-				ProgressView()
-					.controlSize(.small)
-			}
+			return DeviceStatus(title: _needsManualCellularRefresh ? .localized("Refresh Cellular Connection") : .localized("Connecting on Cellular"), description: _needsManualCellularRefresh ? .localized("Turn off Mobile Data or briefly enable Airplane Mode. Switch it back on once Aether connects.") : .localized("Aether is refreshing the cellular connection to reach your device."), icon: "antenna.radiowaves.left.and.right", busy: true)
 		} else if connection.isUpdating && store.apps.isEmpty {
-			TabPlaceholderView(
-				title: .localized("Connecting Tunnel"),
-				description: .localized("Aether is connecting so you can view sideloaded apps or spoof device location."),
-				systemImage: "network"
-			) {
-				ProgressView()
-					.controlSize(.small)
-			}
+			return DeviceStatus(title: .localized("Connecting Tunnel"), description: .localized("Aether is connecting so you can view sideloaded apps or spoof device location."), icon: "network", busy: true)
 		} else if !connection.isConnected && store.apps.isEmpty {
-			TabPlaceholderView(
-				title: .localized("Tunnel Unavailable"),
-				description: .localized("Reconnect the tunnel to view sideloaded apps or spoof device location."),
-				systemImage: "network.slash"
-			) {
-				Button {
-					connection.reconnectForIDeviceMode()
-				} label: {
-					NBButton(.localized("Retry"), style: .text)
-				}
-				.buttonStyle(.borderless)
-			}
-		} else if let errorMessage = store.errorMessage, store.apps.isEmpty {
-			TabPlaceholderView(
-				title: .localized("Unable to Load Installed Apps"),
-				description: errorMessage,
-				systemImage: "iphone.slash"
-			) {
-				Button {
-					Task { await store.refresh(force: true) }
-				} label: {
-					NBButton(.localized("Retry"), style: .text)
-				}
-				.buttonStyle(.borderless)
-			}
+			return DeviceStatus(title: .localized("Tunnel Unavailable"), description: .localized("Reconnect the tunnel to view sideloaded apps or spoof device location."), icon: "network.slash", action: .reconnect, buttonTitle: .localized("Retry"))
+		} else if let error = store.errorMessage, store.apps.isEmpty {
+			return DeviceStatus(title: .localized("Unable to Load Installed Apps"), description: error, icon: "iphone.slash", action: .reload, buttonTitle: .localized("Retry"))
 		} else {
-			TabPlaceholderView(
-				title: .localized("No Sideloaded Apps"),
-				description: .localized("Sideloaded apps will appear here. You can spoof device location above."),
-				systemImage: "square.stack.3d.up.slash"
-			)
+			return DeviceStatus(title: .localized("No Sideloaded Apps"), description: .localized("Sideloaded apps will appear here. You can spoof device location above."), icon: "square.stack.3d.up.slash")
+		}
+	}
+
+	@ViewBuilder private var _placeholderContent: some View {
+		let status = deviceStatus
+		if store.isLoading && store.apps.isEmpty && installationMethod != 0 {
+			ProgressView().padding(.vertical, 20)
+		} else {
+			TabPlaceholderView(title: status.title, description: status.description, systemImage: status.icon) {
+				deviceStatusAction(status)
+			}
+		}
+	}
+
+	private var compactDeviceStatus: some View {
+		let status = deviceStatus
+		return VStack(spacing: 8) {
+			HStack(spacing: 6) {
+				Image(systemName: status.icon)
+					.font(.subheadline).foregroundStyle(.secondary)
+					.accessibilityHidden(true)
+				Text(status.title)
+					.font(.subheadline).foregroundStyle(.secondary)
+					.multilineTextAlignment(.center)
+			}
+			deviceStatusAction(status)
+		}
+		.frame(maxWidth: .infinity)
+		.padding(.vertical, 8)
+		.listRowBackground(Color.clear)
+		.listRowSeparator(.hidden)
+		.accessibilityElement(children: .contain)
+		.accessibilityHint(status.description)
+	}
+
+	@ViewBuilder private func deviceStatusAction(_ status: DeviceStatus) -> some View {
+		if status.busy {
+			ProgressView().controlSize(.small)
+		} else if let action = status.action, let title = status.buttonTitle {
+			Button { performDeviceStatusAction(action) } label: {
+				NBButton(title, style: .text)
+			}
+			.buttonStyle(.borderless)
+			.disabled(action == .switchMode && installationManager.hasPendingInstalls)
+		}
+	}
+
+	private func performDeviceStatusAction(_ action: DeviceStatus.Action) {
+		switch action {
+		case .switchMode: _switchToIDeviceMode()
+		case .pair: tabManager.openSettings(page: .pairingFile)
+		case .setupVPN: connection.setUpInAppTunnel()
+		case .reconnect: connection.reconnectForIDeviceMode()
+		case .reload: Task { await store.refresh(force: true) }
 		}
 	}
 

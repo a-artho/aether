@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Shared date-header presentation for repository lists and available updates.
+/// Shared pill for repository date/name groups and available update dates.
 struct SourceAppDateChip: View {
     let title: String
     var body: some View {

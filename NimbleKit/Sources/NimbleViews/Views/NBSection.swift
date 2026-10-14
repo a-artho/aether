@@ -11,6 +11,8 @@ public struct NBSection<Content, Footer>: View
 	where 	Content: View,
 	Footer: View
 {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	private var _isExpanded: Binding<Bool>?
 	private var _headerText: String
 	private var _headerTextSecondary: String?
 	private var _systemName: String?
@@ -21,9 +23,11 @@ public struct NBSection<Content, Footer>: View
 	public init(_ headerText: String,
 	            secondary headerTextSecondary: String? = nil,
 	            systemName: String? = nil,
+	            isExpanded: Binding<Bool>? = nil,
 	            @ViewBuilder content: () -> Content,
 	            @ViewBuilder footer: () -> Footer
 	) {
+		self._isExpanded = isExpanded
 		self._headerText = headerText
 		self._headerTextSecondary = headerTextSecondary
 		self._systemName = systemName
@@ -35,8 +39,10 @@ public struct NBSection<Content, Footer>: View
 	public init(_ headerText: String,
 	            secondary headerTextSecondary: String? = nil,
 	            systemName: String? = nil,
+	            isExpanded: Binding<Bool>? = nil,
 	            @ViewBuilder content: () -> Content
 	) where Footer == EmptyView {
+		self._isExpanded = isExpanded
 		self._headerText = headerText
 		self._headerTextSecondary = headerTextSecondary
 		self._systemName = systemName
@@ -48,10 +54,12 @@ public struct NBSection<Content, Footer>: View
 	public init<Trailing: View>(
 		_ headerText: String,
 		systemName: String? = nil,
+	            isExpanded: Binding<Bool>? = nil,
 		@ViewBuilder trailing: () -> Trailing,
 		@ViewBuilder content: () -> Content,
 		@ViewBuilder footer: () -> Footer
 	) {
+		self._isExpanded = isExpanded
 		self._headerText = headerText
 		self._headerTextSecondary = nil
 		self._systemName = systemName
@@ -63,9 +71,11 @@ public struct NBSection<Content, Footer>: View
 	public init<Trailing: View>(
 		_ headerText: String,
 		systemName: String? = nil,
+	            isExpanded: Binding<Bool>? = nil,
 		@ViewBuilder trailing: () -> Trailing,
 		@ViewBuilder content: () -> Content
 	) where Footer == EmptyView {
+		self._isExpanded = isExpanded
 		self._headerText = headerText
 		self._headerTextSecondary = nil
 		self._systemName = systemName
@@ -74,9 +84,17 @@ public struct NBSection<Content, Footer>: View
 		self._footer = EmptyView()
 	}
 
-	public var body: some View {
-		Section(
-			header:
+	@ViewBuilder private var header: some View {
+		if let expanded = _isExpanded {
+			Button {
+				withAnimation(reduceMotion ? nil : .snappy) { expanded.wrappedValue.toggle() }
+			} label: { headerLabel }
+			.buttonStyle(.plain)
+			.accessibilityValue(expanded.wrappedValue ? String(localized: "Expanded") : String(localized: "Collapsed"))
+		} else { headerLabel }
+	}
+
+	private var headerLabel: some View {
 			HStack(alignment: .center, spacing: 4) {
 				if let _systemName {
 					Image(systemName: _systemName)
@@ -86,32 +104,36 @@ public struct NBSection<Content, Footer>: View
 
 				Text(_headerText)
 					.fontWeight(.bold)
-					.font(.title2)
+					.font(.title3)
 					.foregroundStyle(.primary)
 
 				Spacer()
 
 				if let _trailing {
 					_trailing
-				} else if let _headerTextSecondary {
+				} else if let _headerTextSecondary, _isExpanded?.wrappedValue == false {
 					Text(_headerTextSecondary)
 						.font(.caption)
 						.foregroundStyle(.secondary)
 						.contentTransition(.numericText())
-						.padding(.horizontal, 8)
-						.padding(.vertical, 4.4)
-						.background(Color(uiColor: .quaternarySystemFill))
-						.clipShape(Capsule())
-						.glassEffect()
 				}
 			}
-			.offset(y: 2)
-			,
-			footer: _footer
-				.font(.caption)
-				.foregroundColor(.secondary)
-		) {
-			_content
+			.padding(.trailing, _isExpanded == nil ? 0 : 22)
+			.overlay(alignment: .trailing) {
+				if let expanded = _isExpanded {
+					Image(systemName: "chevron.down")
+						.font(.caption.weight(.semibold))
+						.foregroundStyle(.secondary)
+						.rotationEffect(.degrees(expanded.wrappedValue ? 0 : -90))
+						.accessibilityHidden(true)
+				}
+			}
+			.contentShape(Rectangle())
+	}
+
+	public var body: some View {
+		Section(header: header.offset(y: 2), footer: _footer.font(.caption).foregroundStyle(.secondary)) {
+			if _isExpanded?.wrappedValue != false { _content }
 		}
 		.headerProminence(.increased)
 	}

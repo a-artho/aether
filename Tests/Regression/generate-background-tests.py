@@ -16,6 +16,7 @@ import Foundation
 import XCTest
 extension String { static func localized(_ value:String, arguments:CVarArg...) -> String { String(format:value,arguments:arguments) } }
 enum BackgroundFixture {
+@MainActor final class LibraryArtifactIndex { static let shared=LibraryArtifactIndex(); func recordImport(uuid:String) {} }
 protocol ObservableObject {}
 @MainActor final class BackgroundAudioManager {
  static let shared=BackgroundAudioManager(); var requesters=Set<String>(); var starts=0; var stops=0
@@ -73,7 +74,7 @@ final class BGContinuedProcessingTaskRequest {
 ''',manager,operation,r'''
 final class Download {
  enum State:Equatable { case downloading,resuming,pausing,paused,processing,failed }
- var state:State = .downloading;let id=UUID().uuidString;var task:NetworkTask?
+ var state:State = .downloading;let id=UUID().uuidString;let importIdentifier=UUID().uuidString;var task:NetworkTask?
  init() {}
  init(logicalIdentifier:String,url:URL,sourceProvenance:Provenance?) { self.sourceProvenance=sourceProvenance }
  var sourceProvenance:Provenance?;let fileName="App";let onlyArchiving=false

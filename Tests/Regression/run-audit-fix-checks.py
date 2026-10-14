@@ -24,6 +24,7 @@ source += '''
 protocol AppInfoPresentable { var uuid: String? { get }; var isSigned: Bool { get } }
 struct Snapshot: AppInfoPresentable { let uuid: String?; let isSigned: Bool }
 final class AppInstallationManager { static let shared = AppInstallationManager(); var busy = false; func containsInstallation(for app: AppInfoPresentable) -> Bool { busy } }
+final class LibraryArtifactIndex { static let shared=LibraryArtifactIndex(); func remove(uuid:String,isSigned:Bool) {} }
 final class ExportManager { static let shared = ExportManager(); var busy = false; func usesLibraryArtifact(_ app: AppInfoPresentable) -> Bool { busy } }
 final class DownloadManager { static let shared = DownloadManager(); func usesLibraryArtifact(_ app: AppInfoPresentable) -> Bool { false } }
 enum Level { case notice, error, warning }

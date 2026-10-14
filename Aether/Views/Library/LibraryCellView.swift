@@ -15,6 +15,7 @@ struct LibraryCellView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@Environment(\.editMode) private var editMode
 	@ObservedObject private var installationManager = AppInstallationManager.shared
+	@ObservedObject private var exportManager = ExportManager.shared
 
 	private var _certificate: CertificatePair? {
 		guard app.isSigned else { return nil }
@@ -33,6 +34,7 @@ struct LibraryCellView: View {
 	@Binding var selectedInfoAppPresenting: AnyApp?
 	@Binding var selectedSigningAppPresenting: AnyApp?
 	@Binding var selectedAppUUIDs: Set<String>
+	var showsActions = true
 	
 	private var _isQueued: Bool {
 		installationManager.hasPendingInstallation(for: app)
@@ -73,7 +75,7 @@ struct LibraryCellView: View {
 		let isEditing = editMode?.wrappedValue == .active
 		
 		HStack(spacing: 18) {
-			if isEditing {
+			if isEditing && showsActions {
 				Button {
 					_toggleSelection()
 				} label: {
@@ -101,17 +103,17 @@ struct LibraryCellView: View {
 		)
 		.contentShape(Rectangle())
 		.onTapGesture {
-			if isEditing {
+			if isEditing && showsActions {
 				_toggleSelection()
 			}
 		}
 		.swipeActions {
-			if !isEditing {
-				_actions(for: app)
+			if !isEditing && showsActions {
+				_actions(for: app, forSwipe: true)
 			}
 		}
 		.contextMenu {
-			if !isEditing {
+			if !isEditing && showsActions {
 				_contextActions(for: app)
 				Divider()
 				_contextActionsExtra(for: app)
@@ -132,32 +134,36 @@ extension LibraryCellView {
 			name: app.name ?? .localized("Unknown"),
 			version: app.version ?? .localized("Unknown"),
 			identifier: app.identifier,
-			secondaryStatus: status?.label,
-			signedColor: status?.color
+			secondaryStatus: status
 		)
 	}
 
-	private var _certificateStatus: (label: String, color: Color)? {
-		guard app.isSigned else { return nil }
-		let cert = _certificate
-
-		if cert?.revoked == true {
-			return (.localized("Revoked"), .red)
-		}
-
-		if let info = cert?.expiration?.expirationInfo() {
-			return (info.formatted, info.color)
-		}
-
-		return (.localized("Signed"), .green)
+	private var _certificateStatus: String? {
+		LibraryCertificateStatus.forApp(app)
 	}
 
 	@ViewBuilder
-	private func _actions(for app: AppInfoPresentable) -> some View {
-		Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
-			if !Storage.shared.deleteApp(for: app) {
-				UIAlertController.showAlertWithOk(title: .localized("App In Use"), message: .localized("Cancel its installation or update before deleting this app."))
+	private func _actions(for app: AppInfoPresentable, forSwipe: Bool = false) -> some View {
+		let key = AppInstallationManager.InstallationRequest.appKey(for: app)
+		if let request = installationManager.installationCards.first(where: { $0.appKey == key }) {
+			let isCurrent = installationManager.currentRequest?.id == request.id
+			let completed = isCurrent && installationManager.viewModel?.isCompleted == true
+			Button(completed ? .localized("Dismiss") : .localized("Cancel"), systemImage: "xmark", role: forSwipe ? nil : .destructive) {
+				if isCurrent { installationManager.cancel() }
+				else { installationManager.cancelQueuedInstall(id: request.id) }
 			}
+			.tint(.red)
+			.disabled(isCurrent && installationManager.isFinishingInstallation)
+		} else if let export = exportManager.exports.first(where: { $0.snapshot.uuid == app.uuid && $0.snapshot.isSigned == app.isSigned }) {
+			Button(.localized("Cancel"), systemImage: "xmark", role: forSwipe ? nil : .destructive) { exportManager.cancel(export) }
+				.tint(.red)
+		} else {
+			Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
+				if !Storage.shared.deleteApp(for: app) {
+					DebugLogManager.shared.log("Row deletion retained an artifact still in use.", category: "Library", level: .notice)
+				}
+			}
+			.disabled(installationManager.containsInstallation(for: app) || DownloadManager.shared.usesLibraryArtifact(app) || exportManager.usesLibraryArtifact(app))
 		}
 	}
 	
@@ -215,36 +221,52 @@ extension LibraryCellView {
 	}
 }
 
+@MainActor
+enum LibraryCertificateStatus {
+	static func forApp(_ app: AppInfoPresentable?) -> String? {
+		guard let app, app.isSigned else { return nil }
+		let certificate = Storage.shared.getCertificate(from: app)
+		if certificate?.revoked == true { return .localized("Revoked") }
+		if let expiration = certificate?.expiration?.expirationInfo() { return expiration.formatted }
+		return .localized("Signed")
+	}
+}
+
 /// Shared metadata hierarchy for Library apps and in-flight transfers.
 struct LibraryRowDetails: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let name: String
 	let version: String?
 	let identifier: String?
 	var secondaryStatus: String? = nil
-	var signedColor: Color? = nil
 	var isFailed = false
+	var animatesStatus = false
+	var thirdLineStatus: String? = nil
+	var statusColor: Color = .secondary
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 2) {
-			HStack(spacing: 6) {
-				if let signedColor {
-					Circle()
-						.fill(signedColor)
-						.frame(width: 8, height: 8)
-						.accessibilityHidden(true)
-				}
-				Text(name)
-					.font(.headline)
-					.foregroundStyle(.primary)
-					.lineLimit(1)
-			}
+			Text(name)
+				.font(.headline)
+				.foregroundStyle(.primary)
+				.lineLimit(1)
 
 			Text(_secondLine)
 				.font(.subheadline)
+				.contentTransition(.interpolate)
+				.animation(animatesStatus && !reduceMotion ? .smooth(duration: 0.2) : nil, value: secondaryStatus)
 				.foregroundStyle(isFailed ? Color.red : Color.secondary)
 				.lineLimit(isFailed ? 2 : 1)
 
-			if let identifier, !identifier.isEmpty {
+			if let thirdLineStatus {
+				Text(thirdLineStatus)
+					.font(.footnote)
+					.foregroundStyle(statusColor)
+					.lineLimit(nil)
+					.fixedSize(horizontal: false, vertical: true)
+					.contentTransition(.interpolate)
+					.animation(animatesStatus && !reduceMotion ? .smooth(duration: 0.2) : nil, value: thirdLineStatus)
+			} else if let identifier, !identifier.isEmpty {
 				Text(identifier)
 					.font(.footnote)
 					.foregroundStyle(.secondary)

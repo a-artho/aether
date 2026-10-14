@@ -1,6 +1,18 @@
 import SwiftUI
 import UIKit
 
+enum SearchPlacement: String, CaseIterable, Identifiable {
+	case right, pageTitle
+
+	var id: Self { self }
+	var label: String {
+		switch self {
+		case .right: .localized("Right")
+		case .pageTitle: .localized("Page Title")
+		}
+	}
+}
+
 /// Native navigation items when idle; SwiftUI owns the expanding search surface.
 /// The text-field bridge supplies the keyboard's timing and reliable responder focus.
 struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
@@ -11,8 +23,8 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	let width: CGFloat
 	var enabled = true
 	var isScreenActive = true
-	var searchOnLeading = true
 	var hasTitleMenu = true
+	var hasTitleSearchMenu = false
 	var secondarySymbol = "plus"
 	var secondaryLabel = String.localized("Add")
 	var secondaryAction: (() -> Void)?
@@ -20,9 +32,13 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	@ViewBuilder var titleMenu: () -> MenuContent
 	@StateObject private var transition = SearchToolbarTransition()
 	@State private var searchButtonFrame: CGRect = .zero
-	@AppStorage("Aether.searchOnRight") private var searchOnRight = false
+	@AppStorage("Aether.searchPlacement") private var searchPlacement: SearchPlacement = .right
+	@AppStorage("Aether.hideTitleSearchIcon") private var hideTitleSearchIcon = false
 
-	private var usesLeadingSearch: Bool { searchOnLeading && !searchOnRight }
+	private var usesTitleSearch: Bool { searchPlacement == .pageTitle }
+	// Different navigation actions need distinct identities for the native handoff.
+	// Keep each identity stable while its button becomes the search-close control.
+	private var secondaryToolbarID: String { hasTitleSearchMenu ? "navigation-filter" : "navigation-add" }
 
 	func body(content: Content) -> some View {
 		content
@@ -32,50 +48,22 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			.toolbar {
 				if enabled {
 					ToolbarItem(placement: .principal) {
-						Group {
-							if hasTitleMenu {
-								Menu { titleMenu() } label: {
-									HStack(spacing: 8) {
-										Text(title).font(.headline).lineLimit(1)
-										Image(systemName: "chevron.down")
-											.font(.system(size: 10, weight: .semibold))
-											.foregroundStyle(.secondary)
-											.frame(width: 18, height: 18)
-											.glassEffect(.regular.interactive(), in: .circle)
-									}
-									.accessibilityHidden(transition.expanded)
-								}
-								.buttonStyle(.plain)
-								.menuIndicator(.hidden)
-								.accessibilityLabel(title)
-								.accessibilityHidden(transition.expanded)
-							} else {
-								Text(title).font(.headline).lineLimit(1)
-							}
-						}
-						// Preserve the complete title label's width throughout search.
-						// The menu indicator must share the title's visibility and timing.
-						.opacity(transition.expanded ? 0 : 1)
-						.scaleEffect(transition.expanded ? 0.9 : 1)
-						.animation(transition.animation, value: transition.expanded)
-						.allowsHitTesting(!transition.expanded)
-						.accessibilityHidden(transition.expanded)
+						titleLabel
 					}
 					.sharedBackgroundVisibility(.hidden)
-					if !usesLeadingSearch && secondaryAction != nil {
+					if usesTitleSearch {
+						ToolbarItem(id: secondaryToolbarID, placement: .topBarTrailing) {
+							secondaryButton
+						}
+						.sharedBackgroundVisibility(transition.expanded || secondaryAction != nil || hasTitleSearchMenu ? .automatic : .hidden)
+					} else if secondaryAction != nil {
 						ToolbarItemGroup(placement: .topBarTrailing) {
 							if !transition.expanded { searchButton }
 							secondaryButton
 						}
 					} else {
-						ToolbarItem(id: "search-action", placement: usesLeadingSearch ? .topBarLeading : .topBarTrailing) {
+						ToolbarItem(id: "search-action", placement: .topBarTrailing) {
 							searchButton
-						}
-						.sharedBackgroundVisibility(usesLeadingSearch && transition.expanded ? .hidden : .automatic)
-						if usesLeadingSearch {
-							ToolbarItem(id: "search-secondary", placement: .topBarTrailing) {
-								secondaryButton
-							}
 						}
 					}
 				}
@@ -83,45 +71,100 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			.background {
 				if enabled {
 					SearchHeaderOverlay(text: $text, focus: focus, title: title,
-						transition: transition, sourceFrame: searchButtonFrame, searchOnLeading: usesLeadingSearch,
-						isScreenActive: isScreenActive)
+						transition: transition, sourceFrame: searchButtonFrame,
+						searchInTitle: usesTitleSearch, isScreenActive: isScreenActive)
 				}
 			}
 			.onAppear { transition.restore(isPresented: isPresented) }
+			.onChange(of: searchPlacement) { _, _ in searchButtonFrame = .zero }
+			.onChange(of: hideTitleSearchIcon) { _, _ in searchButtonFrame = .zero }
 			.onChange(of: isPresented) { _, presented in transition.setPresented(presented, keyboardExpected: focus.wrappedValue) }
 			.onScrollPhaseChange { _, phase in
 				if phase == .interacting { focus.wrappedValue = false }
 			}
 	}
+	private var titleLabel: some View {
+		Group {
+			if usesTitleSearch {
+				Button(action: openSearch) {
+					HStack(spacing: 8) {
+						if !hideTitleSearchIcon {
+							Image(systemName: "magnifyingglass")
+								.font(.system(size: 10, weight: .regular))
+								.foregroundStyle(.secondary)
+								.opacity(0.6)
+						}
+						Text(title).font(.headline).foregroundStyle(.primary).lineLimit(1)
+					}
+					.frame(minHeight: 44)
+					.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+				.accessibilityLabel(String.localized("Search %@", arguments: title))
+				.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+					if !transition.requested && !transition.expanded { searchButtonFrame = frame }
+				}
+			} else if hasTitleMenu {
+				Menu { titleMenu() } label: {
+					HStack(spacing: 8) {
+						Text(title).font(.headline).lineLimit(1)
+						Image(systemName: "chevron.down")
+							.font(.system(size: 10, weight: .semibold))
+							.foregroundStyle(.secondary)
+							.frame(width: 18, height: 18)
+							.glassEffect(.regular.interactive(), in: .circle)
+					}
+					.accessibilityHidden(transition.expanded)
+				}
+				.buttonStyle(.plain)
+				.menuIndicator(.hidden)
+				.accessibilityLabel(title)
+				.accessibilityHidden(transition.expanded)
+			} else {
+				Text(title).font(.headline).lineLimit(1)
+			}
+		}
+		// Preserve the complete title label's width throughout search.
+		// The menu indicator must share the title's visibility and timing.
+		.opacity(transition.expanded ? 0 : 1)
+		.scaleEffect(transition.expanded ? 0.9 : 1)
+		.animation(transition.animation, value: transition.expanded)
+		.allowsHitTesting(!transition.expanded)
+		.accessibilityHidden(transition.expanded)
+	}
+
 	private var searchButton: some View {
 		Button {
-			if transition.expanded && !usesLeadingSearch { closeSearch() }
+			if transition.expanded { closeSearch() }
 			else { openSearch() }
 		} label: {
-			Image(systemName: transition.expanded && !usesLeadingSearch ? "xmark" : "magnifyingglass")
+			Image(systemName: transition.expanded ? "xmark" : "magnifyingglass")
 		}
-		.opacity(usesLeadingSearch && transition.expanded ? 0 : 1)
-		.allowsHitTesting(!usesLeadingSearch || !transition.expanded)
-		.accessibilityHidden(usesLeadingSearch && transition.expanded)
-		.accessibilityLabel(transition.expanded && !usesLeadingSearch ? String.localized("Cancel") : String.localized("Search"))
+		.accessibilityLabel(transition.expanded ? String.localized("Cancel") : String.localized("Search"))
 		.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
 			if !transition.expanded { searchButtonFrame = frame }
 		}
 	}
 
-	private var secondaryButton: some View {
-		Button {
-			if transition.expanded { closeSearch() }
-			else { secondaryAction?() }
-		} label: { Image(systemName: transition.expanded ? "xmark" : secondarySymbol) }
-			.accessibilityLabel(transition.expanded ? .localized("Cancel") : secondaryLabel)
-			.opacity(secondaryAction != nil || transition.expanded ? 1 : 0)
-			.allowsHitTesting(secondaryAction != nil || transition.expanded)
-			.highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-				guard !transition.expanded, let secondaryURLAction else { return }
-				HapticManager.shared.impact()
-				secondaryURLAction()
-			}, including: secondaryURLAction == nil || transition.expanded ? .none : .all)
+	@ViewBuilder private var secondaryButton: some View {
+		if hasTitleSearchMenu && usesTitleSearch && !transition.expanded {
+			Menu { titleMenu() } label: { Image(systemName: secondarySymbol) }
+				.accessibilityLabel(secondaryLabel)
+		} else {
+			Button {
+				if transition.expanded { closeSearch() }
+				else { secondaryAction?() }
+			} label: { Image(systemName: transition.expanded ? "xmark" : secondarySymbol) }
+				.accessibilityLabel(transition.expanded ? .localized("Cancel") : secondaryLabel)
+				.opacity(secondaryAction != nil || transition.expanded ? 1 : 0)
+				.allowsHitTesting(secondaryAction != nil || transition.expanded)
+				.accessibilityHidden(secondaryAction == nil && !transition.expanded)
+				.highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+					guard !transition.expanded, let secondaryURLAction else { return }
+					HapticManager.shared.impact()
+					secondaryURLAction()
+				}, including: secondaryURLAction == nil || transition.expanded ? .none : .all)
+		}
 	}
 
 	private func openSearch() {

@@ -10,6 +10,7 @@ import NimbleViews
 
 // MARK: - View
 struct SigningOptionsView: View {
+	@AppStorage("Aether.simplifiedMode") private var simplifiedMode = false
 	@Binding var options: Options
 	var temporaryOptions: Options?
 	
@@ -158,9 +159,10 @@ struct SigningOptionsView: View {
 				systemImage: "trash.fill",
 				isOn: $options.post_deleteAppAfterSigned,
 				temporaryValue: temporaryOptions?.post_deleteAppAfterSigned
-			)
+			).disabled(simplifiedMode)
 		} footer: {
-			Text(.localized("This will delete your imported application after signing, to save on using unneeded space."))
+			Text(simplifiedMode ? .localized("Simplified Mode keeps the unsigned original alongside signed variants.")
+				: .localized("This will delete your imported application after signing, to save on using unneeded space."))
 		}
 		
 		Section {

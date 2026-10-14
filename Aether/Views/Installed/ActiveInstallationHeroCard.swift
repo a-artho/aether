@@ -6,6 +6,7 @@ struct ActiveInstallationRow: View {
 	@ObservedObject private var installationManager = AppInstallationManager.shared
 	let app: AppInfoPresentable
 	@ObservedObject var viewModel: InstallerStatusViewModel
+	var showsActions = true
 
 	var body: some View {
 		InstallationRowContent(
@@ -32,16 +33,18 @@ struct ActiveInstallationRow: View {
 				.accessibilityValue(Text(_progress, format: .percent.precision(.fractionLength(0))))
 			}
 		}
-		.modifier(InstallationCancellationActions(enabled: !installationManager.isFinishingInstallation) { installationManager.cancel() })
+		.modifier(InstallationCancellationActions(enabled: showsActions, isDisabled: installationManager.isFinishingInstallation, completed: viewModel.isCompleted) { installationManager.cancel() })
 		.contextMenu {
-			if _errorMessage != nil {
-				Button(.localized("Retry"), systemImage: "arrow.clockwise") {
-					installationManager.retryActiveInstall()
+			if showsActions {
+				if _errorMessage != nil {
+					Button(.localized("Retry"), systemImage: "arrow.clockwise") {
+						installationManager.retryActiveInstall()
+					}
 				}
+				Button(viewModel.isCompleted ? .localized("Dismiss") : .localized("Cancel"), systemImage: "xmark", role: .destructive) {
+					installationManager.cancel()
+				}.disabled(installationManager.isFinishingInstallation)
 			}
-			Button(.localized("Cancel"), systemImage: "xmark", role: .destructive) {
-				installationManager.cancel()
-			}.disabled(installationManager.isFinishingInstallation)
 		}
 		.sheet(isPresented: $installationManager.isWebviewPresenting) {
 			if let installer = installationManager.installer {
@@ -50,14 +53,12 @@ struct ActiveInstallationRow: View {
 		}
 	}
 
-	private var _progress: Double {
-		if case .signing = viewModel.status { return min(1, max(0, viewModel.signingProgress)) }
-		let progress = max(viewModel.overallProgress, viewModel.installProgress)
-		return progress.isFinite ? min(max(progress, 0), 1) : 0
-	}
+	private var _progress: Double { viewModel.operationProgress }
 
 	private var _errorMessage: String? {
-		if case .broken(let error) = viewModel.status { return error.localizedDescription }
+		if case .broken(let error) = viewModel.status {
+			return error is InstallationBackgroundError ? .localized("iOS interrupted background installation") : error.localizedDescription
+		}
 		return nil
 	}
 
@@ -74,15 +75,18 @@ struct ActiveInstallationRow: View {
 struct QueuedInstallationRow: View {
 	let request: AppInstallationManager.InstallationRequest
 	let cancel: () -> Void
+	var showsActions = true
 
 	var body: some View {
 		InstallationRowContent(app: request.app, statusLabel: .localized("Queued"), statusColor: .secondary) {
 			InstallationProgressRing(progress: nil, systemImage: "clock")
 				.accessibilityHidden(true)
 		}
-		.modifier(InstallationCancellationActions(cancel: cancel))
+		.modifier(InstallationCancellationActions(enabled: showsActions, cancel: cancel))
 		.contextMenu {
-			Button(.localized("Cancel"), systemImage: "xmark", role: .destructive, action: cancel)
+			if showsActions {
+				Button(.localized("Cancel"), systemImage: "xmark", role: .destructive, action: cancel)
+			}
 		}
 	}
 }
@@ -123,7 +127,7 @@ private struct InstallationRowContent<Accessory: View>: View {
 	}
 }
 
-private struct InstallationProgressRing: View {
+struct InstallationProgressRing: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let progress: Double?
 	let systemImage: String
@@ -140,6 +144,7 @@ private struct InstallationProgressRing: View {
 					.animation(reduceMotion ? nil : .smooth, value: progress)
 			}
 			Image(systemName: systemImage)
+				.contentTransition(.symbolEffect(.replace))
 				.foregroundStyle(Color.accentColor)
 				.font(.footnote.bold())
 		}
@@ -150,13 +155,18 @@ private struct InstallationProgressRing: View {
 
 private struct InstallationCancellationActions: ViewModifier {
 	var enabled = true
+	var isDisabled = false
+	var completed = false
 	let cancel: () -> Void
 
 	func body(content: Content) -> some View {
 		content
 			.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-				if enabled { Button(.localized("Cancel"), systemImage: "xmark", role: .destructive, action: cancel) }
+				if enabled {
+					Button(completed ? .localized("Dismiss") : .localized("Cancel"), systemImage: "xmark", role: .destructive, action: cancel)
+						.disabled(isDisabled)
+				}
 			}
-			.accessibilityAction(named: Text(.localized("Cancel"))) { if enabled { cancel() } }
+			.accessibilityAction(named: Text(completed ? .localized("Dismiss") : .localized("Cancel"))) { if enabled && !isDisabled { cancel() } }
 	}
 }

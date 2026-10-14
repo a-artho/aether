@@ -109,8 +109,9 @@ struct SourceAppsView: View {
 			text: $_searchText, isPresented: _collectionSearchPresented,
 			focus: searchFocus, title: _navigationTitle, width: _toolbarWidth,
 			isScreenActive: router.path.last == .collection(collectionRoute),
-			searchOnLeading: false
-		) { _titleMenuActions() })
+			hasTitleSearchMenu: true,
+			secondarySymbol: "line.3.horizontal.decrease", secondaryLabel: .localized("Filter")
+		) { _repoMenuActions() })
 
 		.onChange(of: router.searchTarget) { _, target in
 			if target != .collection(collectionRoute) {
@@ -146,7 +147,7 @@ struct SourceAppsView: View {
 	}
 
 	@ViewBuilder
-	private func _titleMenuActions() -> some View {
+	private func _repoMenuActions() -> some View {
 			_sortActions()
 			if let _sourceContexts, _sourceContexts.count == 1 {
 				Section {

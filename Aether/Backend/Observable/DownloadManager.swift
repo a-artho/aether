@@ -117,6 +117,7 @@ class DownloadManager: NSObject, ObservableObject {
 			sourceProvenance: sourceProvenance
 		)
 		downloads.append(download)
+		LibraryArtifactIndex.shared.recordImport(uuid: download.importIdentifier)
 		let task = _makeFreshTask(for: download)
 		download.task = task
 		_startDownloadExecution(for: download)
@@ -143,6 +144,7 @@ class DownloadManager: NSObject, ObservableObject {
 			sourceIsStable: sourceIsStable
 		)
 		downloads.append(download)
+		LibraryArtifactIndex.shared.recordImport(uuid: download.importIdentifier)
 		_archiveSourceCleanup[download.id] = sourceCleanup
 		_startDownloadExecution(for: download)
 		return download
@@ -243,8 +245,8 @@ class DownloadManager: NSObject, ObservableObject {
 		_startProcessing(download, sourceURL: stagingURL, sourceIsStable: true)
 	}
 
-	func deleteDownload(_ download: Download) {
-		guard _isCurrent(download) else { return }
+	func deleteDownload(_ download: Download, completion: (@MainActor @Sendable () -> Void)? = nil) {
+		guard _isCurrent(download) else { completion?(); return }
 		let processing = _processingTasks.removeValue(forKey: download.id)
 		let sourceCleanup = _archiveSourceCleanup.removeValue(forKey: download.id)
 		processing?.cancel()
@@ -266,6 +268,7 @@ class DownloadManager: NSObject, ObservableObject {
 			await AppFileHandler.removeImportTransaction(
 				transactionIdentifier: importIdentifier
 			)
+			await completion?()
 		}
 	}
 

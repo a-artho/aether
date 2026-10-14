@@ -76,10 +76,23 @@ final class FocusTab {
 final class FocusProxy {
  enum Anchor { case top }
  var targets = [UUID]()
+ var rowTargets = [String]()
  func scrollTo(_ target: UUID, anchor: Anchor) { targets.append(target) }
+ func scrollTo(_ target: String, anchor: Anchor) { rowTargets.append(target) }
 }
 final class FocusFixture {
  struct Card { let id: UUID }
+ final class Imports {
+  var isExpanded=true
+  struct Row { let id:String; let operation:Card? }
+  var rows:[Row]=[]
+  var visibleRows:[Row] { rows }
+  var selectionFinished=false
+  func finishSelection() { selectionFinished=true }
+ }
+ var simplifiedMode=false
+ let imports=Imports()
+ var visibleUnifiedInstallRows=[UUID:Set<String>]()
  let tabManager = FocusTab()
  let scrollProxy = FocusProxy()
  var cards = [Card(id:UUID())]
@@ -87,6 +100,9 @@ final class FocusFixture {
  var isSpoofingPresented = false
  var isRootListVisible = false
  var visibleInstallRows = Set<UUID>()
+ func operationIsVisible(_ id:UUID)->Bool {
+  simplifiedMode ? visibleUnifiedInstallRows[id]?.isEmpty == false : visibleInstallRows.contains(id)
+ }
  FOCUS
 }
 final class AuditFixTests: XCTestCase {
@@ -177,6 +193,21 @@ final class AuditFixTests: XCTestCase {
   view.focus()
   XCTAssertEqual(view.selectedAppBundleId,"app.details")
   XCTAssertTrue(view.scrollProxy.targets.isEmpty)
+ }
+ func testSimplifiedFocusUsesStableArtifactRowAndWaitsForAppearance() {
+  let view=FocusFixture()
+  view.simplifiedMode=true
+  view.isRootListVisible=true
+  let card=view.cards.first!
+  view.imports.rows=[.init(id:"app:original",operation:card)]
+  view.focus()
+  XCTAssertTrue(view.imports.selectionFinished)
+  XCTAssertEqual(view.scrollProxy.rowTargets,["app:original"])
+  XCTAssertTrue(view.scrollProxy.targets.isEmpty)
+  XCTAssertNotNil(view.tabManager.installationFocusRequest)
+  view.visibleUnifiedInstallRows[card.id]=["app:original"]
+  view.focus()
+  XCTAssertNil(view.tabManager.installationFocusRequest)
  }
  func testInstallFocusDoesNotActInAnotherTabOrWithoutJobs() {
   let view = FocusFixture()

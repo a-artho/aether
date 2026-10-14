@@ -28,6 +28,8 @@ public final class InstallerStatusViewModel: ObservableObject {
 	@Published public var packageProgress: Double = 0.0
 	@Published public var installProgress: Double = 0.0
 
+	/// Fixed for the lifetime of a job, including the signed-app handoff.
+	public let signsBeforeInstalling: Bool
 	public var isIDevice: Bool
 
 	public var overallProgress: Double {
@@ -48,9 +50,11 @@ public final class InstallerStatusViewModel: ObservableObject {
 
 	public init(
 		status: InstallerStatus = .none,
-		isIdevice: Bool = true
+		isIdevice: Bool = true,
+		signsBeforeInstalling: Bool = false
 	) {
 		self.status = status
 		self.isIDevice = isIdevice
+		self.signsBeforeInstalling = signsBeforeInstalling
 	}
 }

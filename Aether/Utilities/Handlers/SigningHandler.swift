@@ -203,6 +203,7 @@ final class SigningHandler: NSObject {
 			icon: bundle?.iconFileName
 		)
 		let sourceUUID = _app.uuid
+		let sourceIsSigned = _app.isSigned
 		let sourceURL = _app.source
 		let certificateUUID = _options.signingOption == .default ? appCertificate?.uuid : nil
 
@@ -223,6 +224,7 @@ final class SigningHandler: NSObject {
 				to: signedUUID,
 				kind: .signed
 			)
+			LibraryArtifactIndex.shared.recordSigned(uuid: signedUUID, sourceUUID: sourceUUID, sourceIsSigned: sourceIsSigned)
 			// Publish the row and its final operation state in one main-actor turn.
 			onCommitted()
 		}

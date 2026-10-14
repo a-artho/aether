@@ -275,6 +275,8 @@ struct LibraryView: View {
 					_selectedDownloadIDs.removeAll()
 				}
 			}
+			.onAppear { _consumeLibraryAction() }
+			.onChange(of: tabManager.requestedLibraryAction) { _, _ in _consumeLibraryAction() }
 		}
 		.disabled(_isDeleting)
 		.overlay {
@@ -302,6 +304,15 @@ struct LibraryView: View {
 			Label(.localized("Delete All"), systemImage: "trash")
 		}
 		.disabled(_signedApps.isEmpty && _importedApps.isEmpty)
+	}
+
+	private func _consumeLibraryAction() {
+		guard let action = tabManager.requestedLibraryAction else { return }
+		tabManager.requestedLibraryAction = nil
+		switch action {
+		case .select: withAnimation { _editMode = .active }
+		case .deleteAll: _isDeleteAllAlertPresented = true
+		}
 	}
 
 }

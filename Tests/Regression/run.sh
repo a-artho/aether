@@ -16,6 +16,7 @@ python3 "$test_dir/generate-lifecycle-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-icon-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-tunnel-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-ui-state-tests.py" "$scratch/Tests/RegressionTests"
+python3 "$test_dir/generate-unified-library-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-background-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-correction-tests.py" "$scratch/Tests/RegressionTests"
 python3 "$test_dir/generate-audit-tests.py" "$scratch/Tests/RegressionTests"
@@ -45,3 +46,5 @@ done
 
 python3 "$test_dir/run-native-signing-progress-checks.py"
 python3 "$test_dir/run-server-payload-progress-checks.py"
+python3 "$test_dir/run-unified-progress-checks.py"
+python3 "$test_dir/run-installation-progress-checks.py"

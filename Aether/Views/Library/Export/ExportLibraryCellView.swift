@@ -9,6 +9,7 @@ import SwiftUI
 struct ExportLibraryCellView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	@ObservedObject var export: AppExport
+	var showsActions = true
 
 	var body: some View {
 		HStack(spacing: 18) {
@@ -32,8 +33,10 @@ struct ExportLibraryCellView: View {
 			}
 		}
 		.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-			Button(.localized("Delete"), systemImage: "trash", role: .destructive) {
-				ExportManager.shared.cancel(export)
+			if showsActions {
+				Button(.localized("Cancel"), systemImage: "xmark", role: .destructive) {
+					ExportManager.shared.cancel(export)
+				}
 			}
 		}
 	}
@@ -53,7 +56,7 @@ struct ExportLibraryCellView: View {
 	}
 }
 
-private struct ExportProgressButton: View {
+struct ExportProgressButton: View {
 	@ObservedObject var export: AppExport
 
 	var body: some View {

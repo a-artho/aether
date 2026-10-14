@@ -43,6 +43,7 @@ struct SettingsView: View {
 	var body: some View {
 		NBNavigationView(.localized("Settings"), displayMode: .inline) {
 			Form {
+				Section { InstallationModePickerRow() }
 				Section {
 					if let cert = selectedCertificate {
 						CertificatesCellView(cert: cert)

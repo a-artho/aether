@@ -48,6 +48,7 @@ extension Storage {
 			try deleteSourceMetadata(for: uuid, deferSave: true)
 			objects.forEach(context.delete)
 			if let error = saveContext() { throw error }
+			LibraryArtifactIndex.shared.remove(uuid: uuid, isSigned: app.isSigned)
 		} catch {
 			if beganDeletion { context.rollback() }
 			if let movedDirectory {
