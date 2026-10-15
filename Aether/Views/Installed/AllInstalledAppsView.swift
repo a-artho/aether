@@ -19,6 +19,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 	@State private var width: CGFloat = 320
 	@State private var isVisible = false
 	@State private var selectedInfoApp: InstalledApp?
+	@State private var pendingUninstall: InstalledApp?
 	@State private var deletingIDs = Set<String>()
 	@State private var deletionError: String?
 
@@ -60,7 +61,8 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 					.swipeActions(edge: .trailing) {
 						// Wait for the device to confirm uninstallation before removing the row.
 						Button(String.localized("Uninstall"), systemImage: "trash") {
-							Task { await delete(app) }
+							searchFocused = false
+							pendingUninstall = app
 						}
 						.tint(.red)
 						.disabled(deletingIDs.contains(app.id) || installations.blocksUninstall(bundleIdentifier: app.bundleIdentifier))
@@ -82,7 +84,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 		.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
 		.modifier(SearchToolbarModifier(text: $searchText, isPresented: $searchPresented,
 			focus: $searchFocused, title: .localized("All Apps"), width: width,
-			isScreenActive: isVisible && selectedInfoApp == nil, hasTitleMenu: false) { EmptyView() })
+			isScreenActive: isVisible && selectedInfoApp == nil && pendingUninstall == nil, hasTitleMenu: false) { EmptyView() })
 		.onChange(of: searchPresented) { _, presented in
 			if !presented { searchText = ""; searchFocused = false }
 		}
@@ -99,6 +101,19 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 		}
 		.onChange(of: store.apps.map(\.id)) { _, ids in
 			if let app = selectedInfoApp, !ids.contains(app.id) { selectedInfoApp = nil }
+			if let app = pendingUninstall, !ids.contains(app.id) { pendingUninstall = nil }
+		}
+		.confirmationDialog(String.localized("Uninstall App?"), isPresented: Binding(
+			get: { pendingUninstall != nil }, set: { if !$0 { pendingUninstall = nil } }
+		), titleVisibility: .visible, presenting: pendingUninstall) { app in
+			Button(String.localized("Uninstall"), role: .destructive) {
+				pendingUninstall = nil
+				Task { await delete(app) }
+			}
+			.disabled(installations.blocksUninstall(bundleIdentifier: app.bundleIdentifier))
+			Button(String.localized("Cancel"), role: .cancel) { pendingUninstall = nil }
+		} message: { app in
+			Text(String.localized("Uninstall %@ and remove its data?", arguments: app.displayName))
 		}
 		.alert(String.localized("Couldn’t Uninstall"), isPresented: Binding(
 			get: { deletionError != nil }, set: { if !$0 { deletionError = nil } }
