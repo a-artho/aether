@@ -17,7 +17,6 @@ final class AppTabManager: ObservableObject {
 		case certificates
 		case signing
 		case archive
-		case serverConfig = "server-config"
 		case installation
 		case pairingFile = "pairing-file"
 		case tunnel

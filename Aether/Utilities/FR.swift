@@ -8,13 +8,19 @@
 import Foundation.NSURL
 import UIKit.UIImage
 import ZsignC
-import NimbleJSON
 import AltSourceKit
 import IDeviceSwift
 
 private actor PackageProcessingGate {
 	private var isOccupied = false
 	private var waiters: [(UUID, CheckedContinuation<Void, Error>)] = []
+
+	func tryAcquire() throws -> Bool {
+		try Task.checkCancellation()
+		guard !isOccupied else { return false }
+		isOccupied = true
+		return true
+	}
 
 	func acquire() async throws {
 		try Task.checkCancellation()
@@ -81,6 +87,7 @@ enum FR {
 		transactionIdentifier: String? = nil,
 		copySource: Bool = true,
 		beginProcessing: @escaping @MainActor @Sendable () -> Bool = { true },
+		waitingForProcessing: @escaping @MainActor @Sendable () -> Void = {},
 		completion: @escaping @MainActor @Sendable (Error?) -> Void
 	) -> Task<Void, Never> {
 		Task.detached(priority: .utility) {
@@ -95,8 +102,12 @@ enum FR {
 				}
 			}
 			await log("Import requested: \(ipa.lastPathComponent); waiting for processing queue")
-			do { try await packageProcessingGate.acquire() }
-			catch {
+			do {
+				if try await !packageProcessingGate.tryAcquire() {
+					await waitingForProcessing()
+					try await packageProcessingGate.acquire()
+				}
+			} catch {
 				let detail = error as NSError
 				await log("Import failed at \(stage): domain=\(detail.domain), code=\(detail.code), \(detail.localizedDescription)", level: .error)
 				await MainActor.run { completion(error) }
@@ -290,34 +301,6 @@ enum FR {
 		}
 
 		HeartbeatManager.shared.resetRSDTunnel()
-	}
-
-	static func downloadSSLCertificates(
-		from urlString: String,
-		completion: @escaping @MainActor @Sendable (Bool) -> Void
-	) {
-		NBFetchService().fetch(from: urlString) { (result: Result<ServerView.ServerPackModel, Error>) in
-			switch result {
-			case .success(let pack):
-				do {
-					try FileManager.forceWrite(content: pack.key, to: "server.pem")
-					try FileManager.forceWrite(content: pack.cert, to: "server.crt")
-					try FileManager.forceWrite(content: pack.info.domains.commonName, to: "commonName.txt")
-					DispatchQueue.main.async {
-						HapticManager.shared.impact()
-						completion(true)
-					}
-				} catch {
-					DispatchQueue.main.async {
-						completion(false)
-					}
-				}
-			case .failure(_):
-				DispatchQueue.main.async {
-					completion(false)
-				}
-			}
-		}
 	}
 
 	static func handleSource(

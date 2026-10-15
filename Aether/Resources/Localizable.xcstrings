@@ -1,6 +1,33 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Glass" : {
+
+    },
+    "Native" : {
+
+    },
+    "Card Style" : {
+
+    },
+    "Row Icons" : {
+      "extractionState" : "manual"
+    },
+    "Colored" : {
+      "extractionState" : "manual"
+    },
+    "Monochrome" : {
+      "extractionState" : "manual"
+    },
+    "Muted" : {
+      "extractionState" : "manual"
+    },
+    "Left-Aligned Page Titles" : {
+      "extractionState" : "manual"
+    },
+    "Section Header Size" : {
+      "extractionState" : "manual"
+    },
     "Liquid Glass Card" : {
       "extractionState" : "manual"
     },

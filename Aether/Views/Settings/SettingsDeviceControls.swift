@@ -2,6 +2,18 @@ import SwiftUI
 import IDeviceSwift
 import NimbleExtensions
 
+enum DeviceControlsStyle: String, CaseIterable, Identifiable {
+	case standard, liquidGlass, nativeRaised
+	var id: Self { self }
+	var title: String {
+		switch self {
+		case .standard: .localized("Default")
+		case .liquidGlass: .localized("Glass")
+		case .nativeRaised: .localized("Native")
+		}
+	}
+}
+
 struct SettingsDeviceControls: View {
 	@AppStorage("Aether.installationMethod") private var installationMethod = 0
 	@AppStorage("Aether.spoofing.simulationMayBeActive") private var isSpoofingActive = false
@@ -17,6 +29,7 @@ struct SettingsDeviceControls: View {
 	}
 
 	private var tunnelStatus: String {
+		if installationMethod != 1 { return .localized("Local only") }
 		if connection.isUpdating { return .localized("Connecting…") }
 		if connection.isConnected { return .localized("Connected") }
 		if !connection.hasPairingFile { return .localized("Pairing needed") }
@@ -31,6 +44,7 @@ struct SettingsDeviceControls: View {
 	}
 
 	private var pairingStatus: String {
+		if installationMethod != 1 { return .localized("Local only") }
 		guard connection.hasPairingFile else { return .localized("Not paired") }
 		switch connection.pairingVerification.status {
 		case .verified where connection.isConnected: return .localized("Verified")
@@ -44,22 +58,22 @@ struct SettingsDeviceControls: View {
 		VStack(spacing: 12) {
 			HStack(spacing: 12) {
 				DeviceAccessoryTile(title: .localized("Tunnel"), subtitle: tunnelStatus,
-					systemImage: "network", isActive: connection.isConnected, action: openTunnel)
+					systemImage: "network", isActive: installationMethod == 1 && connection.isConnected,
+					isDisabled: installationMethod != 1, action: openTunnel)
 				DeviceAccessoryTile(title: .localized("Pairing"), subtitle: pairingStatus,
-					systemImage: "key.fill", isActive: connection.isConnected && connection.pairingVerification.status == .verified,
-					action: openPairing)
+					systemImage: "key.fill", isActive: installationMethod == 1 && connection.isConnected && connection.pairingVerification.status == .verified,
+					isDisabled: installationMethod != 1, action: openPairing)
 			}
 			HStack(spacing: 12) {
 				DeviceAccessoryTile(title: .localized("Spoofing"), subtitle: spoofingStatus,
 					systemImage: "location.fill", isActive: isSpoofingActive,
 					isDisabled: !canOpenSpoofing, action: openSpoofing)
-					.opacity(installationMethod == 1 ? 1 : 0.45)
 				if let certificate {
 					CertificateControlTile(certificate: certificate, action: openCertificates)
 				} else {
 					DeviceAccessoryTile(title: .localized("Certificate"), subtitle: .localized("Not selected"), action: openCertificates) {
 						Circle().stroke(Color.secondary.opacity(0.25), lineWidth: 2.5)
-							.frame(width: 18, height: 18)
+							.frame(width: 15, height: 15)
 					}
 				}
 			}
@@ -68,7 +82,7 @@ struct SettingsDeviceControls: View {
 }
 
 private struct DeviceAccessoryTile<Icon: View>: View {
-	@AppStorage("Aether.glassSettingsCard") private var glassSettingsCard = false
+	@AppStorage("Aether.deviceControlsStyle") private var controlsStyle: DeviceControlsStyle = .standard
 	let title: String
 	let subtitle: String
 	var isDisabled = false
@@ -108,7 +122,7 @@ private struct DeviceAccessoryTile<Icon: View>: View {
 			.padding(.horizontal, 10)
 			.padding(.vertical, 8)
 			.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-			.background(glassSettingsCard ? Color.clear : Color(uiColor: .secondarySystemGroupedBackground),
+			.background(controlsStyle == .standard ? Color(uiColor: .secondarySystemGroupedBackground) : Color.clear,
 				in: RoundedRectangle(cornerRadius: 15, style: .continuous))
 			.contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
 		}
@@ -124,7 +138,7 @@ private struct DeviceTileSymbol: View {
 	let activeColor: Color
 	var body: some View {
 		Image(systemName: name)
-			.font(.system(size: 17, weight: .semibold))
+			.font(.system(size: 15, weight: .semibold))
 			.foregroundStyle(active ? activeColor : Color.secondary.opacity(disabled ? 0.55 : 1))
 	}
 }
@@ -160,7 +174,7 @@ private struct CertificateControlTile: View {
 						.stroke(color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
 						.rotationEffect(.degrees(-90))
 				}
-				.frame(width: 18, height: 18)
+				.frame(width: 15, height: 15)
 			}
 		}
 		.task(id: certificate.uuid) {

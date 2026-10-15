@@ -86,9 +86,7 @@ final class FocusFixture {
   struct Row { let id:String; let operation:Card? }
   var rows:[Row]=[]
   var visibleRows:[Row] { rows }
-  var selectionFinished=false
   var infoApp:String?
-  func finishSelection() { selectionFinished=true }
  }
  let imports=Imports()
  var visibleUnifiedInstallRows=[UUID:Set<String>]()
@@ -213,7 +211,6 @@ final class AuditFixTests: XCTestCase {
   let card=view.cards.first!
   view.imports.rows=[.init(id:"app:original",operation:card)]
   view.focus()
-  XCTAssertTrue(view.imports.selectionFinished)
   XCTAssertEqual(view.scrollProxy.rowTargets,["app:original"])
   XCTAssertTrue(view.scrollProxy.targets.isEmpty)
   XCTAssertNotNil(view.tabManager.installationFocusRequest)

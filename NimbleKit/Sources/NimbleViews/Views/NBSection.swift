@@ -103,8 +103,7 @@ public struct NBSection<Content, Footer>: View
 				}
 
 				Text(_headerText)
-					.fontWeight(.bold)
-					.font(.title3)
+					.nbSectionHeaderFont()
 					.nbSectionHeaderColor()
 
 				Spacer()

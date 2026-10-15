@@ -23,6 +23,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	let width: CGFloat
 	var enabled = true
 	var isScreenActive = true
+	var isTabRoot = false
 	var hasTitleMenu = true
 	var hasTitleSearchMenu = false
 	var secondarySymbol = "plus"
@@ -33,9 +34,12 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	@StateObject private var transition = SearchToolbarTransition()
 	@State private var searchButtonFrame: CGRect = .zero
 	@AppStorage("Aether.searchPlacement") private var searchPlacement: SearchPlacement = .right
+	@AppStorage("Aether.leadingPageTitles") private var leadingPageTitles = false
 	@AppStorage("Aether.hideTitleSearchIcon") private var hideTitleSearchIcon = false
 
 	private var usesTitleSearch: Bool { searchPlacement == .pageTitle }
+	private var hidesTitle: Bool { isTabRoot && !usesTitleSearch }
+	private var usesLeadingTitle: Bool { isTabRoot && leadingPageTitles }
 	// Different navigation actions need distinct identities for the native handoff.
 	// Keep each identity stable while its button becomes the search-close control.
 	private var secondaryToolbarID: String { hasTitleSearchMenu ? "navigation-filter" : "navigation-add" }
@@ -43,20 +47,31 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	func body(content: Content) -> some View {
 		content
 			.scrollDismissesKeyboard(.immediately)
-			.navigationTitle(title)
+			.navigationTitle(hidesTitle || usesLeadingTitle ? "" : title)
 			.navigationBarTitleDisplayMode(.inline)
 			.navigationBarBackButtonHidden(transition.expanded)
 			.toolbar {
 				if enabled {
-					ToolbarItem(placement: .principal) {
-						titleLabel
-					}
-					.sharedBackgroundVisibility(.hidden)
-					if usesTitleSearch {
-						ToolbarItem(id: secondaryToolbarID, placement: .topBarTrailing) {
-							secondaryButton
+					if usesLeadingTitle {
+						ToolbarItem(id: "page-title-leading", placement: .topBarLeading) {
+							titleLabel.fixedSize(horizontal: true, vertical: false)
 						}
-						.sharedBackgroundVisibility(transition.expanded || secondaryAction != nil || hasTitleSearchMenu ? .automatic : .hidden)
+						.sharedBackgroundVisibility(.hidden)
+						// Override the native center title without reserving its text width.
+						ToolbarItem(id: "page-title-center-placeholder", placement: .principal) {
+							Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+						}
+						.sharedBackgroundVisibility(.hidden)
+					} else {
+						ToolbarItem(id: "page-title", placement: .principal) { titleLabel }
+							.sharedBackgroundVisibility(.hidden)
+					}
+					if usesTitleSearch {
+						if transition.expanded || secondaryAction != nil || hasTitleSearchMenu {
+							ToolbarItem(id: secondaryToolbarID, placement: .topBarTrailing) {
+								secondaryButton
+							}
+						}
 					} else if secondaryAction != nil {
 						ToolbarItemGroup(placement: .topBarTrailing) {
 							if !transition.expanded { searchButton }
@@ -73,11 +88,12 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 				if enabled {
 					SearchHeaderOverlay(text: $text, focus: focus, title: title,
 						transition: transition, sourceFrame: searchButtonFrame,
-						searchInTitle: usesTitleSearch, isScreenActive: isScreenActive)
+						searchInTitle: usesTitleSearch, titleIsLeading: usesLeadingTitle, isScreenActive: isScreenActive)
 				}
 			}
 			.onAppear { transition.restore(isPresented: isPresented) }
 			.onChange(of: searchPlacement) { _, _ in searchButtonFrame = .zero }
+			.onChange(of: leadingPageTitles) { _, _ in searchButtonFrame = .zero }
 			.onChange(of: hideTitleSearchIcon) { _, _ in searchButtonFrame = .zero }
 			.onChange(of: isPresented) { _, presented in transition.setPresented(presented, keyboardExpected: focus.wrappedValue) }
 			.onScrollPhaseChange { _, phase in
@@ -127,11 +143,11 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 		}
 		// Preserve the complete title label's width throughout search.
 		// The menu indicator must share the title's visibility and timing.
-		.opacity(transition.expanded ? 0 : 1)
+		.opacity(hidesTitle || transition.expanded ? 0 : 1)
 		.scaleEffect(transition.expanded ? 0.9 : 1)
 		.animation(transition.animation, value: transition.expanded)
-		.allowsHitTesting(!transition.expanded)
-		.accessibilityHidden(transition.expanded)
+		.allowsHitTesting(!hidesTitle && !transition.expanded)
+		.accessibilityHidden(hidesTitle || transition.expanded)
 	}
 
 	private var searchButton: some View {

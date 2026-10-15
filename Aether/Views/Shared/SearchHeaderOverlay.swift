@@ -10,6 +10,7 @@ struct SearchHeaderOverlay: UIViewRepresentable {
 	@ObservedObject var transition: SearchToolbarTransition
 	let sourceFrame: CGRect
 	let searchInTitle: Bool
+	var titleIsLeading = false
 	let isScreenActive: Bool
 	@Environment(\.layoutDirection) private var layoutDirection
 
@@ -20,7 +21,7 @@ struct SearchHeaderOverlay: UIViewRepresentable {
 	func updateUIView(_ view: SearchOverlayAttachmentView, context: Context) {
 		view.surface = SearchOverlaySurface(text: $text, focus: focus, title: title,
 			transition: transition, layout: view.layout, sourceFrame: sourceFrame,
-			searchInTitle: searchInTitle,
+			searchInTitle: searchInTitle, titleIsLeading: titleIsLeading,
 			rightToLeft: layoutDirection == .rightToLeft)
 		view.isScreenActive = isScreenActive
 		view.acceptsSearchTouches = isScreenActive && transition.expanded
@@ -45,6 +46,7 @@ struct SearchOverlaySurface: View {
 	@ObservedObject var layout: SearchOverlayLayout
 	let sourceFrame: CGRect
 	let searchInTitle: Bool
+	var titleIsLeading = false
 	let rightToLeft: Bool
 
 	var body: some View {
@@ -52,9 +54,11 @@ struct SearchOverlaySurface: View {
 			let width = max(44, min(600, geometry.size.width - 84))
 			let final = CGRect(x: rightToLeft ? geometry.size.width - 16 - width : 16,
 				y: (geometry.size.height - 40) / 2, width: width, height: 40)
+			let fallbackX = searchInTitle
+				? (titleIsLeading ? (rightToLeft ? geometry.size.width - 38 : 38) : geometry.size.width / 2)
+				: (rightToLeft ? 38 : geometry.size.width - 38)
 			let source = sourceFrame.isEmpty
-				? CGPoint(x: searchInTitle ? geometry.size.width / 2
-					: (rightToLeft ? 38 : geometry.size.width - 38),
+				? CGPoint(x: fallbackX,
 					y: geometry.size.height / 2)
 				: CGPoint(x: sourceFrame.midX - layout.barFrame.minX,
 					y: sourceFrame.midY - layout.barFrame.minY)

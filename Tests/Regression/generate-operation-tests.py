@@ -260,7 +260,7 @@ parts.append(r"""
  enum AppFileHandler { static var removed:[String]=[]; static func removeImportTransaction(transactionIdentifier:String) async { removed.append(transactionIdentifier) } }
  struct Store { func cleanupArtifacts(for download:Download) {} }
  @MainActor final class Manager {
-  var downloads:[Download]=[]; var _processingTasks:[String:Task<Void,Never>]=[:]; var _archiveSourceCleanup:[String:@Sendable ()->Void]=[:]; let _store=Store(); var stopped=0
+  var downloads:[Download]=[]; var _processingTasks:[String:Task<Void,Never>]=[:]; var _archiveSourceCleanup:[String:@Sendable ()->Void]=[:]; let _store=Store(); var stopped=0; var _retiringProcessingCount=0
   func _isCurrent(_ download:Download)->Bool { downloads.contains { $0 === download } }
   func _stopContinuedTask(for download:Download,success:Bool) { stopped+=1 }
   func _persistDownloads() {}; func _releaseIdleBackgroundTunnel() {}
@@ -289,6 +289,7 @@ final class DownloadDeletionRegressionTests:XCTestCase {
    manager.deleteDownload(download) { completion.done=true }
    XCTAssertTrue(worker.isCancelled); XCTAssertTrue(manager.downloads.isEmpty)
    XCTAssertEqual(manager.stopped,1)
+   XCTAssertEqual(manager._retiringProcessingCount,1)
    for _ in 0..<20 { await Task.yield() }
    XCTAssertTrue(DownloadDeletionFixture.AppFileHandler.removed.isEmpty)
    XCTAssertEqual(source.cleanups,0)
@@ -298,6 +299,7 @@ final class DownloadDeletionRegressionTests:XCTestCase {
    XCTAssertEqual(DownloadDeletionFixture.AppFileHandler.removed,[download.importIdentifier])
    XCTAssertEqual(source.cleanups,1)
    XCTAssertTrue(manager._archiveSourceCleanup.isEmpty)
+   XCTAssertEqual(manager._retiringProcessingCount,0)
   }
  }
 }

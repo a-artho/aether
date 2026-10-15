@@ -248,8 +248,6 @@ struct AetherApp: App {
 				) { error in
 					if let error = error {
 						UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
-					} else {
-						HapticManager.shared.impact()
 					}
 				}
 

@@ -12,7 +12,9 @@ import UIKit
 // MARK: - View
 // dear god help me
 struct AppearanceView: View {
-	@AppStorage("Aether.glassSettingsCard") private var _glassSettingsCard = false
+	@AppStorage("Aether.settingsRowIconStyle") private var _settingsRowIconStyle: SettingsRowIconStyle = .colored
+	@AppStorage("Aether.deviceControlsStyle") private var _deviceControlsStyle: DeviceControlsStyle = .standard
+	@AppStorage("Aether.sectionHeaderMatchesPageTitle") private var _sectionHeaderMatchesPageTitle = false
 	@AppStorage("Aether.mutedSectionHeaders") private var _mutedSectionHeaders = false
 	@AppStorage("Aether.userInterfaceStyle")
 	private var _userInterfaceStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
@@ -25,6 +27,7 @@ struct AppearanceView: View {
 
 	@AppStorage("Aether.searchPlacement")
 	private var _searchPlacement: SearchPlacement = .right
+	@AppStorage("Aether.leadingPageTitles") private var _leadingPageTitles = false
 	@AppStorage("Aether.hideTitleSearchIcon")
 	private var _hideTitleSearchIcon = false
 
@@ -84,14 +87,35 @@ struct AppearanceView: View {
 			}
 
 			NBSection(.localized("Settings")) {
-				Toggle(isOn: $_glassSettingsCard) {
-					SettingsRowLabel(.localized("Liquid Glass Card"), systemImage: "rectangle.on.rectangle", backgroundColor: .gray)
+				Picker(selection: $_settingsRowIconStyle) {
+					ForEach(SettingsRowIconStyle.allCases) { style in
+						Text(style.title).tag(style)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Row Icons"), systemImage: "square.grid.2x2", backgroundColor: .gray)
 				}
-			} footer: {
-				Text(.localized("Use Liquid Glass for the device controls card in Settings."))
+				.pickerStyle(.menu)
+				.tint(.secondary)
+				Picker(selection: $_deviceControlsStyle) {
+					ForEach(DeviceControlsStyle.allCases) { style in
+						Text(style.title).tag(style)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Card Style"), systemImage: "rectangle.on.rectangle", backgroundColor: .gray)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
 			}
 
 			NBSection(.localized("Section Headers")) {
+				Picker(selection: $_sectionHeaderMatchesPageTitle) {
+					Text(.localized("Default")).tag(false)
+					Text(.localized("Page Title")).tag(true)
+				} label: {
+					SettingsRowLabel(.localized("Section Header Size"), systemImage: "textformat.size", backgroundColor: .gray)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
 				Toggle(isOn: $_mutedSectionHeaders) {
 					SettingsRowLabel(.localized("Muted Section Headers"), systemImage: "textformat", backgroundColor: .gray)
 				}
@@ -111,6 +135,9 @@ struct AppearanceView: View {
 				.pickerStyle(.menu)
 				.tint(.secondary)
 				if _searchPlacement == .pageTitle {
+					Toggle(isOn: $_leadingPageTitles) {
+						SettingsRowLabel(.localized("Left-Aligned Page Titles"), systemImage: "text.alignleft", backgroundColor: .blue)
+					}
 					Toggle(isOn: $_hideTitleSearchIcon) {
 						SettingsRowLabel(.localized("Hide Search Icon"), systemImage: "magnifyingglass", backgroundColor: .blue)
 					}

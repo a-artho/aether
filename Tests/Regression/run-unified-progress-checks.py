@@ -9,7 +9,7 @@ source = (repo / 'Aether/Views/Library/UnifiedImportsSection.swift').read_text()
 activity = source[source.index('@MainActor\nprivate final class UnifiedImportActivity:'):source.index('\nprivate struct UnifiedImportMetadata:')]
 cancellation = source[source.index('\tfunc cancelDownload('):source.index('\n\tfunc delete(_ targets:')]
 visibility = source[source.index('\tvar visibleRows:'):source.index('\n\tfunc updateRows(')]
-update_rows = source[source.index('\tfunc updateRows('):source.index('\n\tfunc select()')]
+update_rows = source[source.index('\tfunc updateRows('):source.index('\n\tfunc isProtected(')]
 fixture = r'''
 import Foundation
 import Combine
@@ -26,7 +26,6 @@ import Combine
 @MainActor final class CancellationFixture {
  var cancellingRows: Set<String> = []
  var deletingRows: Set<String> = []
- var selectedRows: Set<String> = ["first", "second"]
  var rows: [UnifiedImportEntry] = []
  var rowSignatures: [String] = []
  var revision: UInt64 = 0
@@ -106,10 +105,9 @@ enum Failure: Error { case fixture }
   DownloadManager.shared.completions.removeValue(forKey: ObjectIdentifier(first))!()
   while cancellation.cancellingRows.contains("first") && Date() < deadline { await Task.yield() }
   precondition(cancellation.cancellingRows == ["second"], "One cleanup must not clear another row's cancellation")
-  precondition(cancellation.selectedRows == ["second"])
   DownloadManager.shared.completions.removeValue(forKey: ObjectIdentifier(second))!()
   while !cancellation.cancellingRows.isEmpty && Date() < deadline { await Task.yield() }
-  precondition(cancellation.cancellingRows.isEmpty && cancellation.selectedRows.isEmpty)
+  precondition(cancellation.cancellingRows.isEmpty)
   print("Unified row progress, completion, subscription release and download cancellation checks passed")
  }
 }

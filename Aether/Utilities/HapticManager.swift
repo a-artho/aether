@@ -34,7 +34,7 @@ public final class HapticManager {
 	public static let shared = HapticManager()
 	public static let preferenceKey = "Aether.hapticStrength"
 
-	private let generator = UIImpactFeedbackGenerator(style: .soft)
+	private let generator = UIImpactFeedbackGenerator(style: .rigid)
 
 	private init() {}
 
@@ -50,7 +50,7 @@ public final class HapticManager {
 	}
 
 	public func selection() {
-		// Selection uses the same single soft tap and global intensity.
+		// Selection uses the same single crisp click and global intensity.
 		impact()
 	}
 

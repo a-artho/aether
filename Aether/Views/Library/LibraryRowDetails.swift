@@ -12,7 +12,6 @@ struct LibraryRowDetails: View {
 	var thirdLineStatus: String? = nil
 	var thirdLineAnimationKey: String? = nil
 	var showsNumericProgress = false
-	var statusColor: Color = .secondary
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 2) {
@@ -28,20 +27,15 @@ struct LibraryRowDetails: View {
 				.foregroundStyle(isFailed ? Color.red : Color.secondary)
 				.lineLimit(isFailed ? 2 : 1)
 
-			if let thirdLineStatus {
-				Text(thirdLineStatus)
-					.monospacedDigit()
-					.font(.footnote)
-					.foregroundStyle(statusColor)
-					.lineLimit(nil)
-					.fixedSize(horizontal: false, vertical: true)
-					.contentTransition(showsNumericProgress ? .identity : .interpolate)
-					.animation(animatesStatus && !reduceMotion ? .smooth(duration: 0.2) : nil, value: thirdLineAnimationKey ?? thirdLineStatus)
-			} else if let identifier, !identifier.isEmpty {
-				Text(identifier)
+			if let text = thirdLineStatus ?? identifier, !text.isEmpty {
+				Text(text)
 					.font(.footnote)
 					.foregroundStyle(.secondary)
-					.lineLimit(1)
+					.lineLimit(thirdLineStatus != nil ? nil : 1)
+					.fixedSize(horizontal: false, vertical: thirdLineStatus != nil)
+					.contentTransition(showsNumericProgress ? .identity : .interpolate)
+					.animation(animatesStatus && thirdLineStatus != nil && !reduceMotion ? .smooth(duration: 0.2) : nil,
+						value: thirdLineAnimationKey ?? thirdLineStatus)
 			}
 		}
 		.padding(.vertical, 2)

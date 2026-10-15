@@ -31,15 +31,11 @@ struct UnifiedImportEntry: Identifiable {
 
 @MainActor
 final class UnifiedImportsController: ObservableObject {
-	@Published var selectedRows: Set<String> = []
-	@Published var editMode: EditMode = .inactive
 	@Published var infoApp: AnyApp?
 	@Published var signingApp: AnyApp?
 	@Published var importing = false
 	@Published var importingURL = false
 	@Published var urlText = ""
-	@Published var confirmingDeleteAll = false
-	@Published private(set) var showsDeletionProgress = false
 	@Published private(set) var deletingRows: Set<String> = []
 	@Published private(set) var cancellingRows: Set<String> = []
 	@Published private(set) var revision: UInt64 = 0
@@ -57,14 +53,6 @@ final class UnifiedImportsController: ObservableObject {
 		rowSignatures = signatures
 		self.rows = rows
 		revision &+= 1
-		selectedRows.formIntersection(visibleRows.map(\.id))
-	}
-
-	func select() { withAnimation { editMode = .active } }
-	func finishSelection() { withAnimation { editMode = .inactive; selectedRows.removeAll() } }
-	func toggle(_ id: String) {
-		if selectedRows.contains(id) { selectedRows.remove(id) }
-		else { selectedRows.insert(id) }
 	}
 
 	func isProtected(_ row: UnifiedImportEntry) -> Bool {
@@ -79,8 +67,6 @@ final class UnifiedImportsController: ObservableObject {
 		}
 	}
 
-	func deleteSelected() { delete(visibleRows.filter { selectedRows.contains($0.id) }, showProgress: true) }
-	func deleteAll() { delete(visibleRows, showProgress: true); finishSelection() }
 	func cancelDownload(_ download: Download, rowID: String) {
 		guard !cancellingRows.contains(rowID) else { return }
 		cancellingRows.insert(rowID)
@@ -89,11 +75,9 @@ final class UnifiedImportsController: ObservableObject {
 			await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
 				DownloadManager.shared.deleteDownload(download) { continuation.resume() }
 			}
-			selectedRows.remove(rowID)
 		}
 	}
-	func delete(_ targets: [UnifiedImportEntry], showProgress: Bool = false) {
-		guard !showsDeletionProgress else { return }
+	func delete(_ targets: [UnifiedImportEntry]) {
 		let lineage = LibraryArtifactIndex.shared.lineage
 		let deletable = targets.filter { !deletingRows.contains($0.id) && !cancellingRows.contains($0.id) && !isProtected($0) }
 		guard !deletable.isEmpty else { return }
@@ -113,13 +97,10 @@ final class UnifiedImportsController: ObservableObject {
 		let downloads = deletable.compactMap { $0.download }
 		let exports = deletable.compactMap { $0.export }
 		let rowIDs = Set(deletable.map(\.id))
-		if showProgress { showsDeletionProgress = true }
 		deletingRows.formUnion(rowIDs)
-		selectedRows.subtract(rowIDs)
 		Task { @MainActor in
 			defer {
 				deletingRows.subtract(rowIDs)
-				if showProgress { showsDeletionProgress = false }
 			}
 			await Task.yield()
 			for export in exports { ExportManager.shared.cancel(export) }
@@ -138,14 +119,8 @@ final class UnifiedImportsController: ObservableObject {
 			// Discard committed rows before releasing their masks, even if the
 			// fetch request has not delivered its next snapshot yet.
 			if removalCommitted { updateRows(rows.filter { !rowIDs.contains($0.id) }) }
-			selectedRows.subtract(targets.map(\.id))
 			if retained {
-				if showProgress {
-					UIAlertController.showAlertWithOk(title: .localized("Apps In Use"),
-						message: .localized("Apps required by an installation or update were kept. Cancel those operations before deleting them."))
-				} else {
-					DebugLogManager.shared.log("Row deletion retained an artifact still in use.", category: "Library", level: .notice)
-				}
+				DebugLogManager.shared.log("Row deletion retained an artifact still in use.", category: "Library", level: .notice)
 			}
 		}
 	}
@@ -266,19 +241,10 @@ private struct UnifiedImportRow: View {
 	@ObservedObject private var installations = AppInstallationManager.shared
 	@State private var retainedIconURL: URL?
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
-	private var editing: Bool { controller.editMode.isEditing }
 	private var protected: Bool { controller.isProtected(entry) }
 
 	var body: some View {
 		HStack(spacing: 18) {
-			if editing {
-				Button { controller.toggle(entry.id) } label: {
-					Image(systemName: controller.selectedRows.contains(entry.id) ? "checkmark.circle.fill" : "circle")
-						.font(.title2).foregroundStyle(protected ? Color.secondary : Color.accentColor)
-				}
-				.buttonStyle(.borderless).disabled(protected)
-				.accessibilityLabel(String.localized("Select"))
-			}
 			FRAppIconView(app: displayApp, size: 50, remoteIconURL: retainedIconURL ?? entry.download?.sourceProvenance?.sourceAppIconURL, usesDefaultApp: false)
 				.overlay(alignment: .bottomTrailing) {
 					if displayApp?.isSigned == true {
@@ -292,10 +258,8 @@ private struct UnifiedImportRow: View {
 					}
 				}
 			UnifiedImportMetadata(entry: entry, model: activeModel)
-			if !editing {
-				UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller)
-					.transition(.opacity)
-			}
+			UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller)
+				.transition(.opacity)
 		}
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
@@ -312,11 +276,10 @@ private struct UnifiedImportRow: View {
 			}
 		}
 		.contentShape(Rectangle())
-		.onTapGesture { if editing && !protected { controller.toggle(entry.id) } }
 		.swipeActions {
-			if !editing { removalAction(forSwipe: true) }
+			removalAction(forSwipe: true)
 		}
-		.contextMenu { if !editing { contextActions } }
+		.contextMenu { contextActions }
 	}
 
 	private var serverPresentation: Binding<Bool> {
@@ -482,26 +445,6 @@ private struct UnifiedImportMetadata: View {
 		(entry.operation != nil && !entry.signOnlyCompleted(model: model)) || entry.download != nil || entry.export != nil
 	}
 
-	private var statusColor: Color {
-		if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
-			guard let model else { return .secondary }
-			if case .broken = model.status { return .red }
-			return AppInstallationManager.shared.isFinishingInstallation ? .accentColor : model.statusColor
-		}
-		if let export = entry.export {
-			if case .failed = export.state { return .red }
-			return .accentColor
-		}
-		if let download = entry.download {
-			switch download.state {
-			case .failed: return .red
-			case .paused, .pausing: return .orange
-			case .processing: return download.waitingForForeground ? .red : .accentColor
-			default: return .accentColor
-			}
-		}
-		return .secondary
-	}
 
 	var body: some View {
 		let status = status
@@ -514,8 +457,7 @@ private struct UnifiedImportMetadata: View {
 			animatesStatus: true,
 			thirdLineStatus: showsTaskStatus ? status.text : nil,
 			thirdLineAnimationKey: numericProgressPhase ?? status.text,
-			showsNumericProgress: numericProgressPhase != nil,
-			statusColor: statusColor
+			showsNumericProgress: numericProgressPhase != nil
 		)
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
 		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
@@ -605,16 +547,5 @@ struct UnifiedImportsPresentation: ViewModifier {
 					Task { _ = await DownloadManager.shared.startDownload(from: url, id: "AetherManualDownload_" + UUID().uuidString) }
 				}.disabled(controller.manualURL == nil)
 			} message: { Text(.localized("Enter a direct HTTP or HTTPS link to an IPA file.")) }
-			.alert(.localized("Delete All Apps?"), isPresented: $controller.confirmingDeleteAll) {
-				Button(.localized("Cancel"), role: .cancel) {}
-				Button(.localized("Delete All"), role: .destructive) { controller.deleteAll() }
-			} message: { Text(.localized("This removes downloads and signed and unsigned imports. Sideloaded apps are kept.")) }
-			.disabled(controller.showsDeletionProgress)
-			.overlay {
-				if controller.showsDeletionProgress {
-					ProgressView(.localized("Deleting…")).padding(24)
-						.background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-				}
-			}
 	}
 }

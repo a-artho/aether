@@ -262,7 +262,7 @@ extension SourceAppsDetailView {
 	) -> some View {
 		VStack(alignment: .leading, spacing: 10) {
 			Text(title)
-				.font(.title3.weight(.semibold))
+				.nbSectionHeaderFont(weight: .semibold)
 				.nbSectionHeaderColor()
 
 			content()
@@ -279,7 +279,7 @@ extension SourceAppsDetailView {
 		VStack(alignment: .leading, spacing: 10) {
 			HStack(alignment: .firstTextBaseline, spacing: 12) {
 				Text(title)
-					.font(.title3.weight(.semibold))
+					.nbSectionHeaderFont(weight: .semibold)
 					.nbSectionHeaderColor()
 
 				Spacer(minLength: 8)

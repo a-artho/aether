@@ -103,13 +103,11 @@ struct LibraryView: View {
 								UnifiedImportsRows(entries: importRows, controller: imports, visibleOperation: recordVisibleImportOperation)
 							}
 							.listSectionSeparator(.hidden)
-							.environment(\.editMode, $imports.editMode)
 							.id("libraryImports")
 
 						}
 					}
 				}
-				.navigationTitle(libraryTitle)
 				.navigationBarTitleDisplayMode(.inline)
 				.navigationDestination(for: InstalledAppsRoute.self) { route in
 					switch route {
@@ -155,7 +153,6 @@ struct LibraryView: View {
 					}
 					guard isRootListVisible else { return }
 					withTransaction(transaction) {
-						imports.finishSelection()
 						if let row = imports.visibleRows.first(where: { $0.operation?.id == firstCard.id }) {
 							scrollProxy.scrollTo(row.id, anchor: .top)
 						}
@@ -189,12 +186,11 @@ struct LibraryView: View {
 			.modifier(SearchToolbarModifier(
 				text: $searchText, isPresented: $tabManager.isLibrarySearchPresented,
 				focus: $searchFocused, title: libraryTitle, width: toolbarWidth,
-				enabled: !imports.editMode.isEditing, isScreenActive: isRootListVisible && appNavigationPath.isEmpty,
-				hasTitleMenu: false,
+				isScreenActive: isRootListVisible && appNavigationPath.isEmpty,
+				isTabRoot: true, hasTitleMenu: false,
 				secondaryAction: { imports.importing = true },
 				secondaryURLAction: { imports.urlText = ""; imports.importingURL = true }
 			) { EmptyView() })
-			.toolbar { libraryToolbar }
 			.onChange(of: tabManager.isLibrarySearchPresented) { _, presented in
 				if !presented { searchFocused = false; searchText = "" }
 			}
@@ -232,24 +228,6 @@ struct LibraryView: View {
 				try Task.checkCancellation()
 				updateContexts = matches
 			} catch is CancellationError {} catch { updateContexts = [:] }
-		}
-	}
-
-	@ToolbarContentBuilder private var libraryToolbar: some ToolbarContent {
-		ToolbarItemGroup(placement: .topBarLeading) {
-			if imports.editMode.isEditing {
-				Button(String.localized("Done")) { imports.finishSelection() }
-			} else if !tabManager.isLibrarySearchPresented && appNavigationPath.isEmpty {
-				libraryActionsMenu
-			}
-		}
-
-		ToolbarItemGroup(placement: .topBarTrailing) {
-			if imports.editMode.isEditing {
-				Button(role: .destructive) { imports.deleteSelected() } label: { Image(systemName: "trash") }
-					.disabled(imports.selectedRows.isEmpty)
-					.accessibilityLabel(String.localized("Delete"))
-			}
 		}
 	}
 
@@ -325,16 +303,6 @@ struct LibraryView: View {
 			.padding(.vertical, 2)
 			.frame(maxWidth: .infinity, alignment: .leading)
 		}
-	}
-
-	private var libraryActionsMenu: some View {
-		Menu(String.localized("Library Actions"), systemImage: "ellipsis") {
-			Button(String.localized("Select"), systemImage: "checkmark.circle") { imports.select() }
-			Button(String.localized("Delete All"), systemImage: "trash", role: .destructive) {
-				imports.confirmingDeleteAll = true
-			}
-		}
-		.disabled(!imports.hasRows)
 	}
 
 	private func matchesSearch(_ fields: String?...) -> Bool {

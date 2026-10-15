@@ -215,14 +215,14 @@ struct LogsView: View {
 							await _logManager.fetchLogs()
 						}
 					} label: {
-						if _logManager.isLoading {
-							ProgressView()
-								.progressViewStyle(CircularProgressViewStyle())
-						} else {
-							Image(systemName: "arrow.clockwise")
-						}
+						Image(systemName: "arrow.clockwise")
+							.opacity(_logManager.isLoading ? 0 : 1)
+							.overlay {
+								if _logManager.isLoading { ProgressView().controlSize(.small) }
+							}
 					}
 					.disabled(_logManager.isLoading)
+					.accessibilityLabel(String.localized("Refresh"))
 
 					Menu {
 						Button {

@@ -21,10 +21,6 @@ class DownloadManager: NSObject, ObservableObject {
 
 	var hasActiveWork: Bool { downloads.contains(where: \.isActive) || !_processingTasks.isEmpty || _retiringProcessingCount > 0 }
 
-	var manualDownloads: [Download] {
-		downloads.filter { isManualDownload($0.logicalIdentifier) }
-	}
-
 	private let _store = DownloadStore()
 	private var _session: URLSession!
 	private var _restorableTransferIDs = Set<String>()
@@ -225,8 +221,7 @@ class DownloadManager: NSObject, ObservableObject {
 			download.stagedFileName = url.lastPathComponent
 			download.isPreparingSource = false
 			_persistDownloads()
-			// Copying has finished. Waiting for the extraction gate must not retain a grant.
-			_stopContinuedTask(for: download, success: true)
+			// Keep this import's execution across copying and extraction when the gate is free.
 			if download.waitingForForeground { _resumeInterruptedProcessing() }
 			else { _startProcessing(download, sourceURL: url, sourceIsStable: true) }
 		case .failure(let error):
@@ -368,10 +363,6 @@ class DownloadManager: NSObject, ObservableObject {
 		}
 	}
 
-	func isManualDownload(_ string: String) -> Bool {
-		string.contains("AetherManualDownload")
-	}
-
 	/// Returns a transfer for the caller's logical source/app identifier.
 	func getDownload(by logicalIdentifier: String) -> Download? {
 		downloads.first(where: { $0.logicalIdentifier == logicalIdentifier })
@@ -497,6 +488,11 @@ class DownloadManager: NSObject, ObservableObject {
 				}
 				#endif
 				return true
+			},
+			waitingForProcessing: { [weak self, weak download] in
+				guard let self, let download, self._isCurrent(download) else { return }
+				// A queued import must not hold an idle execution grant.
+				self._stopContinuedTask(for: download, success: true)
 			}
 		) { [weak self, weak download] error in
 			guard let self, let download else { return }

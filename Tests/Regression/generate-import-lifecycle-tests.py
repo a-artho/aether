@@ -49,11 +49,12 @@ actor FileStageGate {
 final class ImportExecutionTests:XCTestCase {
  @MainActor func testQueuedImportCannotAcquireExecutionBeforeGateAndCancellationSkipsIt() async throws {
   ImportFixture.AppFileHandler.control=FileStageGate();ImportFixture.AppFileHandler.preparations=0;ImportFixture.AppFileHandler.commits=0
-  var executionRequests=0;var completed=0
-  let first=ImportFixture.FR.handlePackageFile(URL(fileURLWithPath:"/first.ipa"),beginProcessing:{executionRequests+=1;return true}){_ in completed+=1}
+  var executionRequests=0;var completed=0;var queuedReleases=0
+  let first=ImportFixture.FR.handlePackageFile(URL(fileURLWithPath:"/first.ipa"),beginProcessing:{executionRequests+=1;return true},waitingForProcessing:{queuedReleases+=1}){_ in completed+=1}
   while !(await ImportFixture.AppFileHandler.control.isWaiting()){await Task.yield()}
-  let second=ImportFixture.FR.handlePackageFile(URL(fileURLWithPath:"/second.ipa"),beginProcessing:{executionRequests+=1;return true}){_ in completed+=1}
-  for _ in 0..<20 {await Task.yield()}
+  let second=ImportFixture.FR.handlePackageFile(URL(fileURLWithPath:"/second.ipa"),beginProcessing:{executionRequests+=1;return true},waitingForProcessing:{queuedReleases+=1}){_ in completed+=1}
+  while queuedReleases == 0 {await Task.yield()}
+  XCTAssertEqual(queuedReleases,1,"Only the waiting import releases its execution")
   XCTAssertEqual(executionRequests,1)
   second.cancel();await second.value
   XCTAssertEqual(executionRequests,1)

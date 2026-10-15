@@ -16,7 +16,7 @@ struct SettingsView: View {
 	@ObservedObject private var connection = DeviceConnectionManager.shared
 	@AppStorage("Aether.installationMethod") private var installationMethod = 0
 	@State private var isSpoofingPresented = false
-	@AppStorage("Aether.glassSettingsCard") private var glassSettingsCard = false
+	@AppStorage("Aether.deviceControlsStyle") private var controlsStyle: DeviceControlsStyle = .standard
 	@State private var searchText = ""
 	@State private var searchFocused = false
 	@State private var searchWidth: CGFloat = 320
@@ -64,13 +64,12 @@ struct SettingsView: View {
 								.contentShape(Rectangle())
 							}
 							.buttonStyle(.plain)
-							.disabled(entry.destination == .page(.spoofing) && !canOpenSpoofing)
+							.disabled(!canOpenSearchResult(entry))
 						}
 					}
 				}
 			}
 			.contentMargins(.top, 0, for: .scrollContent)
-			.navigationTitle(String.localized("Settings"))
 			.navigationBarTitleDisplayMode(.inline)
 			// Native grouped page colors adapt to light/dark mode and presentation elevation.
 			.scrollContentBackground(.visible)
@@ -83,7 +82,6 @@ struct SettingsView: View {
 				case .signing: ConfigurationView()
 				case .archive: ArchiveView()
 				case .installation: InstallationView()
-				case .serverConfig: EmptyView()
 				case .pairingFile: PairingFileView()
 				case .tunnel: TunnelView()
 				case .logs: LogsView()
@@ -96,7 +94,7 @@ struct SettingsView: View {
 				text: $searchText, isPresented: $_tabManager.isSettingsSearchPresented,
 				focus: $searchFocused, title: .localized("Settings"), width: searchWidth,
 				isScreenActive: rootVisible && _settingsPath.isEmpty && !isSpoofingPresented,
-				hasTitleMenu: false
+				isTabRoot: true, hasTitleMenu: false
 			) { EmptyView() })
 			.overlay {
 				if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && searchResults.isEmpty {
@@ -128,7 +126,16 @@ struct SettingsView: View {
 		installationMethod == 1 && connection.isConnected && !connection.isUpdating
 	}
 
+	private func canOpenSearchResult(_ entry: SettingsSearchEntry) -> Bool {
+		switch entry.destination {
+		case .page(.tunnel), .page(.pairingFile): installationMethod == 1
+		case .page(.spoofing): canOpenSpoofing
+		default: true
+		}
+	}
+
 	private func openSearchResult(_ entry: SettingsSearchEntry) {
+		guard canOpenSearchResult(entry) else { return }
 		searchFocused = false
 		switch entry.destination {
 		case .page(.spoofing):
@@ -149,6 +156,14 @@ struct SettingsView: View {
 		)
 	}
 
+	private var deviceControlsCard: some View {
+		VStack(spacing: 12) {
+			InstallationModePickerRow()
+			deviceControls
+		}
+		.padding(12)
+	}
+
 	private var deviceControlsBackground: Color {
 		Color(uiColor: UIColor { traits in
 			traits.userInterfaceStyle == .dark
@@ -159,15 +174,17 @@ struct SettingsView: View {
 
 	@ViewBuilder private var settingsSections: some View {
 		Section {
-			if glassSettingsCard {
-				VStack(spacing: 12) {
-					InstallationModePickerRow()
-					deviceControls
+			if controlsStyle != .standard {
+				Group {
+					if controlsStyle == .liquidGlass {
+						deviceControlsCard
+							.glassEffect(.regular, in: .rect(cornerRadius: 26))
+					} else {
+						deviceControlsCard
+					}
 				}
-				.padding(12)
-				.glassEffect(.regular, in: .rect(cornerRadius: 26))
 				.listRowInsets(EdgeInsets())
-				.listRowBackground(Color.clear)
+				.listRowBackground(controlsStyle == .liquidGlass ? Color.clear : Color(uiColor: .secondarySystemGroupedBackground))
 				.listRowSeparator(.hidden)
 			} else {
 				InstallationModePickerRow()

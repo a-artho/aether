@@ -45,10 +45,11 @@ enum SettingsSearchIndex {
 		])
 		add(.appearance, "Appearance", [
 			("Appearance", "light dark system theme"), ("Theme", "color tint"), ("Custom Theme Color", "colour tint"),
-			("Liquid Glass Card", "settings device controls tunnel pairing certificate"),
-			("Muted Section Headers", "headings gray grey"), ("Hide Tab Labels", "tab bar icons hide labels"),
+			("Card Style", "settings device controls tunnel pairing certificate default liquid glass native raised card tiles background"),
+			("Row Icons", "settings flat colored monochrome white muted gray grey icons"),
+			("Section Header Size", "heading font text size"), ("Muted Section Headers", "headings gray grey"), ("Hide Tab Labels", "tab bar icons hide labels"),
 			("Search Placement", "page title right navigation"),
-			("Hide Search Icon", "page title magnifying glass"), ("Dynamic Icons", "app light dark"),
+			("Left-Aligned Page Titles", "leading left navigation main tabs title alignment"), ("Hide Search Icon", "page title magnifying glass"), ("Dynamic Icons", "app light dark"),
 			("Tinted Icons", "app color colour"), ("Show Download Buttons", "repo sources chevron"),
 			("Store Cell Appearance", "sources rows description"), ("Standard", "sources description layout"),
 			("Big Description", "sources rows layout"), ("Haptics", "click feedback strength")

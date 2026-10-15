@@ -7,20 +7,38 @@
 
 import SwiftUI
 
+enum SettingsRowIconStyle: String, CaseIterable, Identifiable {
+	case colored, monochrome, muted
+	var id: Self { self }
+	var title: String {
+		switch self {
+		case .colored: .localized("Colored")
+		case .monochrome: .localized("Monochrome")
+		case .muted: .localized("Muted")
+		}
+	}
+}
+
 struct SettingsIconBadge: View {
+	@AppStorage("Aether.settingsRowIconStyle") private var iconStyle: SettingsRowIconStyle = .colored
 	let systemImage: String
 	var backgroundColor: Color = .blue
 	var iconSize: CGFloat = 15
 
-	var body: some View {
-		ZStack {
-			RoundedRectangle(cornerRadius: 6.5, style: .continuous)
-				.fill(backgroundColor)
-			Image(systemName: systemImage)
-				.font(.system(size: iconSize, weight: .semibold))
-				.foregroundColor(.white)
+	private var iconColor: Color {
+		switch iconStyle {
+		case .colored: backgroundColor
+		case .monochrome: .primary
+		case .muted: .secondary
 		}
-		.frame(width: 29, height: 29)
+	}
+
+	var body: some View {
+		Image(systemName: systemImage)
+			.font(.system(size: iconSize, weight: .semibold))
+			.symbolRenderingMode(.monochrome)
+			.foregroundStyle(iconColor)
+			.frame(width: 29, height: 29)
 	}
 
 	static func color(for systemImage: String) -> Color {
