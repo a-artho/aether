@@ -42,7 +42,7 @@ struct SourceAppsCellView: View {
 				_selectableContent {
 					Text(desc)
 						.frame(maxWidth: .infinity, alignment: .leading)
-						.nbFont(.subheadline)
+						.font(.subheadline)
 						.foregroundStyle(.secondary)
 						.padding(.top, 2)
 				}
@@ -90,7 +90,7 @@ struct SourceAppsCellView: View {
 		VStack(alignment: .leading, spacing: 2) {
 			if let version {
 				Text(version)
-					.nbFont(.subheadline)
+					.font(.subheadline)
 					.foregroundStyle(.secondary)
 					.lineLimit(1)
 			}

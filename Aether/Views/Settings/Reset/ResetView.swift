@@ -13,6 +13,11 @@ import IDeviceSwift
 
 // MARK: - View
 struct ResetView: View {
+	@ObservedObject private var installations = AppInstallationManager.shared
+	@ObservedObject private var downloads = DownloadManager.shared
+	@ObservedObject private var exports = ExportManager.shared
+	@ObservedObject private var pairing = OnDevicePairingManager.shared
+	@AppStorage("Aether.spoofing.simulationMayBeActive") private var spoofingActive = false
 	// MARK: Body
 	var body: some View {
 		NBList(.localized("Reset")) {
@@ -20,7 +25,11 @@ struct ResetView: View {
 			_installation()
 			_coredata()
 			_all()
+			if let reason = AppMaintenanceGuard.resetBlockReason {
+				Section { Text(reason).font(.footnote).foregroundStyle(.secondary) }
+			}
 		}
+		.disabled(AppMaintenanceGuard.resetBlockReason != nil)
 	}
 	
 	private func _cacheSize() -> String {
@@ -31,16 +40,26 @@ struct ResetView: View {
 		return "\(ByteCountFormatter.string(fromByteCount: Int64(totalCacheSize), countStyle: .file))"
 	}
 	
+	private static func _allowReset() -> Bool {
+		guard let reason = AppMaintenanceGuard.resetBlockReason else { return true }
+		DebugLogManager.shared.log("Reset blocked: \(reason)", category: "Reset", level: .notice)
+		UIAlertController.showAlertWithOk(title: .localized("Work in Progress"), message: reason)
+		return false
+	}
+
 	static func resetAlert(
 		title: String,
 		message: String = "",
 		action: @escaping @MainActor () async -> Void
 	) {
+		guard _allowReset() else { return }
 		let action = UIAlertAction(
 			title: .localized("Proceed"),
 			style: .destructive
 		) { _ in
 			Task { @MainActor in
+				guard _allowReset(), AppMaintenanceGuard.beginReset() else { return }
+				// Keep new work blocked until the scheduled restart exits this process.
 				await action()
 				UIApplication.shared.suspendAndReopen()
 			}
@@ -81,7 +100,7 @@ extension ResetView {
 					title: .localized("Reset Network Cache"),
 					message: _cacheSize()
 				) {
-					Self.clearNetworkCache()
+					await Self.clearNetworkCache()
 				}
 			} label: {
 				SettingsRowLabel(.localized("Reset Network Cache"), systemImage: "network", backgroundColor: .orange)
@@ -219,7 +238,8 @@ extension ResetView {
 		}
 	}
 	
-	static func clearNetworkCache() {
+	static func clearNetworkCache() async {
+		await SourcesViewModel.shared.clearNetworkCache()
 		URLCache.shared.removeAllCachedResponses()
 		HTTPCookieStorage.shared.removeCookies(since: Date.distantPast)
 		
@@ -279,7 +299,7 @@ extension ResetView {
 	
 	static func resetAll() async {
 		clearWorkCache()
-		clearNetworkCache()
+		await clearNetworkCache()
 		resetPairing()
 		await resetTunneling()
 		resetSources()

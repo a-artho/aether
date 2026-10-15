@@ -64,7 +64,7 @@ struct SourceAppsDetailView: View {
 								) {
 									HStack(spacing: 8) {
 										Text(.localized("Version History"))
-											.nbFont(.subheadline, weight: .medium)
+											.font(.subheadline.weight(.medium))
 
 										Spacer()
 
@@ -111,7 +111,7 @@ struct SourceAppsDetailView: View {
 								)
 							} else {
 								Text(.localized("No Entitlements listed."))
-									.nbFont(.subheadline)
+									.font(.subheadline)
 									.foregroundStyle(.secondary)
 							}
 							if let privacyItems = appPermissions.privacy {
@@ -123,7 +123,7 @@ struct SourceAppsDetailView: View {
 								}
 							} else {
 								Text(.localized("No Privacy Permissions listed."))
-									.nbFont(.subheadline)
+									.font(.subheadline)
 									.foregroundStyle(.secondary)
 							}
 						}
@@ -262,8 +262,8 @@ extension SourceAppsDetailView {
 	) -> some View {
 		VStack(alignment: .leading, spacing: 10) {
 			Text(title)
-				.font(NBTypography.sectionHeading)
-				.foregroundStyle(.primary)
+				.font(.title3.weight(.semibold))
+				.nbSectionHeaderColor()
 
 			content()
 		}
@@ -279,8 +279,8 @@ extension SourceAppsDetailView {
 		VStack(alignment: .leading, spacing: 10) {
 			HStack(alignment: .firstTextBaseline, spacing: 12) {
 				Text(title)
-					.font(NBTypography.sectionHeading)
-					.foregroundStyle(.primary)
+					.font(.title3.weight(.semibold))
+					.nbSectionHeaderColor()
 
 				Spacer(minLength: 8)
 
@@ -359,7 +359,7 @@ extension SourceAppsDetailView {
 							.lineLimit(1)
 
 						Text(SourceAppBodyText.replacingEmoji(in: metric.value))
-							.nbFont(.subheadline, weight: .semibold)
+							.font(.subheadline.weight(.semibold))
 							.foregroundStyle(.primary)
 							.lineLimit(1)
 							.minimumScaleFactor(0.8)
@@ -388,7 +388,7 @@ extension SourceAppsDetailView {
 						.font(.caption2.weight(.semibold))
 						.foregroundStyle(Color.accentColor)
 				}
-				.nbFont(.subheadline)
+				.font(.subheadline)
 			}
 			.buttonStyle(.plain)
 		}
@@ -445,14 +445,14 @@ extension SourceAppsDetailView {
 	) -> some View {
 		HStack(alignment: .firstTextBaseline, spacing: 16) {
 			Text(title)
-				.nbFont(.subheadline)
+				.font(.subheadline)
 				.foregroundStyle(.secondary)
 				.layoutPriority(1)
 
 			Spacer(minLength: 12)
 
 			Text(SourceAppBodyText.replacingEmoji(in: value))
-				.nbFont(.subheadline)
+				.font(.subheadline)
 				.foregroundStyle(.primary)
 				.multilineTextAlignment(.trailing)
 				.lineLimit(2)

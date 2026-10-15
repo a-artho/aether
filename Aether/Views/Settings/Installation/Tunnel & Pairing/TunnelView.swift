@@ -10,6 +10,9 @@ import IDeviceSwift
 struct TunnelView: View {
 	@ObservedObject private var connection = DeviceConnectionManager.shared
 	@ObservedObject private var embeddedTunnel = EmbeddedTunnelManager.shared
+	@ObservedObject private var installations = AppInstallationManager.shared
+	@ObservedObject private var pairing = OnDevicePairingManager.shared
+	@AppStorage("Aether.spoofing.simulationMayBeActive") private var isSpoofingActive = false
 	@ObservedObject private var cellularAssist = CellularAssistManager.shared
 	@State private var isLocalDevVPNAvailable = false
 
@@ -36,13 +39,9 @@ struct TunnelView: View {
 						backgroundColor: .green
 					)
 				}
-				.disabled(connection.state != .disconnected || connection.isUpdating)
+				.disabled(connection.isUpdating || AppMaintenanceGuard.pairingBlockReason != nil)
 			} footer: {
-				Text(
-					connection.state == .disconnected && !connection.isUpdating
-						? .localized("Choose how Aether reaches this device.")
-						: .localized("Disconnect the device tunnel before changing providers.")
-				)
+				Text(.localized("Choose how Aether reaches this device."))
 			}
 
 			switch connection.tunnelMethod {
@@ -88,7 +87,7 @@ struct TunnelView: View {
 					.textInputAutocapitalization(.never)
 					.keyboardType(.numbersAndPunctuation)
 					.onChange(of: draftInterfaceIP) { _, _ in _validate() }
-					.disabled(connection.state != .disconnected || connection.isUpdating)
+					.disabled(connection.isUpdating || AppMaintenanceGuard.pairingBlockReason != nil)
 			}
 
 			HStack {
@@ -100,14 +99,14 @@ struct TunnelView: View {
 					.textInputAutocapitalization(.never)
 					.keyboardType(.numbersAndPunctuation)
 					.onChange(of: draftPeerIP) { _, _ in _validate() }
-					.disabled(connection.state != .disconnected || connection.isUpdating)
+					.disabled(connection.isUpdating || AppMaintenanceGuard.pairingBlockReason != nil)
 			}
 
 			Toggle(isOn: $draftAllowIntermediate) {
 				SettingsRowLabel(.localized("Allow Intermediate Addresses"), systemImage: "arrow.triangle.branch", backgroundColor: .teal)
 			}
 			.onChange(of: draftAllowIntermediate) { _, _ in _validate() }
-			.disabled(connection.state != .disconnected || connection.isUpdating)
+			.disabled(connection.isUpdating || AppMaintenanceGuard.pairingBlockReason != nil)
 
 			if let validationError {
 				Text(validationError)

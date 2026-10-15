@@ -232,15 +232,12 @@ struct AetherApp: App {
 					return
 				}
 
-				let generator = UINotificationFeedbackGenerator()
-				generator.prepare()
-
 				guard
 					let p12URL = FileManager.default.decodeAndWrite(base64: p12Base64, pathComponent: ".p12"),
 					let provisionURL = FileManager.default.decodeAndWrite(base64: provisionBase64, pathComponent: ".mobileprovision"),
 					FR.checkPasswordForCertificate(for: p12URL, with: password, using: provisionURL)
 				else {
-					generator.notificationOccurred(.error)
+					HapticManager.shared.impact()
 					return
 				}
 
@@ -252,7 +249,7 @@ struct AetherApp: App {
 					if let error = error {
 						UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
 					} else {
-						generator.notificationOccurred(.success)
+						HapticManager.shared.impact()
 					}
 				}
 
@@ -316,31 +313,7 @@ struct AetherApp: App {
 		AppTabManager.shared.switchTo(.library)
 		let importID = UUID().uuidString
 		DebugLogManager.shared.log("[\(importID)] External package received: \(externalURL.lastPathComponent); inbox=\(externalURL.path.contains("/Inbox/")), appState=\(UIApplication.shared.applicationState.rawValue).", category: "Import")
-		Task.detached(priority: .utility) {
-			do {
-				let materializedFile = try FileManager.default.materializePackageForImport(
-					at: externalURL,
-					diagnostics: { message in
-						DispatchQueue.main.async {
-							DebugLogManager.shared.log("[\(importID)] \(message)", category: "Import")
-						}
-					}
-				)
-				await MainActor.run {
-					DebugLogManager.shared.log("[\(importID)] External package copied; handing off to Library processing.", category: "Import")
-					let download = DownloadManager.shared.startArchive(
-						from: materializedFile.fileURL,
-						id: "AetherManualDownload_\(importID)",
-						sourceCleanup: { materializedFile.cleanup() }
-					)
-					DownloadManager.shared.retryProcessing(download)
-				}
-			} catch {
-				await MainActor.run {
-					_reportExternalImportError(error)
-				}
-			}
-		}
+		DownloadManager.shared.startExternalArchive(from: externalURL, id: "AetherManualDownload_\(importID)")
 	}
 }
 

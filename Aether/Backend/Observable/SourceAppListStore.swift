@@ -92,6 +92,12 @@ actor SourceAppListStore {
 		self.cacheDirectory = cacheDirectory
 	}
 
+	func clearCache() {
+		prepared.removeAll()
+		projections.removeAll()
+		if let cacheDirectory { try? FileManager.default.removeItem(at: cacheDirectory) }
+	}
+
 	func list(
 		contexts: [SourceAppCatalogContext], sort: String, ascending: Bool,
 		query: String, unknownDate: String

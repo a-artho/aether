@@ -3,6 +3,29 @@ import Foundation
 import BackgroundTasks
 import UIKit
 
+/// The scheduler can expire a native task before MainActor is available.
+/// Task.cancel() is thread-safe; state/UI cleanup stays on MainActor.
+final class ExecutionCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var handler: (@Sendable () -> Void)?
+    var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+    func setHandler(_ handler: (@Sendable () -> Void)?) {
+        lock.lock(); let expired = cancelled; self.handler = expired ? nil : handler; lock.unlock()
+        if expired { handler?() }
+    }
+    func cancel() {
+        lock.lock(); cancelled = true; let action = handler; handler = nil; lock.unlock()
+        action?()
+    }
+}
+
+private final class BackgroundNotificationToken {
+    let observer: NSObjectProtocol
+    init(_ observer: NSObjectProtocol) { self.observer = observer }
+    deinit { NotificationCenter.default.removeObserver(observer) }
+}
+
 @MainActor
 class BackgroundTaskManager: ObservableObject {
     static let shared = BackgroundTaskManager()
@@ -12,9 +35,14 @@ class BackgroundTaskManager: ObservableObject {
     // A registration keeps only this tiny completion box after an operation ends.
     // Late scheduler delivery must never consume a newer operation's state.
     private final class LaunchState { var completion: Bool? }
+    private enum RequestState: String { case pending, native, rejected }
     private final class Work {
         let identifier: String
         let launch = LaunchState()
+        let cancellation = ExecutionCancellation()
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        var lastProgressAt = ProcessInfo.processInfo.systemUptime
+        var requestState = RequestState.pending
         var task: BGContinuedProcessingTask?
         var fallback: UIBackgroundTaskIdentifier = .invalid
         var title: String
@@ -27,6 +55,25 @@ class BackgroundTaskManager: ObservableObject {
         }
     }
     private var workByToken: [String: Work] = [:]
+    private var backgroundObserver: BackgroundNotificationToken?
+
+    init() {
+        backgroundObserver = BackgroundNotificationToken(NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                for (token, work) in Array(self.workByToken) where work.task == nil && work.fallback == .invalid {
+                    self._interrupt(token, work: work, reason: "noExecutionOnBackground")
+                }
+            }
+        })
+    }
+
+    func isCancellationRequested(for token: String) -> Bool { workByToken[token]?.cancellation.isCancelled == true }
+
+    func setCancellationHandler(for token: String, handler: @escaping @Sendable () -> Void) {
+        workByToken[token]?.cancellation.setHandler(handler)
+    }
 
     @discardableResult
     func startWork(for token: String, title: String, subtitle: String, progress: Double,
@@ -42,10 +89,13 @@ class BackgroundTaskManager: ObservableObject {
 
     func hasExecution(for token: String) -> Bool {
         guard let work = workByToken[token] else { return false }
-        return work.task != nil || work.fallback != .invalid
+        return !work.cancellation.isCancelled && (work.task != nil || work.fallback != .invalid)
     }
 
-    func hasNativeTask(for token: String) -> Bool { workByToken[token]?.task != nil }
+    func hasNativeTask(for token: String) -> Bool {
+        guard let work = workByToken[token] else { return false }
+        return work.task != nil && !work.cancellation.isCancelled
+    }
 
     func updateWork(for token: String, title: String, subtitle: String, progress: Double) {
         _updateTask(for: token, title: title, subtitle: subtitle, progress: progress)
@@ -126,29 +176,35 @@ class BackgroundTaskManager: ObservableObject {
                 return
             }
             work.task = task
+            work.requestState = .native
             self._endFallback(work)
             self.applyProgress(to: task, progress: work.progress)
             task.updateTitle(work.title, subtitle: work.subtitle)
+            let cancellation = work.cancellation
             task.expirationHandler = { [weak self, weak work, weak task] in
+                cancellation.cancel()
                 Task { @MainActor in
                     guard let self, let work, let task, self.workByToken[token] === work, work.task === task else { return }
-                    self._interrupt(token, work: work)
+                    self._interrupt(token, work: work, reason: "nativeExpired")
                 }
             }
-            DebugLogManager.shared.log("Continued task running id=\(identifier) token=\(token).", category: "Background", level: .info)
+            DebugLogManager.shared.log("nativeStarted id=\(identifier) token=\(token).", category: "Background", level: .info)
         }
-        guard registered else { _clear(token, work: work); return false }
+        guard registered else {
+            DebugLogManager.shared.log("requestRejected id=\(identifier) reason=registrationFailed token=\(token).", category: "Background", level: .notice)
+            _clear(token, work: work); return false
+        }
         let request = BGContinuedProcessingTaskRequest(identifier: identifier, title: title, subtitle: subtitle)
         request.strategy = .fail
         do {
             try BGTaskScheduler.shared.submit(request)
-            // Bridge delivery; its expiration interrupts the operation, never silently
-            // disconnecting the display while leaving that operation running.
+            // Temporary execution bridges request delivery; it is not a native grant.
             if workByToken[token] === work, work.task == nil { _ = _startFallback(for: token, work: work) }
-            DebugLogManager.shared.log("Continued task submitted id=\(identifier) token=\(token).", category: "Background", level: .info)
+            DebugLogManager.shared.log("requestSubmitted id=\(identifier) token=\(token).", category: "Background", level: .info)
             return true
         } catch {
-            DebugLogManager.shared.log("Continued task denied id=\(identifier): \(error.localizedDescription)", category: "Background", level: .notice)
+            DebugLogManager.shared.log("requestRejected id=\(identifier): \(error.localizedDescription)", category: "Background", level: .notice)
+            work.requestState = .rejected
             launch.completion = false
             if onExpiration != nil, _startFallback(for: token, work: work) { return true }
             _clear(token, work: work)
@@ -161,8 +217,11 @@ class BackgroundTaskManager: ObservableObject {
 
     private func _updateTask(for token: String, title: String? = nil, subtitle: String? = nil, progress: Double) {
         guard let work = workByToken[token] else { return }
+        guard !work.cancellation.isCancelled else { return }
         let previousTitle = work.title, previousSubtitle = work.subtitle
-        work.progress = min(max(progress, 0), 1)
+        let boundedProgress = progress.isFinite ? min(max(progress, 0), 1) : work.progress
+        if boundedProgress > work.progress { work.lastProgressAt = ProcessInfo.processInfo.systemUptime }
+        work.progress = boundedProgress
         if let title { work.title = title }; if let subtitle { work.subtitle = subtitle }
         if let task = work.task {
             applyProgress(to: task, progress: work.progress)
@@ -181,10 +240,12 @@ class BackgroundTaskManager: ObservableObject {
         _clear(token, work: work)
     }
 
-    private func _interrupt(_ token: String, work: Work) {
+    private func _interrupt(_ token: String, work: Work, reason: String) {
         guard workByToken[token] === work else { return }
+        work.cancellation.cancel()
         let handler = work.onExpiration
-        DebugLogManager.shared.log("Continued execution interrupted id=\(work.identifier) progress=\(work.progress) state=\(UIApplication.shared.applicationState.rawValue)", category: "Background", level: .notice)
+        let now = ProcessInfo.processInfo.systemUptime
+        DebugLogManager.shared.log("\(reason) id=\(work.identifier) grant=\(work.requestState.rawValue) stage=\(work.subtitle) elapsed=\(now - work.startedAt) progressAge=\(now - work.lastProgressAt) progress=\(work.progress) state=\(UIApplication.shared.applicationState.rawValue)", category: "Background", level: .notice)
         // Publish the recovery instruction while the native activity still belongs to us.
         // Completion may replace its presentation with the system's failed-task UI.
         work.subtitle = .localized("Open Aether to resume")
@@ -196,6 +257,7 @@ class BackgroundTaskManager: ObservableObject {
     private func _clear(_ token: String, work: Work) {
         _endFallback(work)
         work.onExpiration = nil
+        work.cancellation.setHandler(nil)
         work.task = nil
         if workByToken[token] === work { workByToken.removeValue(forKey: token) }
     }
@@ -206,7 +268,11 @@ class BackgroundTaskManager: ObservableObject {
         work.fallback = UIApplication.shared.beginBackgroundTask(withName: work.identifier) { [weak self, weak work] in
             Task { @MainActor in
                 guard let self, let work, self.workByToken[token] === work, work.fallback != .invalid else { return }
-                self._interrupt(token, work: work)
+                self._endFallback(work)
+                DebugLogManager.shared.log("fallbackExpired id=\(work.identifier) grant=\(work.requestState.rawValue) stage=\(work.subtitle).", category: "Background", level: .notice)
+                // A temporary bridge expiring cannot invalidate ordinary foreground work.
+                guard UIApplication.shared.applicationState == .background else { return }
+                self._interrupt(token, work: work, reason: "fallbackExpired")
             }
         }
         return work.fallback != .invalid

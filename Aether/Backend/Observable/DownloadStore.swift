@@ -22,6 +22,7 @@ struct StoredDownload: Codable, Sendable {
 	let importIdentifier: String
 	let url: URL
 	let fileName: String
+	let onlyArchiving: Bool?
 	let sourceProvenance: SourceAppProvenance?
 	let waitingForForeground: Bool
 	let status: Status
@@ -34,6 +35,7 @@ struct StoredDownload: Codable, Sendable {
 
 	@MainActor
 	init(download: Download) {
+		self.onlyArchiving = download.onlyArchiving
 		self.id = download.logicalIdentifier
 		self.transferIdentifier = download.id
 		self.importIdentifier = download.importIdentifier
@@ -138,6 +140,8 @@ final class DownloadStore {
 				transferIdentifier: transferIdentifier,
 				logicalIdentifier: record.id,
 				url: record.url,
+				onlyArchiving: record.onlyArchiving ?? false,
+				sourceIsStable: true,
 				sourceProvenance: record.sourceProvenance,
 				state: record.state(hasResumeData: resumeData != nil),
 				fileName: record.fileName,
@@ -151,7 +155,7 @@ final class DownloadStore {
 			download.progress = record.progress
 			// The validated URLSession file may have moved before its queue checkpoint committed.
 			// Recover only the exact transfer's regular file before startup pruning runs.
-			if record.stagedFileName == nil, record.status == .downloading || record.status == .resuming,
+			if record.stagedFileName == nil, record.status == .downloading || record.status == .resuming || record.status == .processing,
 				let staged = stagedFiles.first(where: { url in
 					guard url.deletingPathExtension().lastPathComponent == storageKey(for: transferIdentifier),
 						let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else { return false }

@@ -103,8 +103,9 @@ public struct NBSection<Content, Footer>: View
 				}
 
 				Text(_headerText)
-					.font(NBTypography.sectionHeading)
-					.foregroundStyle(.primary)
+					.fontWeight(.bold)
+					.font(.title3)
+					.nbSectionHeaderColor()
 
 				Spacer()
 

@@ -70,7 +70,7 @@ struct FRIconCellView<Subtitle: View>: View {
 					.foregroundColor(.primary)
 					.lineLimit(1)
 				subtitleView
-					.nbFont(.subheadline)
+					.font(.subheadline)
 					.foregroundColor(.secondary)
 					.lineLimit(1)
 			}

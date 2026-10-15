@@ -80,6 +80,7 @@ enum FR {
 		sourceProvenance: SourceAppProvenance? = nil,
 		transactionIdentifier: String? = nil,
 		copySource: Bool = true,
+		beginProcessing: @escaping @MainActor @Sendable () -> Bool = { true },
 		completion: @escaping @MainActor @Sendable (Error?) -> Void
 	) -> Task<Void, Never> {
 		Task.detached(priority: .utility) {
@@ -105,6 +106,10 @@ enum FR {
 				Task { await packageProcessingGate.release() }
 			}
 
+			guard await beginProcessing() else {
+				await MainActor.run { completion(CancellationError()) }
+				return
+			}
 			let handler = await AppFileHandler(
 				file: ipa,
 				download: download,
@@ -178,8 +183,11 @@ enum FR {
 
 				do {
 					try Task.checkCancellation()
+					let copyStartedAt = Date()
+					await MainActor.run { DebugLogManager.shared.log("Signing stage=copy started.", category: "Signing", level: .info) }
 					try await handler.copy()
 					await MainActor.run {
+						DebugLogManager.shared.log("Signing stage=copy completed seconds=\(Date().timeIntervalSince(copyStartedAt)).", category: "Signing", level: .info)
 						progress(0.2)
 					}
 					try Task.checkCancellation()
@@ -259,6 +267,7 @@ enum FR {
 	}
 
 	static func movePairing(_ url: URL) {
+		guard AppMaintenanceGuard.allowPairingChange() else { return }
 		let fileManager = FileManager.default
 		let dest = HeartbeatManager.importedPairingFileURL()
 		let stagedImport = dest.deletingLastPathComponent()
@@ -295,8 +304,7 @@ enum FR {
 					try FileManager.forceWrite(content: pack.cert, to: "server.crt")
 					try FileManager.forceWrite(content: pack.info.domains.commonName, to: "commonName.txt")
 					DispatchQueue.main.async {
-						let generator = UINotificationFeedbackGenerator()
-						generator.notificationOccurred(.success)
+						HapticManager.shared.impact()
 						completion(true)
 					}
 				} catch {

@@ -1,6 +1,5 @@
 import MapKit
 import SwiftUI
-import NimbleViews
 
 struct MapHomeView: View {
     @EnvironmentObject private var session: SpoofSession
@@ -217,7 +216,7 @@ struct MapHomeView: View {
                 Button("Done") {
                     searchFocused = false
                 }
-                .nbFont(.subheadline, weight: .semibold)
+                .font(.subheadline.weight(.semibold))
                 .buttonStyle(.plain)
                 .foregroundStyle(LocusTheme.accent)
             }
@@ -234,7 +233,7 @@ struct MapHomeView: View {
                     select(completion: item)
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(item.title).nbFont(.subheadline, weight: .semibold).foregroundStyle(.primary)
+                        Text(item.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
                         if !item.subtitle.isEmpty {
                             Text(item.subtitle).font(.caption).foregroundStyle(.secondary)
                         }

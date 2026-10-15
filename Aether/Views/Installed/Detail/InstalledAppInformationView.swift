@@ -53,7 +53,7 @@ struct InstalledAppInformationView: View {
 						ForEach(app.registeredUrlSchemes, id: \.self) { scheme in
 							HStack {
 								Text("\(scheme)://")
-									.nbFont(.subheadline, design: .monospaced)
+									.font(.system(.subheadline, design: .monospaced))
 									.foregroundStyle(.primary)
 
 								Spacer()
@@ -147,14 +147,14 @@ struct InstalledAppInformationView: View {
 	private func _detailRow(label: String, value: String, isCopyable: Bool = false) -> some View {
 		HStack(alignment: .top) {
 			Text(label)
-				.nbFont(.subheadline)
+				.font(.subheadline)
 				.foregroundStyle(.secondary)
 				.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
 			Spacer(minLength: 8)
 
 			Text(value)
-				.nbFont(.subheadline)
+				.font(.subheadline)
 				.foregroundStyle(.primary)
 				.multilineTextAlignment(.trailing)
 				.textSelection(.enabled)

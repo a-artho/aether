@@ -16,14 +16,14 @@ def declaration(path, start):
         end += 1
     return source[begin:end]
 
-source = 'import Foundation\nimport CoreData\n'
+source = 'import Foundation\nimport CoreData\nextension String { static func localized(_ key: String) -> String { key } }\n'
 source += (repo / 'AltSourceKit/Sources/AltSourceKit/Models/ASRepository.swift').read_text().replace(
     'import SwiftUI', 'public struct Color: Codable, Hashable, Sendable {}')
 source += (repo / 'AltSourceKit/Sources/AltSourceKit/Extensions/Array/Array+safe.swift').read_text()
 source += '''
 protocol AppInfoPresentable { var uuid: String? { get }; var isSigned: Bool { get } }
 struct Snapshot: AppInfoPresentable { let uuid: String?; let isSigned: Bool }
-final class AppInstallationManager { static let shared = AppInstallationManager(); var busy = false; func containsInstallation(for app: AppInfoPresentable) -> Bool { busy } }
+final class AppInstallationManager { static let shared = AppInstallationManager(); var busy = false; func beginUninstall(bundleIdentifier: String) -> Bool { !busy }; func endUninstall(bundleIdentifier: String) {}; func containsInstallation(for app: AppInfoPresentable) -> Bool { busy } }
 final class LibraryArtifactIndex { static let shared=LibraryArtifactIndex(); func remove(uuid:String,isSigned:Bool) {} }
 final class ExportManager { static let shared = ExportManager(); var busy = false; func usesLibraryArtifact(_ app: AppInfoPresentable) -> Bool { busy } }
 final class DownloadManager { static let shared = DownloadManager(); func usesLibraryArtifact(_ app: AppInfoPresentable) -> Bool { false } }

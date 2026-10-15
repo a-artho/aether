@@ -44,6 +44,8 @@ final class AppInstallationManager: ObservableObject {
 
 	static let shared = AppInstallationManager()
 	@Published private(set) var currentRequest: InstallationRequest?
+	@Published private(set) var uninstallingBundleIdentifiers = Set<String>()
+	private var retiringBundleIdentifier: String?
 	@Published private(set) var queuedInstalls: [InstallationRequest] = []
 
 	var installationCards: [InstallationRequest] {
@@ -60,8 +62,10 @@ final class AppInstallationManager: ObservableObject {
 	
 	private var progressTask: Task<Void, Never>?
 	private var iDevicePreflightTask: Task<Void, Never>?
-	private var installTask: Task<Void, Never>?
-	private var retirementTask: Task<Void, Never>?
+	private var installTask: Task<Void, Never>? {
+		didSet { execution?.setWorker(installTask) }
+	}
+	@Published private var retirementTask: Task<Void, Never>?
 	private var retiringAppKey: String?
 	private var settlementTask: Task<Void, Never>?
 	private var installGeneration = UUID()
@@ -152,6 +156,27 @@ final class AppInstallationManager: ObservableObject {
 		isInstalling || !queuedInstalls.isEmpty || (currentRequest != nil && !hasCompletedSuccessfully)
 	}
 
+	var hasRetiringWork: Bool { retirementTask != nil }
+
+	func blocksUninstall(bundleIdentifier: String) -> Bool {
+		uninstallingBundleIdentifiers.contains(bundleIdentifier)
+			|| retiringBundleIdentifier == bundleIdentifier
+			|| installationCards.contains { request in
+				request.installRequested && (request.app.identifier == bundleIdentifier
+					|| request.signing?.options.appIdentifier == bundleIdentifier)
+			}
+	}
+
+	func beginUninstall(bundleIdentifier: String) -> Bool {
+		guard !AppMaintenanceGuard.isResetting, !OnDevicePairingManager.shared.isActive, !blocksUninstall(bundleIdentifier: bundleIdentifier) else { return false }
+		uninstallingBundleIdentifiers.insert(bundleIdentifier)
+		return true
+	}
+
+	func endUninstall(bundleIdentifier: String) {
+		uninstallingBundleIdentifiers.remove(bundleIdentifier)
+	}
+
 	func containsInstallation(for app: AppInfoPresentable) -> Bool {
 		let key = InstallationRequest.appKey(for: app)
 		return currentRequest?.appKey == key || retiringAppKey == key || queuedInstalls.contains { $0.appKey == key }
@@ -208,6 +233,19 @@ final class AppInstallationManager: ObservableObject {
 	}
 
 	private func _enqueue(_ request: InstallationRequest) -> Bool {
+		guard !AppMaintenanceGuard.isResetting else { return false }
+		if request.installRequested, OnDevicePairingManager.shared.isActive {
+			UIAlertController.showAlertWithOk(title: .localized("Install"),
+				message: .localized("Wait for on-device pairing to finish before installing apps."))
+			return false
+		}
+		if request.installRequested,
+			[request.app.identifier, request.signing?.options.appIdentifier].compactMap({ $0 })
+				.contains(where: { uninstallingBundleIdentifiers.contains($0) }) {
+			UIAlertController.showAlertWithOk(title: .localized("Install"),
+				message: .localized("Wait for this app to finish uninstalling before installing it."))
+			return false
+		}
 		if request.signing == nil { AppTabManager.shared.showInstallQueue() }
 		if currentRequest?.appKey == request.appKey, !hasCompletedSuccessfully {
 			if case .broken = viewModel?.status {
@@ -309,6 +347,10 @@ final class AppInstallationManager: ObservableObject {
 				}) { [weak self, weak statusVM] result in
 				guard let self, let statusVM, self.installGeneration == generation else { return }
 				self.installTask = nil
+				if self.execution?.isInterrupted == true {
+					self._interruptInstallation(generation: generation)
+					return
+				}
 				switch result {
 				case .failure(let error):
 					if case .broken = statusVM.status {} else { statusVM.status = .broken(error) }
@@ -635,7 +677,10 @@ final class AppInstallationManager: ObservableObject {
 		settlementTask = nil
 		let worker = installTask
 		let preflight = iDevicePreflightTask
-		if worker != nil || preflight != nil { retiringAppKey = currentRequest?.appKey }
+		if worker != nil || preflight != nil {
+			retiringAppKey = currentRequest?.appKey
+			retiringBundleIdentifier = currentRequest?.app.identifier
+		}
 		worker?.cancel()
 		preflight?.cancel()
 		installTask = nil
@@ -665,6 +710,7 @@ final class AppInstallationManager: ObservableObject {
 			guard let self else { return }
 			self._cleanupInstallResources()
 			self.retiringAppKey = nil
+			self.retiringBundleIdentifier = nil
 			self.retirementTask = nil
 			self._startNextIfPossible()
 			self._releaseBackgroundConnectionIfIdle()

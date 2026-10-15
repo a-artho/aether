@@ -9,6 +9,11 @@ actor InstalledAppUpdateCatalog {
 	private var cached: [String: [SourceAppCatalogContext]] = [:]
 	private var removedSources = Set<String>()
 
+	func clearCache() {
+		signature = []
+		cached = [:]
+	}
+
 	func removeSource(_ key: String) {
 		removedSources.insert(key)
 		signature = []

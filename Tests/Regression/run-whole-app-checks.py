@@ -59,7 +59,7 @@ enum Logger {static let misc=Log()}
 @MainActor final class VM {
  struct SourceRequest:Sendable {let key:String;let sourceURL:URL?}
  let _repositoryService=SourceRepositoryService();var sources:[String:ASRepository]=[:]
- var _revisions:[String:String]=[:];var removedSourceKeys=Set<String>();var catalogRevision=0;var refreshErrors:[String:String]=[:]
+ var _revisions:[String:String]=[:];var removedSourceKeys=Set<String>();var cacheResetGeneration=UUID();var catalogRevision=0;var refreshErrors:[String:String]=[:]
 '''
 for name in ['func ensureSourcesLoaded(', 'private func _restoreCachedSources(', 'private func _fetchRequests(']:
     s += declaration('Aether/Views/Sources/SourcesViewModel.swift', name)+'\n'

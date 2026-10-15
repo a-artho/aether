@@ -104,7 +104,7 @@ struct StatusBarView: View {
                 .shadow(color: color.opacity(0.7), radius: 4)
 
             Text(title)
-                .nbFont(.subheadline, weight: .semibold)
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -208,7 +208,7 @@ struct BottomControlsView: View {
 				Task { await session.stop() }
 			} label: {
 				Text("Stop")
-					.nbFont(.subheadline, weight: .bold)
+					.font(.subheadline.weight(.bold))
 					.foregroundStyle(.white)
 					.frame(minWidth: 96)
 					.padding(.vertical, 12)
@@ -229,7 +229,7 @@ struct BottomControlsView: View {
 				Task { await session.teleport(to: pin) }
 			} label: {
 				Text("Teleport")
-					.nbFont(.subheadline, weight: .bold)
+					.font(.subheadline.weight(.bold))
 					.foregroundStyle(.white)
 					.frame(minWidth: 120)
 					.padding(.vertical, 12)

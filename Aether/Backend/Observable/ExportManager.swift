@@ -36,7 +36,9 @@ final class ExportManager: ObservableObject {
 	private var handlers: [UUID: ArchiveHandler] = [:]
 	private var progressObservations: [UUID: AnyCancellable] = [:]
 	private var runIDs: [UUID: UUID] = [:]
-	private var artifactReaders: [UUID: AppSnapshot] = [:]
+	@Published private var artifactReaders: [UUID: AppSnapshot] = [:]
+
+	var hasActiveWork: Bool { !artifactReaders.isEmpty }
 
 	private init() {}
 
@@ -46,6 +48,7 @@ final class ExportManager: ObservableObject {
 	}
 
 	func startExport(app: AppInfoPresentable) {
+		guard !AppMaintenanceGuard.isResetting else { return }
 		if exports.contains(where: { $0.app.uuid == app.uuid && app.uuid != nil }) {
 			return
 		}
@@ -132,7 +135,7 @@ final class ExportManager: ObservableObject {
 		guard _isCurrent(export, runID: runID) else { return }
 		_cleanUp(for: export)
 		export.state = .failed(error.localizedDescription)
-		UINotificationFeedbackGenerator().notificationOccurred(.error)
+		HapticManager.shared.impact()
 	}
 
 	private func _cancelWork(for export: AppExport) {

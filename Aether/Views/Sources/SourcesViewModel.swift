@@ -23,6 +23,7 @@ final class SourcesViewModel: ObservableObject {
 	@Published private(set) var lastUpdated: Date?
 	private var _revisions: [String: String] = [:]
 	private var removedSourceKeys = Set<String>()
+	private var cacheResetGeneration = UUID()
 	@Published private(set) var refreshErrors: [String: String] = [:]
 	
 	@Published private(set) var catalogRevision = 0
@@ -38,6 +39,21 @@ final class SourcesViewModel: ObservableObject {
 		_repositoryService = repositoryService
 		_defaults = defaults
 		lastUpdated = defaults.object(forKey: Self._lastUpdatedKey) as? Date
+	}
+
+	func clearNetworkCache() async {
+		cacheResetGeneration = UUID()
+		await _repositoryService.clearCache()
+		await SourceAppListStore.shared.clearCache()
+		await InstalledAppUpdateCatalog.shared.clearCache()
+		_revisions.removeAll()
+		sources.removeAll()
+		refreshErrors.removeAll()
+		_lastGlobalAttempt = nil
+		_hasStartedGlobalRefresh = false
+		lastUpdated = nil
+		_defaults.removeObject(forKey: Self._lastUpdatedKey)
+		catalogRevision += 1
 	}
 
 	func removeSource(key: String, url: URL?, evictURL: Bool) {
@@ -95,6 +111,7 @@ final class SourcesViewModel: ObservableObject {
 
 	func fetchSources(_ sources: [AltSource], refresh: Bool = false, batchSize: Int = 4) async {
 		guard isFinished else { return }
+		let generation = cacheResetGeneration
 		let allRequests = sources.map {
 			SourceRequest(key: $0.objectID.uriRepresentation().absoluteString, sourceURL: $0.sourceURL)
 		}
@@ -111,7 +128,7 @@ final class SourcesViewModel: ObservableObject {
 		isFinished = false
 		defer { isFinished = true }
 		await _fetchRequests(requests, refresh: refresh, batchSize: batchSize)
-		if refresh, !Task.isCancelled {
+		if refresh, !Task.isCancelled, generation == cacheResetGeneration {
 			_hasStartedGlobalRefresh = true
 			_lastGlobalAttempt = Date()
 			if requests.allSatisfy({ refreshErrors[$0.key] == nil }) {
@@ -133,17 +150,19 @@ final class SourcesViewModel: ObservableObject {
 
 	/// Navigation uses memory/disk catalogs; only a missing catalog needs a request.
 	func ensureSourcesLoaded(_ sources: [AltSource], batchSize: Int = 4) async {
+		let generation = cacheResetGeneration
 		guard !Task.isCancelled else { return }
 		let requests = sources.map {
 			SourceRequest(key: $0.objectID.uriRepresentation().absoluteString, sourceURL: $0.sourceURL)
 		}
 		await _restoreCachedSources(requests)
-		guard !Task.isCancelled else { return }
+		guard !Task.isCancelled, generation == cacheResetGeneration else { return }
 		let missing = requests.filter { self.sources[$0.key] == nil }
 		await _fetchRequests(missing, refresh: false, batchSize: batchSize, restoreCached: false)
 	}
 
 	private func _restoreCachedSources(_ requests: [SourceRequest]) async {
+		let generation = cacheResetGeneration
 		guard !Task.isCancelled else { return }
 		let service = _repositoryService
 		await withTaskGroup(of: (String, SourceRepositoryService.Snapshot?).self) { group in
@@ -155,7 +174,7 @@ final class SourcesViewModel: ObservableObject {
 				}
 			}
 			for await (key, snapshot) in group {
-				guard !Task.isCancelled else { group.cancelAll(); break }
+				guard !Task.isCancelled, generation == cacheResetGeneration else { group.cancelAll(); break }
 				if let snapshot, !removedSourceKeys.contains(key), self.sources[key] == nil {
 					_revisions[key] = snapshot.revision
 					self.sources[key] = snapshot.repository
@@ -166,12 +185,14 @@ final class SourcesViewModel: ObservableObject {
 	}
 
 	private func _fetchRequests(_ requests: [SourceRequest], refresh: Bool, batchSize: Int, restoreCached: Bool = true) async {
+		let generation = cacheResetGeneration
 		guard !Task.isCancelled else { return }
 		if restoreCached { await _restoreCachedSources(requests) }
+		guard generation == cacheResetGeneration else { return }
 		let service = _repositoryService
 		let size = max(1, batchSize)
 		for startIndex in stride(from: 0, to: requests.count, by: size) {
-			guard !Task.isCancelled else { return }
+			guard !Task.isCancelled, generation == cacheResetGeneration else { return }
 			let batch = requests[startIndex..<min(startIndex + size, requests.count)]
 			await withTaskGroup(of: (String, SourceRepositoryService.Snapshot?, String?).self) { group in
 				for request in batch {
@@ -190,7 +211,7 @@ final class SourcesViewModel: ObservableObject {
 					}
 				}
 				for await (key, snapshot, error) in group {
-					guard !Task.isCancelled else { group.cancelAll(); break }
+					guard !Task.isCancelled, generation == cacheResetGeneration else { group.cancelAll(); break }
 					guard !removedSourceKeys.contains(key) else { continue }
 					refreshErrors[key] = error
 					if let snapshot, _revisions[key] != snapshot.revision {

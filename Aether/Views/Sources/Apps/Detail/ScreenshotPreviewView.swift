@@ -32,7 +32,7 @@ struct ScreenshotPreviewView: View {
 					}
 					ToolbarItem(placement: .topBarTrailing) {
 						Text(verbatim: "\(currentIndex + 1) / \(screenshotURLs.count)")
-							.nbFont(.subheadline)
+							.font(.subheadline)
 							.padding(.horizontal, 12)
 							.padding(.vertical, 6)
 					}

@@ -6,7 +6,6 @@
 //
 
 import CoreData
-import UIKit.UIImpactFeedbackGenerator
 import Zsign
 
 // MARK: - Class extension: certificate

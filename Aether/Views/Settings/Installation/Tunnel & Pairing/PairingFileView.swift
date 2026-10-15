@@ -10,6 +10,8 @@ import IDeviceSwift
 struct PairingFileView: View {
 	@State private var _isImportingPairingPresenting = false
 	@State private var _isOnDevicePairingPresenting = false
+	@ObservedObject private var _installations = AppInstallationManager.shared
+	@AppStorage("Aether.spoofing.simulationMayBeActive") private var _spoofingActive = false
 	@ObservedObject private var _connection = DeviceConnectionManager.shared
 	@ObservedObject private var _onDevicePairing = OnDevicePairingManager.shared
 
@@ -84,6 +86,7 @@ struct PairingFileView: View {
 			}
 
 		}
+		.disabled(AppMaintenanceGuard.pairingBlockReason != nil)
 		.sheet(isPresented: $_isImportingPairingPresenting) {
 			FileImporterRepresentableView(
 				allowedContentTypes: [.xmlPropertyList, .plist, .mobiledevicepairing],
@@ -156,11 +159,13 @@ struct PairingFileView: View {
 	}
 
 	private func _useOnDevicePairingRecord() {
+		guard AppMaintenanceGuard.allowPairingChange() else { return }
 		HeartbeatManager.useOnDevicePairingFile()
 		_switchPairingRecord()
 	}
 
 	private func _useImportedPairingRecord() {
+		guard AppMaintenanceGuard.allowPairingChange() else { return }
 		HeartbeatManager.useImportedPairingFile()
 		_switchPairingRecord()
 	}

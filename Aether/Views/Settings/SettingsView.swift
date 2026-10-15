@@ -11,23 +11,27 @@ import UIKit
 
 // MARK: - View
 struct SettingsView: View {
-	enum Presentation { case modal, tab }
-	let presentation: Presentation
-	init(presentation: Presentation = .modal) { self.presentation = presentation }
-	@Environment(\.dismiss) private var dismiss
 	@AppStorage("aether.selectedCertUUID") private var _storedSelectedCertUUID: String = ""
 	@AppStorage("aether.selectedCert") private var _storedSelectedCert: Int = 0
+	@ObservedObject private var connection = DeviceConnectionManager.shared
+	@AppStorage("Aether.installationMethod") private var installationMethod = 0
+	@State private var isSpoofingPresented = false
+	@AppStorage("Aether.glassSettingsCard") private var glassSettingsCard = false
+	@State private var searchText = ""
+	@State private var searchFocused = false
+	@State private var searchWidth: CGFloat = 320
+	@State private var rootVisible = false
 	@State private var _currentIcon: String? = UIApplication.shared.alternateIconName
 	@State private var _settingsPath: [AppTabManager.SettingsPage] = []
 	@ObservedObject private var _tabManager = AppTabManager.shared
-	
+
 	// MARK: Fetch
 	@FetchRequest(
 		entity: CertificatePair.entity(),
 		sortDescriptors: [NSSortDescriptor(keyPath: \CertificatePair.date, ascending: false)],
 		animation: .snappy
 	) private var _certificates: FetchedResults<CertificatePair>
-	
+
 	private var selectedCertificate: CertificatePair? {
 		if !_storedSelectedCertUUID.isEmpty {
 			if let match = _certificates.first(where: { $0.uuid == _storedSelectedCertUUID }) {
@@ -46,70 +50,26 @@ struct SettingsView: View {
 	var body: some View {
 		NavigationStack(path: $_settingsPath) {
 			Form {
-				Section { InstallationModePickerRow() }
-				Section {
-					if let cert = selectedCertificate {
-						CertificatesCellView(cert: cert)
-					} else {
-						Text(.localized("No Certificate"))
-							.font(.footnote)
-							.foregroundColor(.disabled())
-					}
-					NavigationLink(value: AppTabManager.SettingsPage.certificates) {
-						SettingsRowLabel(.localized("Certificates"), systemImage: "checkmark.seal.fill", backgroundColor: .green)
-					}
-				}
-                
-				Section {
-					NavigationLink(value: AppTabManager.SettingsPage.signing) {
-						SettingsRowLabel(.localized("Signing Options"), systemImage: "signature", backgroundColor: .orange)
-					}
-					NavigationLink(value: AppTabManager.SettingsPage.archive) {
-						SettingsRowLabel(.localized("Archive & Compression"), systemImage: "archivebox.fill", backgroundColor: .cyan)
-					}
-					NavigationLink(value: AppTabManager.SettingsPage.pairingFile) {
-						SettingsRowLabel(.localized("Pairing File"), systemImage: "key.fill", backgroundColor: .purple)
-					}
-					NavigationLink(value: AppTabManager.SettingsPage.tunnel) {
-						SettingsRowLabel(.localized("Tunneling"), systemImage: "network", backgroundColor: .green)
-					}
-				}
-
-				Section {
-					NavigationLink(value: AppTabManager.SettingsPage.appearance) {
-						SettingsRowLabel(.localized("Appearance"), systemImage: "paintbrush.fill", backgroundColor: .blue)
-					}
-				}
-                
-				Section {
-					NavigationLink(value: AppTabManager.SettingsPage.logs) {
-						SettingsRowLabel(.localized("Logs"), systemImage: "doc.text.magnifyingglass", backgroundColor: .purple)
-					}
-					NavigationLink(value: AppTabManager.SettingsPage.reset) {
-						SettingsRowLabel(.localized("Reset"), systemImage: "trash.fill", backgroundColor: .red)
-					}
-				}
-
-				Section {
-					Button {
-						guard let url = URL(string: "https://github.com/a-artho/Aether") else { return }
-						UIApplication.shared.open(url)
-					} label: {
-						HStack {
-							SettingsRowLabel(
-								.localized("Source Code"),
-								systemImage: "chevron.left.forwardslash.chevron.right",
-								backgroundColor: .blue
-							)
-							Spacer()
-							Image(systemName: "arrow.up.right")
-								.font(.footnote.weight(.semibold))
-								.foregroundStyle(.secondary)
+				if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+					settingsSections
+				} else if !searchResults.isEmpty {
+					Section {
+						ForEach(searchResults) { entry in
+							Button { openSearchResult(entry) } label: {
+								HStack {
+									NBTitleWithSubtitleView(title: entry.title, subtitle: entry.category)
+									Image(systemName: entry.destination == .sourceCode ? "arrow.up.right" : "chevron.right")
+										.font(.footnote.weight(.semibold)).foregroundStyle(Color.secondary)
+								}
+								.contentShape(Rectangle())
+							}
+							.buttonStyle(.plain)
+							.disabled(entry.destination == .page(.spoofing) && !canOpenSpoofing)
 						}
 					}
-					.buttonStyle(.plain)
 				}
 			}
+			.contentMargins(.top, 0, for: .scrollContent)
 			.navigationTitle(String.localized("Settings"))
 			.navigationBarTitleDisplayMode(.inline)
 			// Native grouped page colors adapt to light/dark mode and presentation elevation.
@@ -128,40 +88,139 @@ struct SettingsView: View {
 				case .tunnel: TunnelView()
 				case .logs: LogsView()
 				case .reset: ResetView()
-				case .root: EmptyView()
+				case .root, .spoofing: EmptyView()
 				}
 			}
-			.toolbar {
-				if presentation == .modal {
-					ToolbarItem(placement: .topBarTrailing) {
-						Button {
-							dismiss()
-						} label: {
-							Image(systemName: "xmark")
-						}
-						.accessibilityLabel(.localized("Close Settings"))
-					}
+			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { searchWidth = $0 }
+			.modifier(SearchToolbarModifier(
+				text: $searchText, isPresented: $_tabManager.isSettingsSearchPresented,
+				focus: $searchFocused, title: .localized("Settings"), width: searchWidth,
+				isScreenActive: rootVisible && _settingsPath.isEmpty && !isSpoofingPresented,
+				hasTitleMenu: false
+			) { EmptyView() })
+			.overlay {
+				if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && searchResults.isEmpty {
+					TabPlaceholderView(title: .localized("No Results"), description: .localized("Try another search."), systemImage: "magnifyingglass")
 				}
 			}
+			.onChange(of: _tabManager.isSettingsSearchPresented) { _, presented in
+				if !presented { searchText = ""; searchFocused = false }
+				else { searchFocused = true }
+			}
+			.onDisappear { rootVisible = false; searchFocused = false }
 			.onAppear {
+				rootVisible = true
 				_presentRequestedPageIfNeeded()
-				_tabManager.visibleSettingsPage = _settingsPath.last ?? .root
 			}
 			.onChange(of: _settingsPath) { _, path in
-				_tabManager.visibleSettingsPage = path.last ?? .root
+				if !path.isEmpty { searchFocused = false }
 			}
 			.onChange(of: _tabManager.requestedSettingsPage) { _, _ in
 				_presentRequestedPageIfNeeded()
 			}
 		}
+		.sheet(isPresented: $isSpoofingPresented) { SpoofingEntryView() }
+	}
+
+	private var searchResults: [SettingsSearchEntry] { SettingsSearchIndex.results(for: searchText) }
+
+	private var canOpenSpoofing: Bool {
+		installationMethod == 1 && connection.isConnected && !connection.isUpdating
+	}
+
+	private func openSearchResult(_ entry: SettingsSearchEntry) {
+		searchFocused = false
+		switch entry.destination {
+		case .page(.spoofing):
+			if canOpenSpoofing { isSpoofingPresented = true }
+		case .page(let page): _settingsPath.append(page)
+		case .sourceCode:
+			if let url = URL(string: "https://github.com/a-artho/Aether") { UIApplication.shared.open(url) }
+		}
+	}
+
+	private var deviceControls: some View {
+		SettingsDeviceControls(
+			certificate: selectedCertificate,
+			openTunnel: { _settingsPath.append(connection.hasPairingFile ? .tunnel : .pairingFile) },
+			openPairing: { _settingsPath.append(.pairingFile) },
+			openSpoofing: { isSpoofingPresented = true },
+			openCertificates: { _settingsPath.append(.certificates) }
+		)
+	}
+
+	private var deviceControlsBackground: Color {
+		Color(uiColor: UIColor { traits in
+			traits.userInterfaceStyle == .dark
+				? UIColor(white: 0.07, alpha: 1)
+				: UIColor(white: 0.98, alpha: 1)
+		})
+	}
+
+	@ViewBuilder private var settingsSections: some View {
+		Section {
+			if glassSettingsCard {
+				VStack(spacing: 12) {
+					InstallationModePickerRow()
+					deviceControls
+				}
+				.padding(12)
+				.glassEffect(.regular, in: .rect(cornerRadius: 26))
+				.listRowInsets(EdgeInsets())
+				.listRowBackground(Color.clear)
+				.listRowSeparator(.hidden)
+			} else {
+				InstallationModePickerRow()
+					.listRowBackground(deviceControlsBackground)
+				deviceControls
+					.listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
+					.listRowBackground(deviceControlsBackground)
+			}
+		}
+		Section {
+			NavigationLink(value: AppTabManager.SettingsPage.signing) {
+				SettingsRowLabel(.localized("Signing Options"), systemImage: "signature", backgroundColor: .orange)
+			}
+			NavigationLink(value: AppTabManager.SettingsPage.archive) {
+				SettingsRowLabel(.localized("Archive & Compression"), systemImage: "archivebox.fill", backgroundColor: .cyan)
+			}
+			NavigationLink(value: AppTabManager.SettingsPage.appearance) {
+				SettingsRowLabel(.localized("Appearance"), systemImage: "paintbrush.fill", backgroundColor: .blue)
+			}
+		}
+
+		Section {
+			NavigationLink(value: AppTabManager.SettingsPage.logs) {
+				SettingsRowLabel(.localized("Logs"), systemImage: "doc.text.magnifyingglass", backgroundColor: .purple)
+			}
+			NavigationLink(value: AppTabManager.SettingsPage.reset) {
+				SettingsRowLabel(.localized("Reset"), systemImage: "trash.fill", backgroundColor: .red)
+			}
+			Button {
+				guard let url = URL(string: "https://github.com/a-artho/Aether") else { return }
+				UIApplication.shared.open(url)
+			} label: {
+				HStack {
+					SettingsRowLabel(
+						.localized("Source Code"),
+						systemImage: "chevron.left.forwardslash.chevron.right",
+						backgroundColor: .blue
+					)
+					Spacer()
+					Image(systemName: "arrow.up.right")
+						.font(.footnote.weight(.semibold))
+						.foregroundStyle(.secondary)
+				}
+			}
+			.buttonStyle(.plain)
+		}
 	}
 
 	private func _presentRequestedPageIfNeeded() {
-		let ownsPresentation = presentation == .tab
-			? _tabManager.usesSettingsTab && _tabManager.selectedTab == .settings
-			: !_tabManager.usesSettingsTab && _tabManager.isSettingsPresented
-		guard ownsPresentation, let page = _tabManager.requestedSettingsPage else { return }
-		_settingsPath = page == .root ? [] : [page]
+		guard _tabManager.selectedTab == .settings, let page = _tabManager.requestedSettingsPage else { return }
+		_settingsPath = page == .root || page == .spoofing ? [] : [page]
+		if page == .spoofing { isSpoofingPresented = true }
+		if page == .root && _tabManager.isSettingsSearchPresented { searchFocused = true }
 		_tabManager.requestedSettingsPage = nil
 	}
 }

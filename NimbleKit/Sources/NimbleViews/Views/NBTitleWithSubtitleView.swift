@@ -24,7 +24,7 @@ public struct NBTitleWithSubtitleView: View {
 				.font(.headline)
 				.foregroundColor(.primary)
 			Text(_subtitle)
-				.nbFont(.subheadline)
+				.font(.subheadline)
 				.foregroundColor(.secondary)
 		}
 		.padding(.vertical, 2)

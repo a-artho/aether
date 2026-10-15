@@ -10,12 +10,8 @@ import UIKit
 
 @MainActor
 struct LibraryView: View {
-	@AppStorage("Aether.settingsPlacement") private var settingsPlacement: SettingsPlacement = .header
 	@StateObject private var imports = UnifiedImportsController()
-	@AppStorage("Aether.controlsInHeader") private var controlsInHeader = false
 	@AppStorage("Aether.installationMethod") private var installationMethod = 0
-	@AppStorage("Aether.serverMethod") private var serverMethod = 1
-	@AppStorage("Aether.spoofing.simulationMayBeActive") private var isSpoofingActive = false
 	@StateObject private var store: InstalledAppsStore
 	@ObservedObject private var installationManager = AppInstallationManager.shared
 	@ObservedObject private var connection = DeviceConnectionManager.shared
@@ -28,8 +24,6 @@ struct LibraryView: View {
 	@State private var searchText = ""
 	@State private var searchFocused = false
 	@State private var toolbarWidth: CGFloat = 320
-	@State private var isSpoofingPresented = false
-	@State private var isModeSwitchBlocked = false
 	@State private var appNavigationPath: [InstalledAppsRoute] = []
 	@State private var isRootListVisible = false
 	@State private var visibleUnifiedInstallRows: [UUID: Set<String>] = [:]
@@ -68,7 +62,7 @@ struct LibraryView: View {
 		let sideloadedApps = store.apps.filter { matchesSearch($0.name, $0.bundleIdentifier, $0.version, $0.build) }
 		let showAllApps = installationMethod == 0
 			? matchesSearch(String.localized("All Apps"), String.localized("Requires Local mode"))
-			: !showsDevicePlaceholder && !sideloadedApps.isEmpty
+			: !showsDevicePlaceholder && (searchText.isEmpty || !sideloadedApps.isEmpty || matchesSearch(String.localized("All Apps")))
 		let appsWithUpdates = sideloadedApps.filter { updateContexts[$0.bundleIdentifier]?.isEmpty == false }
 		let importRows = imports.visibleRows.filter { entry in
 			let app = entry.app ?? entry.operation?.app ?? entry.export?.app
@@ -121,7 +115,7 @@ struct LibraryView: View {
 					switch route {
 					case .allApps:
 						AllInstalledAppsView(store: store, loadsIcons: loadsIcons,
-							initialSearch: searchText, placeholder: _placeholderContent)
+							initialSearch: searchText, placeholder: allAppsPlaceholder)
 					case let .updates(identifier):
 						InstalledAppUpdatesView(contexts: updateContexts[identifier] ?? [])
 					}
@@ -134,10 +128,9 @@ struct LibraryView: View {
 						tabManager.selectedTab == .library, tabManager.installationFocusRequest == nil else { return }
 					var transaction = Transaction()
 					transaction.disablesAnimations = true
-					if !appNavigationPath.isEmpty || isSpoofingPresented || imports.infoApp != nil {
+					if !appNavigationPath.isEmpty || imports.infoApp != nil {
 						withTransaction(transaction) {
 							appNavigationPath.removeAll()
-							isSpoofingPresented = false
 							imports.infoApp = nil
 						}
 						return
@@ -153,10 +146,9 @@ struct LibraryView: View {
 						tabManager.selectedTab == .library, let firstCard = cards.first else { return }
 					var transaction = Transaction()
 					transaction.disablesAnimations = true
-					if !appNavigationPath.isEmpty || isSpoofingPresented || imports.infoApp != nil {
+					if !appNavigationPath.isEmpty || imports.infoApp != nil {
 						withTransaction(transaction) {
 							appNavigationPath.removeAll()
-							isSpoofingPresented = false
 							imports.infoApp = nil
 						}
 						return
@@ -189,7 +181,6 @@ struct LibraryView: View {
 					await store.refresh(force: true)
 				}
 			}
-			.modifier(DeviceControlsBar(controls: _deviceControlsCard, isEnabled: !controlsInHeader))
 			.task {
 				guard loadsApps else { return }
 				await store.load()
@@ -220,17 +211,6 @@ struct LibraryView: View {
 			.onChange(of: installationMethod) { _, mode in
 				if mode == 0 { appNavigationPath.removeAll() }
 			}
-			.sheet(isPresented: $isSpoofingPresented) {
-				SpoofingEntryView()
-			}
-			.alert(.localized("Stop Spoofing First"), isPresented: $isModeSwitchBlocked) {
-				Button(.localized("Open Spoofing")) {
-					isSpoofingPresented = true
-				}
-				Button(.localized("Cancel"), role: .cancel) {}
-			} message: {
-				Text(.localized("Stop the simulated location before switching to Server mode."))
-			}
 		}
 		.task(id: updateRequest) {
 			guard loadsApps, installationMethod == 1, !store.apps.isEmpty else {
@@ -259,8 +239,8 @@ struct LibraryView: View {
 		ToolbarItemGroup(placement: .topBarLeading) {
 			if imports.editMode.isEditing {
 				Button(String.localized("Done")) { imports.finishSelection() }
-			} else if !tabManager.isLibrarySearchPresented {
-				if settingsPlacement == .header { settingsButton }
+			} else if !tabManager.isLibrarySearchPresented && appNavigationPath.isEmpty {
+				libraryActionsMenu
 			}
 		}
 
@@ -269,14 +249,28 @@ struct LibraryView: View {
 				Button(role: .destructive) { imports.deleteSelected() } label: { Image(systemName: "trash") }
 					.disabled(imports.selectedRows.isEmpty)
 					.accessibilityLabel(String.localized("Delete"))
-			} else if !tabManager.isLibrarySearchPresented {
-				if controlsInHeader { spoofingHeaderButton }
 			}
 		}
 	}
 
 	private var showsDevicePlaceholder: Bool {
-		installationMethod == 0 || store.apps.isEmpty
+		installationMethod == 0 || (store.apps.isEmpty && (
+			!connection.hasPairingFile || connection.requiresInAppTunnelSetup
+			|| (_showsCellularConnectionGuidance && _needsManualCellularRefresh)
+			|| (!connection.isConnected && !connection.isUpdating && !cellularAssist.isBusy)
+		))
+	}
+
+	private var allAppsIsBusy: Bool {
+		connection.isUpdating || cellularAssist.isBusy || store.isLoading
+	}
+
+	private var allAppsSubtitle: String {
+		if connection.isUpdating || cellularAssist.isBusy {
+			return .localized("Connecting Tunnel")
+		}
+		if store.isLoading { return .localized("Loading Installed Apps") }
+		return .localized("See all sideloaded apps")
 	}
 
 	private var allAppsRow: some View {
@@ -296,7 +290,16 @@ struct LibraryView: View {
 				.listRowSeparator(.hidden)
 			} else {
 				NavigationLink(value: InstalledAppsRoute.allApps) {
-					allAppsSummary(subtitle: String.localized("See all sideloaded apps"))
+					HStack(spacing: 12) {
+						allAppsSummary(subtitle: allAppsSubtitle)
+						if allAppsIsBusy {
+							ProgressView()
+						} else {
+							Text(store.apps.count, format: .number)
+								.font(.footnote)
+								.foregroundStyle(.secondary)
+						}
+					}
 				}
 				.buttonStyle(.plain)
 				.listRowSeparator(.hidden)
@@ -311,28 +314,27 @@ struct LibraryView: View {
 				.symbolRenderingMode(.hierarchical)
 				.foregroundStyle(.secondary)
 				.frame(width: 50, height: 50)
-			NBTitleWithSubtitleView(title: String.localized("All Apps"), subtitle: subtitle)
+			VStack(alignment: .leading, spacing: 2) {
+				Text(String.localized("All Apps"))
+					.font(.headline)
+					.foregroundStyle(.primary)
+				Text(subtitle)
+					.font(.subheadline)
+					.foregroundStyle(.secondary)
+			}
+			.padding(.vertical, 2)
+			.frame(maxWidth: .infinity, alignment: .leading)
 		}
 	}
 
-	private var settingsButton: some View {
-		Menu("Settings", systemImage: "gearshape") {
-			Button(String.localized("Switch Installation Mode"), systemImage: "arrow.left.arrow.right", action: _toggleInstallationMode)
-				.disabled(installationManager.hasPendingInstalls)
-			Divider()
-			Button(String.localized("Select"), systemImage: "checkmark.circle") {
-				imports.select()
-			}
-			.disabled(!imports.hasRows)
+	private var libraryActionsMenu: some View {
+		Menu(String.localized("Library Actions"), systemImage: "ellipsis") {
+			Button(String.localized("Select"), systemImage: "checkmark.circle") { imports.select() }
 			Button(String.localized("Delete All"), systemImage: "trash", role: .destructive) {
 				imports.confirmingDeleteAll = true
 			}
-			.disabled(!imports.hasRows)
-		} primaryAction: {
-			tabManager.openSettings()
 		}
-		.menuIndicator(.hidden)
-		.accessibilityLabel(String.localized("Settings"))
+		.disabled(!imports.hasRows)
 	}
 
 	private func matchesSearch(_ fields: String?...) -> Bool {
@@ -351,13 +353,13 @@ struct LibraryView: View {
 		 tabManager.selectedTab.rawValue,
 		 installationManager.installationCards.first?.id.uuidString ?? "",
 		 String(describing: appNavigationPath),
-		 String(isSpoofingPresented), imports.infoApp?.id ?? "", String(isRootListVisible), String(imports.revision),
+		 imports.infoApp?.id ?? "", String(isRootListVisible), String(imports.revision),
 		 String(installationManager.installationCards.first.map { operationIsVisible($0.id) } ?? false)]
 	}
 
 	private var libraryFocusState: [String] {
 		[searchText, String(tabManager.isLibrarySearchPresented), tabManager.libraryFocusRequest?.uuidString ?? "", tabManager.selectedTab.rawValue,
-		 String(describing: appNavigationPath), String(isRootListVisible), String(isSpoofingPresented), imports.infoApp?.id ?? "", String(imports.revision)]
+		 String(describing: appNavigationPath), String(isRootListVisible), imports.infoApp?.id ?? "", String(imports.revision)]
 	}
 
 	private func recordVisibleImportOperation(_ id: UUID, _ rowID: String, _ visible: Bool) {
@@ -376,108 +378,13 @@ struct LibraryView: View {
 			+ sources.flatMap { [$0.objectID.uriRepresentation().absoluteString, $0.sourceURL?.absoluteString ?? ""] }
 	}
 
-	private var spoofingHeaderButton: some View {
-		Button {
-			HapticManager.shared.impact()
-			isSpoofingPresented = true
-		} label: {
-			Image(systemName: "location.fill")
-				.foregroundStyle(isSpoofingActive ? Color.green : Color.secondary.opacity(_canOpenSpoofing ? 1 : 0.55))
-		}
-		.disabled(!_canOpenSpoofing)
-		.opacity((_canOpenSpoofing ? 1 : 0.6) * (installationMethod == 1 ? 1 : 0.45))
-		.accessibilityLabel("Spoofing, \(_spoofingStatus.text)")
-		.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select Local mode and connect the tunnel to open spoofing controls.")
-	}
-
-	private var _deviceControlsCard: some View {
-		DeviceAccessoryTileGroup {
-			_homeAccessoryTile(
-				title: .localized("Tunnel"),
-				subtitle: _tunnelStatus.text,
-				systemImage: "network",
-				isActive: connection.isConnected,
-				activeColor: .green,
-				action: {
-					tabManager.openSettings(page: connection.hasPairingFile ? .tunnel : .pairingFile)
-				}
-			)
-			.accessibilityLabel("Tunnel, \(_tunnelStatus.text)")
-			.accessibilityHint(connection.hasPairingFile ? "Opens tunnel settings." : "Opens pairing settings.")
-
-			_homeAccessoryTile(
-				title: .localized("Spoofing"),
-				subtitle: _spoofingStatus.text,
-				systemImage: "location.fill",
-				isActive: isSpoofingActive,
-				activeColor: .green,
-				isDisabled: !_canOpenSpoofing,
-				action: {
-					isSpoofingPresented = true
-				}
-			)
-			.accessibilityLabel("Spoofing, \(_spoofingStatus.text)")
-			.accessibilityHint(_canOpenSpoofing ? "Opens spoofing controls." : "Select Local mode and connect the tunnel to open spoofing controls.")
-		}
-		.opacity(installationMethod == 1 ? 1 : 0.45)
-	}
-
-	@ViewBuilder
-	private func _homeAccessoryTile(
-		title: String,
-		subtitle: String,
-		systemImage: String,
-		isActive: Bool,
-		activeColor: Color,
-		isDisabled: Bool = false,
-		action: @escaping () -> Void
-	) -> some View {
-		DeviceAccessoryTile(title: title, subtitle: subtitle, systemImage: systemImage,
-			isActive: isActive, activeColor: activeColor, isDisabled: isDisabled, action: action)
-	}
-
-	private var _canOpenSpoofing: Bool {
-		installationMethod == 1 && connection.isConnected && !connection.isUpdating
-	}
-
-	private var _tunnelStatus: _DeviceControlStatus {
-		guard installationMethod == 1 else {
-			return .init(text: .localized("Local required"), color: .secondary)
-		}
-		if connection.isUpdating {
-			return .init(text: .localized("Connecting"), color: .orange)
-		}
-		if connection.isConnected {
-			return .init(text: .localized("Connected"), color: .green)
-		}
-		if !connection.hasPairingFile {
-			return .init(text: .localized("Needs Pairing"), color: .red)
-		}
-		if connection.requiresInAppTunnelSetup {
-			return .init(text: .localized("Setup Required"), color: .orange)
-		}
-		return .init(text: .localized("Unavailable"), color: .red)
-	}
-
-	private var _spoofingStatus: _DeviceControlStatus {
-		guard installationMethod == 1 else {
-			return .init(text: .localized("Local required"), color: .secondary)
-		}
-		if isSpoofingActive {
-			return .init(text: .localized("Active"), color: .green)
-		}
-		if _canOpenSpoofing {
-			return .init(text: .localized("Ready"), color: .secondary)
-		}
-		return .init(text: .localized("Needs Tunnel"), color: .secondary)
-	}
 
 	private var libraryTitle: String {
 		.localized("Library")
 	}
 
 	private struct DeviceStatus {
-		enum Action { case pair, setupVPN, reconnect, reload }
+		enum Action { case pair, setupVPN, reconnect }
 		let title: String
 		let description: String
 		let icon: String
@@ -487,9 +394,7 @@ struct LibraryView: View {
 	}
 
 	private var deviceStatus: DeviceStatus {
-		if store.isLoading && store.apps.isEmpty {
-			return DeviceStatus(title: .localized("Loading Installed Apps"), description: "", icon: "iphone", busy: true)
-		} else if !connection.hasPairingFile && store.apps.isEmpty {
+		if !connection.hasPairingFile && store.apps.isEmpty {
 			return DeviceStatus(title: .localized("Pairing File Missing"), description: .localized("Add a pairing file to view sideloaded apps or spoof device location."), icon: "key.slash", action: .pair, buttonTitle: .localized("Pair"))
 		} else if connection.requiresInAppTunnelSetup && store.apps.isEmpty {
 			return DeviceStatus(title: .localized("VPN Setup Required"), description: .localized("Set up Aether’s VPN profile to connect to your device."), icon: "network.badge.shield.half.filled", action: .setupVPN, buttonTitle: .localized("Set Up"))
@@ -499,21 +404,32 @@ struct LibraryView: View {
 			return DeviceStatus(title: .localized("Connecting Tunnel"), description: .localized("Aether is connecting so you can view sideloaded apps or spoof device location."), icon: "network", busy: true)
 		} else if !connection.isConnected && store.apps.isEmpty {
 			return DeviceStatus(title: .localized("Tunnel Unavailable"), description: .localized("Reconnect the tunnel to view sideloaded apps or spoof device location."), icon: "network.slash", action: .reconnect, buttonTitle: .localized("Retry"))
-		} else if let error = store.errorMessage, store.apps.isEmpty {
-			return DeviceStatus(title: .localized("Unable to Load Installed Apps"), description: error, icon: "iphone.slash", action: .reload, buttonTitle: .localized("Retry"))
+
 		} else {
-			return DeviceStatus(title: .localized("No Sideloaded Apps"), description: .localized("Sideloaded apps will appear here. You can spoof device location above."), icon: "square.stack.3d.up.slash")
+			return DeviceStatus(title: .localized("No Sideloaded Apps"), description: .localized("Sideloaded apps will appear here. Manage location spoofing in Settings."), icon: "square.stack.3d.up.slash")
 		}
 	}
 
 	@ViewBuilder private var _placeholderContent: some View {
 		let status = deviceStatus
-		if store.isLoading && store.apps.isEmpty && installationMethod != 0 {
-			ProgressView().padding(.vertical, 20)
-		} else {
-			TabPlaceholderView(title: status.title, description: status.description, systemImage: status.icon) {
-				deviceStatusAction(status)
+		TabPlaceholderView(title: status.title, description: status.description, systemImage: status.icon) {
+			deviceStatusAction(status)
+		}
+	}
+
+	@ViewBuilder private var allAppsPlaceholder: some View {
+		if showsDevicePlaceholder {
+			_placeholderContent
+		} else if allAppsIsBusy {
+			ProgressView(allAppsSubtitle)
+		} else if let error = store.errorMessage {
+			TabPlaceholderView(title: .localized("Unable to Load Installed Apps"), description: error, systemImage: "iphone.slash") {
+				Button { Task { await store.refresh(force: true) } } label: {
+					NBButton(String.localized("Retry"), style: .text)
+				}
 			}
+		} else {
+			TabPlaceholderView(title: .localized("No Sideloaded Apps"), description: .localized("Sideloaded apps will appear here. Manage location spoofing in Settings."), systemImage: "square.stack.3d.up.slash")
 		}
 	}
 
@@ -522,10 +438,10 @@ struct LibraryView: View {
 		return VStack(spacing: 8) {
 			HStack(spacing: 6) {
 				Image(systemName: status.icon)
-					.nbFont(.subheadline).foregroundStyle(.secondary)
+					.font(.subheadline).foregroundStyle(.secondary)
 					.accessibilityHidden(true)
 				Text(status.title)
-					.nbFont(.subheadline).foregroundStyle(.secondary)
+					.font(.subheadline).foregroundStyle(.secondary)
 					.multilineTextAlignment(.center)
 			}
 			if !status.description.isEmpty {
@@ -560,7 +476,6 @@ struct LibraryView: View {
 		case .pair: tabManager.openSettings(page: .pairingFile)
 		case .setupVPN: connection.setUpInAppTunnel()
 		case .reconnect: connection.reconnectForIDeviceMode()
-		case .reload: Task { await store.refresh(force: true) }
 		}
 	}
 
@@ -578,31 +493,11 @@ struct LibraryView: View {
 		cellularAssist.isWaitingForManualRecovery || connection.tunnelMethod == .localDevVPN
 	}
 
-	private func _toggleInstallationMode() {
-		if installationMethod == 1 {
-			guard !isSpoofingActive else {
-				isModeSwitchBlocked = true
-				return
-			}
-			guard connection.setInstallationMode(0) else {
-				isModeSwitchBlocked = true
-				return
-			}
-		} else {
-			_ = connection.setInstallationMode(1)
-		}
-		HapticManager.shared.selection()
-	}
-
 	private func _switchToIDeviceMode() {
 		guard connection.setInstallationMode(1) else { return }
 		HapticManager.shared.selection()
 	}
 
-	private struct _DeviceControlStatus {
-		let text: String
-		let color: Color
-	}
 
 }
 
@@ -666,107 +561,6 @@ struct InstalledAppIconView: View {
 		)
 		guard !Task.isCancelled else { return }
 		withAnimation(.easeIn(duration: 0.15)) { image = loaded }
-	}
-}
-
-struct DeviceControlsBar<Controls: View>: ViewModifier {
-	let controls: Controls
-	var isEnabled = true
-
-	func body(content: Content) -> some View {
-		content.safeAreaBar(edge: .top, spacing: 0) { bar }
-	}
-
-	@ViewBuilder
-	private var bar: some View {
-		if isEnabled {
-			controls
-				.padding(.horizontal, 16)
-				.padding(.vertical, 8)
-		}
-	}
-}
-
-struct DeviceAccessoryTile: View {
-	@AppStorage("Aether.liquidGlassTiles") private var liquidGlassTiles = true
-	let title: String
-	let subtitle: String
-	let systemImage: String
-	var isActive = false
-	var activeColor: Color = .green
-	var isDisabled = false
-	let action: () -> Void
-
-	var body: some View {
-		if liquidGlassTiles {
-			button.buttonStyle(.plain)
-		} else {
-			button.buttonStyle(.borderless)
-		}
-	}
-
-	private var button: some View {
-		Button {
-			HapticManager.shared.impact()
-			action()
-		} label: {
-			HStack(spacing: 8) {
-				Image(systemName: systemImage)
-					.font(.system(size: 17, weight: .semibold))
-					.foregroundStyle(isActive ? activeColor : Color.secondary.opacity(isDisabled ? 0.55 : 1))
-					.frame(width: 24, height: 24)
-
-				VStack(alignment: .leading, spacing: 2) {
-					Text(title)
-						.nbFont(.subheadline, weight: .semibold)
-						.foregroundStyle(.primary)
-						.fixedSize(horizontal: false, vertical: true)
-
-					Text(subtitle)
-						.font(.caption2.weight(.medium))
-						.foregroundStyle(.secondary)
-						.fixedSize(horizontal: false, vertical: true)
-				}
-
-				Spacer(minLength: 0)
-			}
-			.padding(.horizontal, 10)
-			.padding(.vertical, 8)
-			.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-			.modifier(DeviceAccessoryTileSurface(isDisabled: isDisabled, liquidGlassTiles: liquidGlassTiles))
-			.contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-		}
-		.disabled(isDisabled)
-		.opacity(isDisabled ? 0.6 : 1.0)
-	}
-}
-
-struct DeviceAccessoryTileGroup<Content: View>: View {
-	@AppStorage("Aether.liquidGlassTiles") private var liquidGlassTiles = true
-	@ViewBuilder var content: Content
-
-	var body: some View {
-		if liquidGlassTiles {
-			GlassEffectContainer(spacing: 8) {
-				HStack(spacing: 12) { content }
-			}
-		} else {
-			HStack(spacing: 12) { content }
-		}
-	}
-}
-
-private struct DeviceAccessoryTileSurface: ViewModifier {
-	let isDisabled: Bool
-	let liquidGlassTiles: Bool
-
-	func body(content: Content) -> some View {
-		if liquidGlassTiles {
-			content.glassEffect(.regular.interactive(!isDisabled), in: .rect(cornerRadius: 15))
-		} else {
-			content.background(Color(uiColor: .secondarySystemGroupedBackground),
-				in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-		}
 	}
 }
 

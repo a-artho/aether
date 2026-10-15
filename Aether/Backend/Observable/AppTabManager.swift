@@ -21,6 +21,7 @@ final class AppTabManager: ObservableObject {
 		case installation
 		case pairingFile = "pairing-file"
 		case tunnel
+		case spoofing
 		case logs
 		case reset
 		case root
@@ -36,11 +37,9 @@ final class AppTabManager: ObservableObject {
 			}
 		}
 	}
-	@Published var isSettingsPresented = false
 	@Published var requestedSettingsPage: SettingsPage? = nil
-	@Published var visibleSettingsPage: SettingsPage = .root
-	var usesSettingsTab: Bool { SettingsPlacement.usesTab }
 	@Published var isLibrarySearchPresented = false
+	@Published var isSettingsSearchPresented = false
 	@Published private(set) var installationFocusRequest: UUID?
 	@Published private(set) var libraryFocusRequest: UUID?
 
@@ -51,7 +50,6 @@ final class AppTabManager: ObservableObject {
 			openSettings()
 			return
 		}
-		isSettingsPresented = false
 		if tab == .library && focusImports {
 			libraryFocusRequest = UUID()
 		}
@@ -78,12 +76,7 @@ final class AppTabManager: ObservableObject {
 
 	func openSettings(page: SettingsPage? = nil) {
 		requestedSettingsPage = page ?? .root
-		if usesSettingsTab {
-			isSettingsPresented = false
-			selectedTab = .settings
-		} else {
-			isSettingsPresented = true
-		}
+		selectedTab = .settings
 	}
 
 	func openInstallationSettings() {
@@ -92,6 +85,9 @@ final class AppTabManager: ObservableObject {
 
 	func openSearch() {
 		switch selectedTab {
+		case .settings:
+			requestedSettingsPage = .root
+			isSettingsSearchPresented = true
 		case .library:
 			isLibrarySearchPresented = true
 		case .sources:
@@ -104,6 +100,7 @@ final class AppTabManager: ObservableObject {
 	}
 
 	func closeSearch() {
+		isSettingsSearchPresented = false
 		isLibrarySearchPresented = false
 		SourcesRouter.shared.closeSearch()
 	}

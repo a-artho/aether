@@ -41,7 +41,7 @@ struct AppearanceTintColorView: View {
 							)
 
 						Text(option.name)
-							.nbFont(.subheadline)
+							.font(.subheadline)
 							.foregroundColor(.secondary)
 					}
 					.frame(width: 120, height: 100)

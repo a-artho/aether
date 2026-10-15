@@ -6,7 +6,6 @@
 //
 
 import CoreData
-import UIKit.UIImpactFeedbackGenerator
 
 // MARK: - Class extension: Signed Apps
 extension Storage {

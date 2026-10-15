@@ -20,11 +20,11 @@ public enum HapticStrength: Int, CaseIterable, Identifiable {
 		}
 	}
 
-	public var impactStyle: UIImpactFeedbackGenerator.FeedbackStyle {
+	public var intensity: CGFloat {
 		switch self {
-		case .light: return .light
-		case .medium: return .medium
-		case .heavy: return .heavy
+		case .light: return 0.35
+		case .medium: return 0.65
+		case .heavy: return 1.0
 		}
 	}
 }
@@ -34,6 +34,8 @@ public final class HapticManager {
 	public static let shared = HapticManager()
 	public static let preferenceKey = "Aether.hapticStrength"
 
+	private let generator = UIImpactFeedbackGenerator(style: .soft)
+
 	private init() {}
 
 	public var currentStrength: HapticStrength {
@@ -42,20 +44,14 @@ public final class HapticManager {
 	}
 
 	public func impact(_ overrideStrength: HapticStrength? = nil) {
-		let style = (overrideStrength ?? currentStrength).impactStyle
-		let generator = UIImpactFeedbackGenerator(style: style)
+		let intensity = (overrideStrength ?? currentStrength).intensity
 		generator.prepare()
-		generator.impactOccurred()
+		generator.impactOccurred(intensity: intensity)
 	}
 
 	public func selection() {
-		// When using selection feedback, use the user's preferred impact feel for consistency
+		// Selection uses the same single soft tap and global intensity.
 		impact()
 	}
 
-	public func notify(_ type: UINotificationFeedbackGenerator.FeedbackType) {
-		let generator = UINotificationFeedbackGenerator()
-		generator.prepare()
-		generator.notificationOccurred(type)
-	}
 }

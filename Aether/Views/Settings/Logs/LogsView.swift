@@ -16,6 +16,10 @@ struct LogsView: View {
 	@State private var _selectedItemForDetail: DebugLogItem? = nil
 	@State private var _showClearConfirmation: Bool = false
 	@State private var _copiedToast: Bool = false
+	@State private var searchPresented = !DebugLogManager.shared.searchText.isEmpty
+	@State private var searchFocused = false
+	@State private var searchWidth: CGFloat = 320
+	@State private var isVisible = false
 
 	var body: some View {
 		NBList(.localized("Logs"), displayMode: .inline, type: .list) {
@@ -104,7 +108,7 @@ struct LogsView: View {
 							.font(.headline)
 							.foregroundColor(.primary)
 						Text(.localized("Turn on Enable Logging above to record diagnostic events for installations, pairing, and tunneling."))
-							.nbFont(.subheadline)
+							.font(.subheadline)
 							.foregroundColor(.secondary)
 							.multilineTextAlignment(.center)
 							.padding(.horizontal)
@@ -117,7 +121,7 @@ struct LogsView: View {
 							.font(.system(size: 34))
 							.foregroundColor(.secondary)
 						Text(.localized("No logs found"))
-							.nbFont(.subheadline)
+							.font(.subheadline)
 							.foregroundColor(.secondary)
 						if !_logManager.searchText.isEmpty || _logManager.selectedLevel != .all || _logManager.selectedCategory != "All" {
 							Button(.localized("Reset Filters")) {
@@ -134,6 +138,7 @@ struct LogsView: View {
 				} else {
 					ForEach(_logManager.filteredEntries) { item in
 						Button {
+							searchFocused = false
 							_selectedItemForDetail = item
 						} label: {
 							DebugLogRow(item: item)
@@ -190,78 +195,88 @@ struct LogsView: View {
 				}
 			}
 		}
-		.searchable(text: $_logManager.searchText, prompt: Text(.localized("Search logs...")))
+		.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { searchWidth = $0 }
+		.modifier(SearchToolbarModifier(text: $_logManager.searchText, isPresented: $searchPresented,
+			focus: $searchFocused, title: .localized("Logs"), width: searchWidth,
+			isScreenActive: isVisible && _selectedItemForDetail == nil, hasTitleMenu: false) { EmptyView() })
+		.onAppear { isVisible = true }
+		.onDisappear { isVisible = false; searchFocused = false }
+		.onChange(of: searchPresented) { _, presented in
+			if !presented { _logManager.searchText = ""; searchFocused = false }
+		}
 		.refreshable {
 			await _logManager.fetchLogs()
 		}
 		.toolbar {
-			ToolbarItemGroup(placement: .topBarTrailing) {
-				Button {
-					Task {
-						await _logManager.fetchLogs()
-					}
-				} label: {
-					if _logManager.isLoading {
-						ProgressView()
-							.progressViewStyle(CircularProgressViewStyle())
-					} else {
-						Image(systemName: "arrow.clockwise")
-					}
-				}
-				.disabled(_logManager.isLoading)
-
-				Menu {
+			if !searchPresented {
+				ToolbarItemGroup(placement: .topBarTrailing) {
 					Button {
-						let text = _logManager.exportAllText(filteredOnly: true)
-						UIPasteboard.general.string = text
-						_showCopiedFeedback()
-					} label: {
-						Label(.localized("Copy Filtered Logs"), systemImage: "doc.on.doc")
-					}
-
-					Button {
-						let text = _logManager.exportAllText(filteredOnly: false)
-						UIPasteboard.general.string = text
-						_showCopiedFeedback()
-					} label: {
-						Label(.localized("Copy All Logs"), systemImage: "doc.on.clipboard")
-					}
-
-					Divider()
-
-					Button {
-						if let url = _logManager.exportLogFile(filteredOnly: true) {
-							UIActivityViewController.show(activityItems: [url])
+						Task {
+							await _logManager.fetchLogs()
 						}
 					} label: {
-						Label(.localized("Export Filtered Logs..."), systemImage: "square.and.arrow.up")
-					}
-
-					Button {
-						if let url = _logManager.exportLogFile(filteredOnly: false) {
-							UIActivityViewController.show(activityItems: [url])
-						}
-					} label: {
-						Label(.localized("Export All Logs..."), systemImage: "square.and.arrow.up.fill")
-					}
-
-					Divider()
-
-					Picker("Sort Order", selection: $_logManager.sortOrder) {
-						ForEach(DebugLogManager.SortOrder.allCases, id: \.self) { order in
-							Text(order.rawValue).tag(order)
+						if _logManager.isLoading {
+							ProgressView()
+								.progressViewStyle(CircularProgressViewStyle())
+						} else {
+							Image(systemName: "arrow.clockwise")
 						}
 					}
+					.disabled(_logManager.isLoading)
 
-					Divider()
+					Menu {
+						Button {
+							let text = _logManager.exportAllText(filteredOnly: true)
+							UIPasteboard.general.string = text
+							_showCopiedFeedback()
+						} label: {
+							Label(.localized("Copy Filtered Logs"), systemImage: "doc.on.doc")
+						}
 
-					Button(role: .destructive) {
-						_showClearConfirmation = true
+						Button {
+							let text = _logManager.exportAllText(filteredOnly: false)
+							UIPasteboard.general.string = text
+							_showCopiedFeedback()
+						} label: {
+							Label(.localized("Copy All Logs"), systemImage: "doc.on.clipboard")
+						}
+
+						Divider()
+
+						Button {
+							if let url = _logManager.exportLogFile(filteredOnly: true) {
+								UIActivityViewController.show(activityItems: [url])
+							}
+						} label: {
+							Label(.localized("Export Filtered Logs..."), systemImage: "square.and.arrow.up")
+						}
+
+						Button {
+							if let url = _logManager.exportLogFile(filteredOnly: false) {
+								UIActivityViewController.show(activityItems: [url])
+							}
+						} label: {
+							Label(.localized("Export All Logs..."), systemImage: "square.and.arrow.up.fill")
+						}
+
+						Divider()
+
+						Picker("Sort Order", selection: $_logManager.sortOrder) {
+							ForEach(DebugLogManager.SortOrder.allCases, id: \.self) { order in
+								Text(order.rawValue).tag(order)
+							}
+						}
+
+						Divider()
+
+						Button(role: .destructive) {
+							_showClearConfirmation = true
+						} label: {
+							Label(.localized("Clear Diagnostics"), systemImage: "trash")
+						}
 					} label: {
-						Label(.localized("Clear Diagnostics"), systemImage: "trash")
+						Image(systemName: "ellipsis.circle")
 					}
-				} label: {
-					Image(systemName: "ellipsis.circle")
 				}
 			}
 		}

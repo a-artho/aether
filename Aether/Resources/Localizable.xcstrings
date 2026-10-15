@@ -1,6 +1,66 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Liquid Glass Card" : {
+      "extractionState" : "manual"
+    },
+    "Use Liquid Glass for the device controls card in Settings." : {
+      "extractionState" : "manual"
+    },
+    "Device Mode" : {
+      "extractionState" : "manual"
+    },
+    "Unverified" : {
+      "extractionState" : "manual"
+    },
+    "Not verified" : {
+      "extractionState" : "manual"
+    },
+    "Checking…" : {
+      "extractionState" : "manual"
+    },
+    "Not paired" : {
+      "extractionState" : "manual"
+    },
+    "Tunnel needed" : {
+      "extractionState" : "manual"
+    },
+    "Local only" : {
+      "extractionState" : "manual"
+    },
+    "Disconnected" : {
+      "extractionState" : "manual"
+    },
+    "Setup needed" : {
+      "extractionState" : "manual"
+    },
+    "Pairing needed" : {
+      "extractionState" : "manual"
+    },
+    "Connecting…" : {
+      "extractionState" : "manual"
+    },
+    "Not selected" : {
+      "extractionState" : "manual"
+    },
+    "Unable to verify" : {
+      "extractionState" : "manual"
+    },
+    "Saved — unverified" : {
+      "extractionState" : "manual"
+    },
+    "Verified" : {
+      "extractionState" : "manual"
+    },
+    "Sideloaded apps will appear here. Manage location spoofing in Settings." : {
+      "extractionState" : "manual"
+    },
+    "Section Headers" : {
+      "extractionState" : "manual"
+    },
+    "Muted Section Headers" : {
+      "extractionState" : "manual"
+    },
     "Show Download Buttons" : {
       "extractionState" : "manual"
     },
@@ -43,7 +103,7 @@
     "Tab Bar" : {
       "extractionState" : "manual"
     },
-    "Hide Labels" : {
+    "Hide Tab Labels" : {
       "extractionState" : "manual"
     },
     "Show only icons in the bottom tab bar." : {
@@ -17985,9 +18045,6 @@
     "All Apps" : {
       "extractionState" : "manual"
     },
-    "Move device controls into the header. Liquid Glass Tiles applies when controls are shown as tiles." : {
-      "extractionState" : "manual"
-    },
     "Switch" : {
       "extractionState" : "manual"
     },
@@ -17997,19 +18054,13 @@
     "Requires Local mode" : {
       "extractionState" : "manual"
     },
-    "Settings Placement" : {
-      "extractionState" : "manual"
-    },
-    "Header" : {
-      "extractionState" : "manual"
-    },
     "Newer Versions" : {
       "extractionState" : "manual"
     },
     "See all sideloaded apps" : {
       "extractionState" : "manual"
     },
-    "Choose where Settings and search controls appear. Hold Settings for installation mode, selection, and deletion options." : {
+    "Choose where search appears and whether tab labels are shown." : {
       "extractionState" : "manual"
     }
   },

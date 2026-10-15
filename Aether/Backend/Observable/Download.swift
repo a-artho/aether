@@ -25,7 +25,7 @@ final class Download: ObservableObject, Identifiable {
 	@Published var state: State
 
 	var backgroundProgress: Double {
-		// Native execution now represents only the local import stage.
+		// Includes preparation, extraction, movement and commit; only completion reaches 1.
 		return unpackageProgress
 	}
 
@@ -53,6 +53,7 @@ final class Download: ObservableObject, Identifiable {
 	let onlyArchiving: Bool
 	let sourceIsStable: Bool
 	var sourceProvenance: SourceAppProvenance?
+	@Published var isPreparingSource = false
 	@Published var waitingForForeground = false
 	var interruptionForegroundGeneration: UInt64 = 0
 

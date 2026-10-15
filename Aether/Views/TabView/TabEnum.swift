@@ -38,7 +38,7 @@ enum TabEnum: String, CaseIterable, Hashable {
 		switch tab {
 		case .sources: SourcesView()
 		case .library: LibraryView()
-		case .settings: SettingsView(presentation: .tab)
+		case .settings: SettingsView()
 		case .certificates: NBNavigationView(.localized("Certificates"), displayMode: .inline) { CertificatesView() }
 		}
 	}
@@ -46,7 +46,8 @@ enum TabEnum: String, CaseIterable, Hashable {
 	static var defaultTabs: [TabEnum] {
 		return [
 			.sources,
-			.library
+			.library,
+			.settings
 		]
 	}
 

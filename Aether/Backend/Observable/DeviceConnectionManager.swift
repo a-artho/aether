@@ -110,6 +110,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	private var foregroundRecoveryTask: Task<Void, Never>?
 	private var foregroundRecoveryID: UUID?
 	private var transitionTask: Task<Void, Never>?
+	private var pendingTunnelMethod: DeviceTunnelMethod?
 	private var transitionGeneration: UUID?
 	private var activeVerificationID: UUID?
 	private var connectionEpoch: UInt64 = 0
@@ -210,8 +211,15 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	public func setTunnelMethod(_ method: DeviceTunnelMethod) {
-		guard !isUpdating, state == .disconnected else { return }
+		guard !isUpdating, AppMaintenanceGuard.pairingBlockReason == nil else { return }
 		guard tunnelMethod != method else { return }
+		if state == .connected {
+			pendingTunnelMethod = method
+			CellularAssistManager.shared.cancelAndRestoreIfNeeded()
+			setConnection(enabled: false)
+			return
+		}
+		guard state == .disconnected else { return }
 		connectionEpoch &+= 1
 		tunnelMethod = method
 		requiresInAppTunnelSetup = false
@@ -973,6 +981,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _cancelTransition() {
+		pendingTunnelMethod = nil
 		connectionEpoch &+= 1
 		activeVerificationID = nil
 		transitionGeneration = nil
@@ -988,6 +997,8 @@ public final class DeviceConnectionManager: ObservableObject {
 		if newState != .connected { lastVerifiedAt = 0 }
 		let previousState = state
 		let previousDiagnostic = diagnostic
+		let nextProvider = transitionExpectedState == false && newState == .disconnected ? pendingTunnelMethod : nil
+		pendingTunnelMethod = nil
 		transitionGeneration = nil
 		transitionExpectedState = nil
 		transitionDeadline = 0
@@ -998,6 +1009,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		if previousState != newState || previousDiagnostic != newDiagnostic {
 			_log("Device state is now \(_stateDescription(newState)): \(newDiagnostic.localizedDescription)")
 		}
+		if let nextProvider { setTunnelMethod(nextProvider) }
 	}
 
 	private func _stateDescription(_ state: DeviceConnectionState) -> String {

@@ -8,7 +8,6 @@
 import CoreData
 import AltSourceKit
 import OSLog
-import UIKit.UIImpactFeedbackGenerator
 
 // MARK: - Class extension: Sources
 extension Storage {

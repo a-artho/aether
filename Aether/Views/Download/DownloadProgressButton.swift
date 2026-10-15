@@ -26,9 +26,13 @@ struct DownloadProgressButton: View {
 						.animation(.smooth, value: download.overallProgress)
 				}
 
-				Image(systemName: _systemImage)
-					.foregroundStyle(.tint)
-					.font(.footnote.bold())
+				if download.isPreparingSource && !download.waitingForForeground {
+					ProgressView().controlSize(.small).tint(.accentColor)
+				} else {
+					Image(systemName: _systemImage)
+						.foregroundStyle(.tint)
+						.font(.footnote.bold())
+				}
 			}
 			.frame(width: 31, height: 31)
 			.frame(width: 44, height: 44)

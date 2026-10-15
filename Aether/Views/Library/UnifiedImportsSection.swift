@@ -20,6 +20,7 @@ struct UnifiedImportEntry: Identifiable {
 		components.append(app?.uuid ?? "")
 		components.append(original?.uuid ?? "")
 		components.append(String(app?.isSigned ?? false))
+		components.append(app is AppSnapshot ? "snapshot" : "stored")
 		components.append(download?.id ?? "")
 		components.append(operation?.id.uuidString ?? "")
 		components.append(operation?.appKey ?? "")
@@ -176,7 +177,7 @@ struct UnifiedImportsDataSource: ViewModifier {
 	private var projectedRows: [UnifiedImportEntry] {
 		let originals: [String: Imported] = Dictionary(imported.compactMap { app in app.uuid.map { ($0, app) } }, uniquingKeysWith: { first, _ in first })
 		let lineage = index.lineage
-		let linkedOriginals = Set(signed.compactMap { app in app.uuid.flatMap { lineage.signedOrigins[$0]?.originalUUID } })
+		var linkedOriginals = Set(signed.compactMap { app in app.uuid.flatMap { lineage.signedOrigins[$0]?.originalUUID } })
 		let transferringOriginals = Set(downloads.downloads.map(\.importIdentifier))
 		var rows = signed.compactMap { app -> UnifiedImportEntry? in
 			guard let uuid = app.uuid else { return nil }
@@ -184,6 +185,17 @@ struct UnifiedImportsDataSource: ViewModifier {
 			let date = (original?.uuid).flatMap { lineage.originalDates[$0] } ?? original?.date ?? app.date
 			return UnifiedImportEntry(id: lineage.rowID(forSigned: uuid), app: app, original: original, date: date)
 		}
+		let fetchedSignedIDs = Set(signed.compactMap(\.uuid))
+		// A completed sign-only operation can retire before its fetched record arrives.
+		// Retain only its committed snapshot, not an arbitrary removed/stale row.
+		for previous in controller.rows {
+			guard let app = previous.app as? AppSnapshot, app.isSigned, let uuid = app.uuid,
+				!fetchedSignedIDs.contains(uuid), let origin = lineage.signedOrigins[uuid] else { continue }
+			let original = origin.originalUUID.flatMap { originals[$0] }
+			if let uuid = original?.uuid { linkedOriginals.insert(uuid) }
+			rows.append(UnifiedImportEntry(id: origin.rowID, app: app, original: original, date: previous.date))
+		}
+
 		for app in imported {
 			guard let uuid = app.uuid, !transferringOriginals.contains(uuid),
 				!linkedOriginals.contains(uuid) || lineage.revealedOriginals.contains(uuid) else { continue }
@@ -198,11 +210,22 @@ struct UnifiedImportsDataSource: ViewModifier {
 				guard let app = row.app else { return false }
 				return AppInstallationManager.InstallationRequest.appKey(for: app) == request.appKey
 			}
-			let original = request.app.isSigned ? nil : rows.firstIndex { $0.id == "app:" + (request.app.uuid ?? "") }
-			if let position = exact ?? original { rows[position].operation = request }
-			else {
-				rows.append(UnifiedImportEntry(id: "operation:" + request.id.uuidString, app: request.app,
-					operation: request, date: request.app.date))
+			// The signed snapshot can arrive before @FetchRequest delivers its record.
+			// Resolve through lineage in that interval instead of inserting an operation row.
+			let rowID = request.app.uuid.map { uuid in
+				request.app.isSigned ? lineage.rowID(forSigned: uuid) : "app:" + uuid
+			} ?? "operation:" + request.id.uuidString
+			let inherited = rows.firstIndex { $0.id == rowID }
+			if let position = exact ?? inherited {
+				if request.app.isSigned, rows[position].app?.isSigned != true {
+					rows[position].original = rows[position].app as? Imported
+					rows[position].app = request.app
+				}
+				rows[position].operation = request
+			} else {
+				let previousDate = controller.rows.first(where: { $0.id == rowID })?.date
+				rows.append(UnifiedImportEntry(id: rowID, app: request.app,
+					operation: request, date: previousDate ?? request.app.date))
 			}
 		}
 		for export in exports.exports {
@@ -257,7 +280,18 @@ private struct UnifiedImportRow: View {
 				.accessibilityLabel(String.localized("Select"))
 			}
 			FRAppIconView(app: displayApp, size: 50, remoteIconURL: retainedIconURL ?? entry.download?.sourceProvenance?.sourceAppIconURL, usesDefaultApp: false)
-			UnifiedImportMetadata(entry: entry, model: activeModel, certificateStatus: LibraryCertificateStatus.forApp(displayApp))
+				.overlay(alignment: .bottomTrailing) {
+					if displayApp?.isSigned == true {
+						Circle()
+							.fill(.green)
+							.frame(width: 9, height: 9)
+							.padding(2)
+							.background(Color(uiColor: .systemBackground), in: .circle)
+							.offset(x: 3, y: 3)
+							.accessibilityLabel(String.localized("Signed"))
+					}
+				}
+			UnifiedImportMetadata(entry: entry, model: activeModel)
 			if !editing {
 				UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller)
 					.transition(.opacity)
@@ -386,13 +420,11 @@ private extension UnifiedImportEntry {
 private struct UnifiedImportMetadata: View {
 	let entry: UnifiedImportEntry
 	let model: InstallerStatusViewModel?
-	let certificateStatus: String?
 	@StateObject private var activity: UnifiedImportActivity
 
-	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?, certificateStatus: String?) {
+	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?) {
 		self.entry = entry
 		self.model = model
-		self.certificateStatus = certificateStatus
 		_activity = StateObject(wrappedValue: UnifiedImportActivity(entry: entry, model: model))
 	}
 
@@ -419,11 +451,14 @@ private struct UnifiedImportMetadata: View {
 			case .pausing: return (.localized("Pausing"), false)
 			case .paused: return (.localized("Paused"), false)
 			case .resuming: return (.localized("Resuming"), false)
-			case .processing: return (download.waitingForForeground ? .localized("Open Aether to resume") : "\(String.localized("Processing")) \(Int(download.overallProgress * 100))%", false)
+			case .processing:
+				if download.waitingForForeground { return (.localized("Open Aether to resume"), false) }
+				if download.isPreparingSource { return (.localized("Preparing Import"), false) }
+				return ("\(String.localized("Processing")) \(Int(download.overallProgress * 100))%", false)
 			case .failed(let message, _): return (message.isEmpty ? .localized("Download Failed") : message, true)
 			}
 		}
-		return (certificateStatus, false)
+		return (nil, false)
 	}
 
 	/// Progress values update in place; only changes of phase animate the status.
@@ -451,18 +486,18 @@ private struct UnifiedImportMetadata: View {
 		if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
 			guard let model else { return .secondary }
 			if case .broken = model.status { return .red }
-			return .green
+			return AppInstallationManager.shared.isFinishingInstallation ? .accentColor : model.statusColor
 		}
 		if let export = entry.export {
 			if case .failed = export.state { return .red }
-			return .green
+			return .accentColor
 		}
 		if let download = entry.download {
 			switch download.state {
 			case .failed: return .red
 			case .paused, .pausing: return .orange
-			case .processing: return download.waitingForForeground ? .red : .green
-			default: return .green
+			case .processing: return download.waitingForForeground ? .red : .accentColor
+			default: return .accentColor
 			}
 		}
 		return .secondary

@@ -8,8 +8,18 @@
 import Foundation
 import Combine
 import IDeviceSwift
+import SwiftUI
 
 extension InstallerStatusViewModel {
+	var statusColor: Color {
+		switch status {
+		case .none, .signing, .sendingManifest, .sendingPayload, .installing: .accentColor
+		case .ready: .secondary
+		case .completed(.success): .green
+		case .completed(.failure), .broken: .red
+		}
+	}
+
 	/// Stage weights describe overall work, not an estimated time remaining.
 	/// Signing never fills the ring early when installation follows it.
 	var operationProgress: Double {

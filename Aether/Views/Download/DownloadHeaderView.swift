@@ -51,7 +51,7 @@ struct DownloadItemView: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: 4) {
 			Text(download.fileName)
-				.nbFont(.subheadline)
+				.font(.subheadline)
 				.lineLimit(1)
 			
 			ProgressView(value: overallProgress)

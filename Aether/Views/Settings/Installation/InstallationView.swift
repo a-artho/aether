@@ -90,18 +90,17 @@ struct InstallationModePickerRow: View {
 	@State private var blocked = false
 
 	var body: some View {
-		Picker(selection: Binding(get: { method }, set: { value in
+		Picker(String.localized("Device Mode"), selection: Binding(get: { method }, set: { value in
 			guard value != method else { return }
 			if DeviceConnectionManager.shared.setInstallationMode(value) { HapticManager.shared.selection() }
 			else { blocked = true }
 		})) {
-			Text(String.localized("Server")).tag(0)
 			Text(String.localized("Local")).tag(1)
-		} label: {
-			SettingsRowLabel(.localized("Installation Mode"), systemImage: "arrow.left.arrow.right", backgroundColor: .purple)
+			Text(String.localized("Server")).tag(0)
 		}
-		.pickerStyle(.menu)
-		.tint(.secondary)
+		.pickerStyle(.segmented)
+		.labelsHidden()
+		.listRowSeparator(.hidden)
 		.disabled(installations.hasPendingInstalls)
 		.alert(.localized("Stop Spoofing First"), isPresented: $blocked) {
 			Button(.localized("OK"), role: .cancel) {}

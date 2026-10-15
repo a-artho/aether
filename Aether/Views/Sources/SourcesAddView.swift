@@ -9,7 +9,6 @@ import SwiftUI
 import NimbleViews
 import AltSourceKit
 import OSLog
-import UIKit.UIImpactFeedbackGenerator
 
 // MARK: - View
 struct SourcesAddView: View {

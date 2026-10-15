@@ -10,6 +10,7 @@ enum InstalledAppsRoute: Hashable {
 @MainActor
 struct AllInstalledAppsView<Placeholder: View>: View {
 	@ObservedObject var store: InstalledAppsStore
+	@ObservedObject private var installations = AppInstallationManager.shared
 	let loadsIcons: Bool
 	let placeholder: Placeholder
 	@State private var searchText: String
@@ -62,7 +63,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 							Task { await delete(app) }
 						}
 						.tint(.red)
-						.disabled(deletingIDs.contains(app.id))
+						.disabled(deletingIDs.contains(app.id) || installations.blocksUninstall(bundleIdentifier: app.bundleIdentifier))
 					}
 				}
 			}
@@ -87,7 +88,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 		}
 		.sheet(item: $selectedInfoApp) { app in
 			NBNavigationView(String.localized("Info"), displayMode: .inline) {
-				InstalledAppInformationView(app: app)
+				InstalledAppInformationView(app: store.apps.first(where: { $0.id == app.id }) ?? app)
 					.toolbar {
 						ToolbarItem(placement: .topBarTrailing) {
 							Button(String.localized("Close"), systemImage: "xmark") { selectedInfoApp = nil }

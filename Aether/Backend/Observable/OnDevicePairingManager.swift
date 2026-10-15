@@ -63,6 +63,12 @@ final class OnDevicePairingManager: ObservableObject {
 			return
 		}
 		guard session == nil else { return }
+		guard AppMaintenanceGuard.deviceOperationBlockReason == nil else {
+			let message = AppMaintenanceGuard.deviceOperationBlockReason ?? String.localized("Work in Progress")
+			state = .failed(message)
+			_log(message, level: .notice)
+			return
+		}
 
 		let session = OnDevicePairingSession()
 		let identifier = UUID()

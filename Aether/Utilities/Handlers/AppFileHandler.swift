@@ -48,6 +48,16 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		super.init()
 	}
 
+	private func reportProgress(_ value: Double) async {
+		guard let download = _download else { return }
+		await MainActor.run {
+			download.unpackageProgress = max(download.unpackageProgress, min(0.99, value))
+			#if !targetEnvironment(macCatalyst)
+			BackgroundTaskManager.shared.updateProgress(for: download.id, progress: download.backgroundProgress)
+			#endif
+		}
+	}
+
 	func prepare(copySource: Bool) async throws {
 		// Reserve enough room before duplicating a large archive. This avoids a
 		// needless full IPA copy only to fail during extraction.
@@ -74,6 +84,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	}
 
 	func extract() async throws {
+		await reportProgress(0.05)
 		try Task.checkCancellation()
 		try _inspectArchiveIfNeeded()
 		try _checkAvailableDiskSpace()
@@ -104,7 +115,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 						progressLock.unlock()
 						guard shouldReport else { return }
 						DispatchQueue.main.async {
-							download.unpackageProgress = progress
+							download.unpackageProgress = max(download.unpackageProgress, 0.05 + 0.85 * min(1, max(0, progress)))
 
 							#if !targetEnvironment(macCatalyst)
 							BackgroundTaskManager.shared.updateProgress(for: download.id, progress: download.backgroundProgress)
@@ -137,6 +148,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		try _fileManager.moveItem(at: payloadURL, to: destinationURL)
 
 		try? _fileManager.removeItem(at: _uniqueWorkDir)
+		await reportProgress(0.95)
 	}
 
 	func addToDatabase() async throws {
@@ -148,6 +160,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 		}
 
 		try await _commitToDatabase(appURL: appUrl)
+		await reportProgress(0.99)
 	}
 
 	func recoverCommittedImport() async throws -> Bool {
@@ -163,6 +176,7 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 
 		try await _commitToDatabase(appURL: appURL)
 		try? await clean()
+		await reportProgress(0.99)
 		return true
 	}
 

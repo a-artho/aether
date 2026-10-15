@@ -91,6 +91,16 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
   _=try? await flight.value
   let afterFlight=await service.cached(for:url)
   check(afterFlight == nil,"Deleted source cannot be restored by in-flight fetch")
+  _ = try await service.fetch(from:url,refresh:true)
+  await service.clearCache()
+  let resetCached = await service.cached(for:url)
+  check(resetCached == nil,"Network reset clears repository memory and disk")
+  let resetFlight=Task {try await service.fetch(from:url,refresh:true)}
+  try await Task.sleep(nanoseconds:10_000_000)
+  await service.clearCache()
+  _=try? await resetFlight.value
+  let resetFlightCached = await service.cached(for:url)
+  check(resetFlightCached == nil,"Old fetch cannot restore a reset repository cache")
   let listStore=SourceAppListStore(cacheDirectory:nil)
   let context=SourceAppCatalogContext(sourceObjectURI:"source-key",sourceURL:url,repository:snapshot.repository,revision:snapshot.revision)
   let list=try await listStore.list(contexts:[context],sort:"name",ascending:true,query:"NEEDLE",unknownDate:"Unknown")

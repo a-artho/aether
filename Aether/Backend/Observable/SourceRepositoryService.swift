@@ -106,6 +106,19 @@ actor SourceRepositoryService {
 		if let file = cacheFile(for: url) { try? FileManager.default.removeItem(at: file) }
 	}
 
+	func clearCache() {
+		// Invalidate suspended reads/fetches before clearing their retained state.
+		let urls = Set(entries.keys).union(inFlight.keys).union(diskReads.keys)
+		for url in urls { revisions[url] = UUID() }
+		for flight in inFlight.values { flight.task.cancel() }
+		for read in diskReads.values { read.cancel() }
+		inFlight.removeAll()
+		diskReads.removeAll()
+		entries.removeAll()
+		accessOrder.removeAll()
+		if let cacheDirectory { try? FileManager.default.removeItem(at: cacheDirectory) }
+	}
+
 	private func remember(_ entry: Entry, for url: URL) {
 		entries[url] = entry
 		accessOrder.removeAll { $0 == url }

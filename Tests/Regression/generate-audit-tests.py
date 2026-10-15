@@ -295,111 +295,70 @@ final class InstalledRowDeletionTests:XCTestCase {
  }
 }
 '''.replace(' DELETE',delete)
-placement = declaration('Aether/Views/Settings/Appearance/SettingsPlacement.swift', 'enum SettingsPlacement:')
 open_settings = declaration('Aether/Backend/Observable/AppTabManager.swift', 'func openSettings(')
 settings_page = declaration('Aether/Backend/Observable/AppTabManager.swift', 'enum SettingsPage:')
+open_search = declaration('Aether/Backend/Observable/AppTabManager.swift', 'func openSearch()')
 consume_settings = declaration('Aether/Views/Settings/SettingsView.swift', 'private func _presentRequestedPageIfNeeded()').replace('private func', 'func', 1)
-handoff = declaration('Aether/Views/TabView/Bars/ExtendedTabbarView.swift', '.onChange(of: settingsTabEnabled)').replace('.onChange(of: settingsTabEnabled) { _, enabled in', 'func handoff(enabled: Bool) {', 1)
-tab_list = declaration('Aether/Views/TabView/Bars/ExtendedTabbarView.swift', 'private var defaultTabs:').replace('private var', 'var', 1)
+tab_list = declaration('Aether/Views/TabView/TabEnum.swift', 'static var defaultTabs:')
 settings_checks = r'''
 extension String { fileprivate static func localized(_ key:String)->String {key} }
-enum TabEnum {case sources,library,settings; static var defaultTabs:[Self] {[.sources,.library]} }
+enum TabEnum {case sources,library,settings; TAB_LIST }
+@MainActor final class SourcesRouter {
+ static let shared=SourcesRouter()
+ enum Target {case root}
+ var path=[String]();var searchTarget=Target.root
+ func openSearchForVisibleScreen(){}
+}
 @MainActor final class SettingsRoutingFixture {
  SETTINGS_PAGE
  var requestedSettingsPage:SettingsPage?
- var visibleSettingsPage=SettingsPage.root
- var usesSettingsTab=false
  var selectedTab=TabEnum.library
- var isSettingsPresented=false
+ var isSettingsSearchPresented=false
+ var isLibrarySearchPresented=false
+ func switchTo(_ tab:TabEnum) {selectedTab=tab}
+ OPEN_SEARCH
  OPEN_SETTINGS
 }
 @MainActor final class SettingsOwnerFixture {
- enum Presentation {case modal,tab}
- var presentation=Presentation.modal
  let _tabManager=SettingsRoutingFixture()
  var _settingsPath=[SettingsRoutingFixture.SettingsPage]()
+ var isSpoofingPresented=false
+ var searchFocused=false
  CONSUME_SETTINGS
 }
-@MainActor final class SettingsHandoffFixture {
- let tabManager=SettingsRoutingFixture()
- HANDOFF
-}
-final class TabLayoutFixture {
- var placement=SettingsPlacement.header
- var settingsTabEnabled:Bool {SettingsPlacement.usesTab(placement:placement)}
- TAB_LIST
-}
-final class SettingsPlacementTests:XCTestCase {
- func testSettingsPlacementControlsOptionalThirdTab() {
-  let layout=TabLayoutFixture()
-  XCTAssertEqual(layout.defaultTabs,[.sources,.library])
-  layout.placement = .tabBar
-  XCTAssertEqual(layout.defaultTabs,[.sources,.library,.settings])
-  layout.placement = .header
-  XCTAssertEqual(layout.defaultTabs,[.sources,.library])
+final class SettingsRoutingTests:XCTestCase {
+ func testSettingsIsAlwaysThirdTab() {
+  XCTAssertEqual(TabEnum.defaultTabs,[.sources,.library,.settings])
  }
- @MainActor func testHeaderSettingsOpensModalAtRequestedPage() async {
+ @MainActor func testSettingsOpensRequestedPageInTab() async {
   let routing=SettingsRoutingFixture()
-  routing.openSettings(page:.pairingFile)
-  XCTAssertTrue(routing.isSettingsPresented)
-  XCTAssertEqual(routing.selectedTab,.library)
-  XCTAssertEqual(routing.requestedSettingsPage,.pairingFile)
- }
- @MainActor func testTabSettingsOpensRequestedPageWithoutModal() async {
-  let routing=SettingsRoutingFixture()
-  routing.usesSettingsTab=true
   routing.openSettings(page:.tunnel)
-  XCTAssertFalse(routing.isSettingsPresented)
   XCTAssertEqual(routing.selectedTab,.settings)
   XCTAssertEqual(routing.requestedSettingsPage,.tunnel)
  }
  @MainActor func testOpeningSettingsWithoutPageRequestsRoot() async {
-  let routing=SettingsRoutingFixture()
-  routing.openSettings()
+  let routing=SettingsRoutingFixture();routing.openSettings()
   XCTAssertEqual(routing.requestedSettingsPage,.root)
  }
- @MainActor func testHandoffFromModalToTabRetainsAppearance() async {
-  let view=SettingsHandoffFixture()
-  view.tabManager.isSettingsPresented=true
-  view.tabManager.visibleSettingsPage = .appearance
-  view.tabManager.usesSettingsTab=true
-  view.handoff(enabled:true)
-  XCTAssertFalse(view.tabManager.isSettingsPresented)
-  XCTAssertEqual(view.tabManager.selectedTab,.settings)
-  XCTAssertEqual(view.tabManager.requestedSettingsPage,.appearance)
- }
- @MainActor func testHandoffFromRemovedSettingsTabRetainsCurrentPage() async {
-  let view=SettingsHandoffFixture()
-  view.tabManager.visibleSettingsPage = .reset
-  view.tabManager.selectedTab = .settings
-  view.handoff(enabled:false)
-  XCTAssertTrue(view.tabManager.isSettingsPresented)
-  XCTAssertEqual(view.tabManager.selectedTab,.library)
-  XCTAssertEqual(view.tabManager.requestedSettingsPage,.reset)
- }
- @MainActor func testDismissedModalCannotConsumeTabNavigationRequest() async {
-  let view=SettingsOwnerFixture()
-  view._tabManager.usesSettingsTab=true
-  view._tabManager.selectedTab = .settings
-  view._tabManager.requestedSettingsPage = .appearance
+ @MainActor func testSearchFromNestedSettingsRoutesToRootAndFocuses() async {
+  let view=SettingsOwnerFixture();view._tabManager.selectedTab = .settings
+  view._settingsPath=[.appearance];view._tabManager.openSearch()
   view._presentRequestedPageIfNeeded()
-  XCTAssertEqual(view._tabManager.requestedSettingsPage,.appearance)
-  view.presentation = .tab
+  XCTAssertTrue(view._settingsPath.isEmpty);XCTAssertTrue(view.searchFocused)
+ }
+ @MainActor func testSpoofingRequestOpensControlsFromSettingsRoot() async {
+  let view=SettingsOwnerFixture();view._tabManager.openSettings(page:.spoofing)
   view._presentRequestedPageIfNeeded()
-  XCTAssertEqual(view._settingsPath,[.appearance])
+  XCTAssertTrue(view.isSpoofingPresented);XCTAssertTrue(view._settingsPath.isEmpty)
   XCTAssertNil(view._tabManager.requestedSettingsPage)
  }
  @MainActor func testInactiveSettingsTabWaitsUntilSelected() async {
-  let view=SettingsOwnerFixture()
-  view.presentation = .tab
-  view._tabManager.usesSettingsTab=true
-  view._tabManager.requestedSettingsPage = .tunnel
+  let view=SettingsOwnerFixture();view._tabManager.requestedSettingsPage = .tunnel
   view._presentRequestedPageIfNeeded()
   XCTAssertEqual(view._tabManager.requestedSettingsPage,.tunnel)
-  view._tabManager.selectedTab = .settings
-  view._presentRequestedPageIfNeeded()
+  view._tabManager.selectedTab = .settings;view._presentRequestedPageIfNeeded()
   XCTAssertEqual(view._settingsPath,[.tunnel])
  }
 }
-'''.replace(' SETTINGS_PAGE',settings_page).replace(' OPEN_SETTINGS',open_settings).replace(' CONSUME_SETTINGS',consume_settings).replace(' HANDOFF',handoff).replace(' TAB_LIST',tab_list)
-(out/'AuditFixTests.swift').write_text((fixture+'\n'+locator+'\n'+audio+'\n'+route+'\n'+delete_checks+'\n'+placement+'\n'+settings_checks+'\n').replace('.localized(', '.auditLocalized(').replace('static func localized(', 'static func auditLocalized('))
+'''.replace(' SETTINGS_PAGE',settings_page).replace(' OPEN_SEARCH',open_search).replace(' OPEN_SETTINGS',open_settings).replace(' CONSUME_SETTINGS',consume_settings).replace(' TAB_LIST',tab_list)
+(out/'AuditFixTests.swift').write_text((fixture+'\n'+locator+'\n'+audio+'\n'+route+'\n'+delete_checks+'\n'+settings_checks+'\n').replace('.localized(', '.auditLocalized(').replace('static func localized(', 'static func auditLocalized('))

@@ -8,7 +8,7 @@ def method(path,start):
  while n:n+=(s[e]=='{')-(s[e]=='}');e+=1
  return s[p:e]
 manager=(repo/'Aether/Utilities/BackgroundTaskManager.swift').read_text()
-manager=manager[manager.index('@MainActor\nclass BackgroundTaskManager:'):manager.rindex('#endif')]
+manager=manager[manager.index('final class ExecutionCancellation:'):manager.rindex('#endif')]
 operation=(repo/'Aether/Utilities/AppOperationExecution.swift').read_text()
 operation=operation[operation.index('@MainActor'): ]
 parts=[r'''
@@ -17,6 +17,7 @@ import XCTest
 extension String { static func localized(_ value:String, arguments:CVarArg...) -> String { String(format:value,arguments:arguments) } }
 enum BackgroundFixture {
 @MainActor final class LibraryArtifactIndex { static let shared=LibraryArtifactIndex(); func recordImport(uuid:String) {} }
+enum AppMaintenanceGuard { static let isResetting=false }
 protocol ObservableObject {}
 @MainActor final class BackgroundAudioManager {
  static let shared=BackgroundAudioManager(); var requesters=Set<String>(); var starts=0; var stops=0
@@ -36,6 +37,7 @@ struct UNNotificationRequest { let identifier:String;let content:UNMutableNotifi
 struct UIBackgroundTaskIdentifier:Hashable { let raw:Int;static let invalid=Self(raw:-1) }
 @MainActor final class UIApplication {
  enum State:Int { case active,inactive,background }
+ static let didEnterBackgroundNotification=Notification.Name("didEnterBackground")
  static let shared=UIApplication();var applicationState:State = .active
  var fallbackAvailable=true;var sequence=0;var fallback:[UIBackgroundTaskIdentifier:()->Void]=[:]
  func beginBackgroundTask(withName:String,expirationHandler:@escaping ()->Void)->UIBackgroundTaskIdentifier {
@@ -73,7 +75,8 @@ final class BGContinuedProcessingTaskRequest {
 }
 ''',manager,operation,r'''
 final class Download {
- enum State:Equatable { case downloading,resuming,pausing,paused,processing,failed }
+ enum FailureAction { case retryProcessing,restart }
+ enum State:Equatable { case downloading,resuming,pausing,paused,processing,failed(String,FailureAction) }
  var state:State = .downloading;let id=UUID().uuidString;let importIdentifier=UUID().uuidString;var task:NetworkTask?
  init() {}
  init(logicalIdentifier:String,url:URL,sourceProvenance:Provenance?) { self.sourceProvenance=sourceProvenance }
@@ -132,7 +135,7 @@ struct Store { func saveResumeData(_ data:Data,for id:String) throws {};func cle
  func _isCurrent(_ download:Download)->Bool { downloads.contains { $0 === download } }
  func _getDownloadTask(_ task:NetworkTask)->Download? { downloads.first { $0.task === task } }
  func _persistDownloads(immediately:Bool=true) { persists+=1 };func _releaseIdleBackgroundTunnel() {}
- func _markRestartRequired(_ download:Download,message:String) { download.state = .failed;download.task=nil;_stopContinuedTask(for:download,success:false) }
+ func _markRestartRequired(_ download:Download,message:String) { download.state = .failed(message,.restart);download.task=nil;_stopContinuedTask(for:download,success:false) }
  func notify(_ download:Download) { _notifyDownloadCompleted(download) }
  func notifyFailure(_ download:Download) { _notifyDownload(download,title:"Download failed",body:"Connection lost") }
  func start(_ download:Download) { downloads.append(download);_startDownloadExecution(for:download) }
@@ -159,8 +162,8 @@ final class BackgroundOwnershipTests:XCTestCase {
   let d=await driver.startDownload(from:URL(string:"https://example.com/App.ipa")!)
   XCTAssertEqual(BGTaskScheduler.shared.requests.count,before);XCTAssertTrue(d.task!.resumed)
   XCTAssertFalse(BackgroundTaskManager.shared.hasExecution(for:d.id))
-  XCTAssertTrue(driver.process(d));XCTAssertEqual(BGTaskScheduler.shared.requests.count,before)
-  XCTAssertTrue(BackgroundTaskManager.shared.hasExecution(for:d.id))
+  XCTAssertFalse(driver.process(d));XCTAssertTrue(d.waitingForForeground);XCTAssertEqual(BGTaskScheduler.shared.requests.count,before)
+  XCTAssertFalse(BackgroundTaskManager.shared.hasExecution(for:d.id))
   BackgroundTaskManager.shared.stopTask(for:d.id,success:true)
  }
  @MainActor func testBackgroundBytesUpdateWithoutNativeGrant() {
@@ -263,7 +266,11 @@ final class BackgroundOwnershipTests:XCTestCase {
   operation.startServerAudio();operation.startServerAudio()
   XCTAssertEqual(BackgroundFixture.BackgroundAudioManager.shared.requesters.count,1)
   UIApplication.shared.applicationState = .background
-  task.expirationHandler?();await settle()
+  let worker=Task.detached { _ = try? await Task.sleep(nanoseconds:10_000_000_000) }
+  operation.setWorker(worker)
+  task.expirationHandler?()
+  XCTAssertTrue(worker.isCancelled);XCTAssertTrue(operation.isInterrupted)
+  await worker.value;await settle()
   XCTAssertEqual(expirations,1);XCTAssertTrue(operation.isFinished)
   XCTAssertEqual(task.presentations.last,"Open Aether to resume")
   XCTAssertTrue(BackgroundFixture.BackgroundAudioManager.shared.requesters.isEmpty)
@@ -297,6 +304,62 @@ final class BackgroundOwnershipTests:XCTestCase {
   let old=BGTaskScheduler.shared.launch(oldID);XCTAssertEqual(old.completions,[false])
   let current=BGTaskScheduler.shared.launch(newID);XCTAssertEqual(current.progress.fractionCompleted,0.8)
   manager.stopTask(for:token,success:true);XCTAssertEqual(current.completions,[true]);XCTAssertEqual(old.completions,[false])
+ }
+
+ @MainActor func testFallbackExpirationInForegroundDoesNotCancelPendingNativeRequest() async {
+  reset();let manager=BackgroundTaskManager(),token=UUID().uuidString;var expirations=0
+  XCTAssertTrue(manager.startWork(for:token,title:"App",subtitle:"Signing",progress:0,onExpiration:{expirations+=1}))
+  let id=BGTaskScheduler.shared.requests.last!, fallback=UIApplication.shared.fallback[.init(raw:UIApplication.shared.sequence)]!
+  fallback();await settle()
+  XCTAssertEqual(expirations,0);XCTAssertFalse(manager.hasExecution(for:token))
+  XCTAssertFalse(BGTaskScheduler.shared.cancellations.contains(id))
+  let task=BGTaskScheduler.shared.launch(id)
+  XCTAssertTrue(manager.hasNativeTask(for:token));XCTAssertTrue(task.completions.isEmpty)
+  manager.stopTask(for:token,success:true)
+ }
+ @MainActor func testFallbackExpirationInBackgroundPreservesCancellationAndRejectsLateGrant() async {
+  reset();let manager=BackgroundTaskManager(),token=UUID().uuidString;var expirations=0
+  XCTAssertTrue(manager.startWork(for:token,title:"App",subtitle:"Signing",progress:0,onExpiration:{expirations+=1}))
+  let id=BGTaskScheduler.shared.requests.last!, fallback=UIApplication.shared.fallback[.init(raw:UIApplication.shared.sequence)]!
+  UIApplication.shared.applicationState = .background
+  fallback();await settle()
+  XCTAssertEqual(expirations,1);XCTAssertFalse(manager.hasExecution(for:token))
+  XCTAssertTrue(BGTaskScheduler.shared.cancellations.contains(id))
+  XCTAssertEqual(BGTaskScheduler.shared.launch(id).completions,[false])
+ }
+ @MainActor func testNativeExpirationSignalsBeforeMainActorCleanup() async {
+  reset();let manager=BackgroundTaskManager(),token=UUID().uuidString
+  XCTAssertTrue(manager.startWork(for:token,title:"App",subtitle:"Signing",progress:0,onExpiration:{}))
+  let task=BGTaskScheduler.shared.launchLast()
+  task.expirationHandler?()
+  XCTAssertTrue(manager.isCancellationRequested(for:token))
+  XCTAssertFalse(manager.hasExecution(for:token))
+  await settle()
+ }
+ @MainActor func testGrowingQueueReportsHonestTotalWithoutNewGrantOrRewindingCurrentJob() {
+  reset();let operation=BackgroundFixture.AppOperationExecution()
+  operation.updateQueue(pendingJobs:1)
+  XCTAssertTrue(operation.beginJob(title:"First",signing:true,onExpiration:{}))
+  let task=BGTaskScheduler.shared.launchLast(),before=BGTaskScheduler.shared.requests.count
+  operation.updateInstallation(subtitle:"Preparing Installation",progress:0) // initial subscription before signing starts
+  operation.updateSigning(progress:0.5)
+  XCTAssertEqual(task.progress.fractionCompleted,0.15,accuracy:0.000001)
+  operation.updateSigning(progress:1)
+  operation.updateInstallation(subtitle:"Sending Payload",progress:0.5)
+  let first=task.progress.fractionCompleted
+  operation.updateInstallation(subtitle:"Sending Payload",progress:0.2)
+  operation.updateSigning(progress:0.1) // late signing delivery
+  XCTAssertEqual(task.progress.fractionCompleted,first)
+  operation.updateQueue(pendingJobs:2)
+  XCTAssertEqual(task.progress.fractionCompleted,first/2,accuracy:0.000001)
+  XCTAssertEqual(task.presentations.last,"1 of 2 · Sending Payload")
+  operation.completeJob()
+  XCTAssertTrue(operation.beginJob(title:"Second",signing:false,onExpiration:{}))
+  XCTAssertEqual(task.presentations.last,"2 of 2 · Preparing Installation")
+  operation.updateInstallation(subtitle:"Installing",progress:1)
+  XCTAssertLessThan(task.progress.fractionCompleted,1)
+  operation.completeJob();operation.finish(success:true)
+  XCTAssertEqual(BGTaskScheduler.shared.requests.count,before)
  }
  @MainActor func testOldPauseCallbackCannotOverwriteNewTask() async {
   reset();let driver=Driver(),d=Download(),old=BackgroundFixture.NetworkTask();d.task=old;driver.start(d)
@@ -335,8 +398,8 @@ final class BackgroundOwnershipTests:XCTestCase {
  }
  @MainActor func testBackgroundRecoveryDoesNotSubmitNewUserRequest() {
   reset();UIApplication.shared.applicationState = .background
-  let before=BGTaskScheduler.shared.requests.count,d=Download(),driver=Driver();driver.start(d);XCTAssertTrue(driver.process(d))
-  XCTAssertEqual(BGTaskScheduler.shared.requests.count,before);XCTAssertTrue(BackgroundTaskManager.shared.hasExecution(for:d.id))
+  let before=BGTaskScheduler.shared.requests.count,d=Download(),driver=Driver();driver.start(d);XCTAssertFalse(driver.process(d))
+  XCTAssertEqual(BGTaskScheduler.shared.requests.count,before);XCTAssertFalse(BackgroundTaskManager.shared.hasExecution(for:d.id));XCTAssertTrue(d.waitingForForeground)
   BackgroundTaskManager.shared.stopTask(for:d.id,success:true)
  }
 }
@@ -383,6 +446,7 @@ enum DownloadPersistenceFixture {
   enum State:Equatable { case downloading,pausing,paused,resuming,processing,failed(String,FailureAction) }
   let logicalIdentifier="app-v2",id="transfer",importIdentifier="import",url=URL(string:"https://example.com/app.ipa")!,fileName="App.ipa"
   let sourceProvenance:SourceAppProvenance?=nil,stagedFileName:String?="staged.ipa"
+  let onlyArchiving=true
   var waitingForForeground=false,bytesDownloaded:Int64=1024,totalBytes:Int64=2048,progress=0.5
   var state:State = .processing
  }

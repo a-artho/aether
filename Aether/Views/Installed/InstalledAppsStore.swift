@@ -232,6 +232,13 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 	}
 
 	func delete(app: InstalledApp) async throws {
+		let installations = AppInstallationManager.shared
+		guard installations.beginUninstall(bundleIdentifier: app.bundleIdentifier) else {
+			throw NSError(domain: "Aether.Uninstall", code: 1, userInfo: [
+				NSLocalizedDescriptionKey: String.localized("This app is being installed or uninstalled. Wait for that operation to finish.")
+			])
+		}
+		defer { installations.endUninstall(bundleIdentifier: app.bundleIdentifier) }
 		try await AppLifecycleService.uninstallApp(bundleIdentifier: app.bundleIdentifier)
 		// A refresh may have fetched this app before the uninstall completed.
 		refreshGeneration = UUID()

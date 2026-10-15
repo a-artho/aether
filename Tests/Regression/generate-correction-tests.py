@@ -26,10 +26,11 @@ final class Download {
  enum State: Equatable { case downloading, pausing, paused, resuming, processing, failed(String, FailureAction) }
  let id: String, logicalIdentifier: String, url: URL, importIdentifier: String
  let fileName: String
+ let onlyArchiving:Bool
  var sourceProvenance: SourceAppProvenance?, state: State, stagedFileName: String?
  var waitingForForeground=false, resumeData: Data?, bytesDownloaded: Int64=0, totalBytes: Int64=0, progress=0.0
- init(transferIdentifier: String="transfer", logicalIdentifier: String="logical", url: URL=URL(string:"https://example.com/app.ipa")!, sourceProvenance: SourceAppProvenance?=nil, state: State = .downloading, fileName: String="App.ipa", stagedFileName: String?=nil, importIdentifier: String="import") {
-  id=transferIdentifier; self.logicalIdentifier=logicalIdentifier; self.url=url; self.sourceProvenance=sourceProvenance; self.state=state; self.fileName=fileName; self.stagedFileName=stagedFileName; self.importIdentifier=importIdentifier
+ init(transferIdentifier: String="transfer", logicalIdentifier: String="logical", url: URL=URL(string:"https://example.com/app.ipa")!, onlyArchiving:Bool=false, sourceIsStable:Bool=false, sourceProvenance: SourceAppProvenance?=nil, state: State = .downloading, fileName: String="App.ipa", stagedFileName: String?=nil, importIdentifier: String="import") {
+  self.onlyArchiving=onlyArchiving; id=transferIdentifier; self.logicalIdentifier=logicalIdentifier; self.url=url; self.sourceProvenance=sourceProvenance; self.state=state; self.fileName=fileName; self.stagedFileName=stagedFileName; self.importIdentifier=importIdentifier
  }
 }
 final class CorrectionTests: XCTestCase {
@@ -92,6 +93,22 @@ final class CorrectionTests: XCTestCase {
   XCTAssertEqual(restored.first?.stagedFileName,ipa.lastPathComponent)
   XCTAssertTrue(FileManager.default.fileExists(atPath:ipa.path))
   XCTAssertFalse(FileManager.default.fileExists(atPath:unrelated.path))
+ }
+
+ @MainActor func testManualImportStagedInputSurvivesRelaunchAndPruning() throws {
+  let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at:root) }
+  let store=DownloadStore(rootURL:root), download=Download(onlyArchiving:true,state:.processing)
+  try store.save(records:[StoredDownload(download:download)])
+  let ipa=try store.makeStagingURL(for:download,suggestedFilename:"manual.ipa")
+  try Data("manual archive".utf8).write(to:ipa)
+  let restored=store.loadDownloads();store.pruneArtifacts(keeping:restored)
+  XCTAssertEqual(restored.first?.onlyArchiving,true)
+  XCTAssertEqual(restored.first?.state,.processing)
+  XCTAssertEqual(restored.first?.stagedFileName,ipa.lastPathComponent)
+  XCTAssertTrue(FileManager.default.fileExists(atPath:ipa.path))
+  store.cleanupArtifacts(for:restored[0])
+  XCTAssertFalse(FileManager.default.fileExists(atPath:ipa.path))
  }
  @MainActor func testRecoveryDoesNotAdoptSymlinkOrOverridePausedIntent() throws {
   let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

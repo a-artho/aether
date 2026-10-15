@@ -73,7 +73,7 @@ struct OnDevicePairingView: View {
 				Text(.localized("Aether is ready to pair"))
 					.font(.title3.weight(.semibold))
 				Text(.localized("To pair this device, follow these steps in Settings:"))
-					.nbFont(.subheadline)
+					.font(.subheadline)
 					.foregroundStyle(.secondary)
 			}
 
@@ -121,7 +121,7 @@ struct OnDevicePairingView: View {
 
 			VStack(alignment: .leading, spacing: 2) {
 				Text(title)
-					.nbFont(.subheadline, weight: .semibold)
+					.font(.subheadline.weight(.semibold))
 					.foregroundStyle(.primary)
 
 				Text(detail)

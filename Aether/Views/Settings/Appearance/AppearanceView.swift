@@ -12,7 +12,8 @@ import UIKit
 // MARK: - View
 // dear god help me
 struct AppearanceView: View {
-	@AppStorage("Aether.settingsPlacement") private var _settingsPlacement: SettingsPlacement = .header
+	@AppStorage("Aether.glassSettingsCard") private var _glassSettingsCard = false
+	@AppStorage("Aether.mutedSectionHeaders") private var _mutedSectionHeaders = false
 	@AppStorage("Aether.userInterfaceStyle")
 	private var _userInterfaceStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
 
@@ -26,12 +27,6 @@ struct AppearanceView: View {
 	private var _searchPlacement: SearchPlacement = .right
 	@AppStorage("Aether.hideTitleSearchIcon")
 	private var _hideTitleSearchIcon = false
-
-	@AppStorage("Aether.controlsInHeader")
-	private var _controlsInHeader: Bool = false
-
-	@AppStorage("Aether.liquidGlassTiles")
-	private var _liquidGlassTiles: Bool = true
 
 	@AppStorage("Aether.shouldChangeIconsBasedOffStyle")
 	private var _shouldChangeIconsBasedOffStyle: Bool = false
@@ -88,25 +83,24 @@ struct AppearanceView: View {
 				}
 			}
 
-			NBSection(.localized("Tab Bar")) {
-				Toggle(isOn: $_hideTabBarLabels) {
-					SettingsRowLabel(.localized("Hide Labels"), systemImage: "rectangle.bottomthird.inset.filled", backgroundColor: .blue)
+			NBSection(.localized("Settings")) {
+				Toggle(isOn: $_glassSettingsCard) {
+					SettingsRowLabel(.localized("Liquid Glass Card"), systemImage: "rectangle.on.rectangle", backgroundColor: .gray)
 				}
 			} footer: {
-				Text(.localized("Show only icons in the bottom tab bar."))
+				Text(.localized("Use Liquid Glass for the device controls card in Settings."))
+			}
+
+			NBSection(.localized("Section Headers")) {
+				Toggle(isOn: $_mutedSectionHeaders) {
+					SettingsRowLabel(.localized("Muted Section Headers"), systemImage: "textformat", backgroundColor: .gray)
+				}
 			}
 
 			NBSection(.localized("Navigation")) {
-				Picker(selection: $_settingsPlacement) {
-					ForEach(SettingsPlacement.allCases) { placement in
-						Text(placement.label).tag(placement)
-					}
-				} label: {
-					SettingsRowLabel(String.localized("Settings Placement"), systemImage: "gearshape", backgroundColor: .gray)
+				Toggle(isOn: $_hideTabBarLabels) {
+					SettingsRowLabel(.localized("Hide Tab Labels"), systemImage: "rectangle.bottomthird.inset.filled", backgroundColor: .blue)
 				}
-				.pickerStyle(.menu)
-				.tint(.secondary)
-
 				Picker(selection: $_searchPlacement) {
 					ForEach(SearchPlacement.allCases) { placement in
 						Text(placement.label).tag(placement)
@@ -122,19 +116,7 @@ struct AppearanceView: View {
 					}
 				}
 			} footer: {
-				Text(.localized("Choose where Settings and search controls appear. Hold Settings for installation mode, selection, and deletion options."))
-			}
-
-			NBSection(.localized("Device Controls")) {
-				Toggle(isOn: $_controlsInHeader) {
-					SettingsRowLabel(.localized("Controls in Header"), systemImage: "rectangle.topthird.inset.filled", backgroundColor: .blue)
-				}
-				Toggle(isOn: $_liquidGlassTiles) {
-					SettingsRowLabel(.localized("Liquid Glass Tiles"), systemImage: "square.grid.2x2.fill", backgroundColor: .cyan)
-				}
-				.disabled(_controlsInHeader)
-			} footer: {
-				Text(.localized("Move device controls into the header. Liquid Glass Tiles applies when controls are shown as tiles."))
+				Text(.localized("Choose where search appears and whether tab labels are shown."))
 			}
 
 			NBSection(.localized("Library")) {

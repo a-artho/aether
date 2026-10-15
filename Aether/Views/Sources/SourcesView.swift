@@ -55,7 +55,11 @@ struct SourcesView: View {
 					Section {
 						NavigationLink(value: SourcesRouter.Route.collection(.allRepos)) {
 							HStack(spacing: 18) {
-								Image("Repositories").appIconStyle()
+								Image(systemName: "globe.desk")
+									.font(.system(size: 30, weight: .regular))
+									.symbolRenderingMode(.hierarchical)
+									.foregroundStyle(.secondary)
+									.frame(width: 50, height: 50)
 								NBTitleWithSubtitleView(
 									title: .localized("All Repos"),
 									subtitle: .localized("See all apps from your sources")

@@ -7,6 +7,7 @@ import Combine
 import Foundation
 import UIKit
 import UserNotifications
+import NimbleExtensions
 
 @MainActor
 class DownloadManager: NSObject, ObservableObject {
@@ -17,6 +18,8 @@ class DownloadManager: NSObject, ObservableObject {
 	}
 
 	@Published var downloads: [Download] = []
+
+	var hasActiveWork: Bool { downloads.contains(where: \.isActive) || !_processingTasks.isEmpty || _retiringProcessingCount > 0 }
 
 	var manualDownloads: [Download] {
 		downloads.filter { isManualDownload($0.logicalIdentifier) }
@@ -32,6 +35,7 @@ class DownloadManager: NSObject, ObservableObject {
 	private var _foregroundObserver: NSObjectProtocol?
 	private var _backgroundObserver: NSObjectProtocol?
 	private var _processingTasks: [String: Task<Void, Never>] = [:]
+	@Published private var _retiringProcessingCount = 0
 	private var _archiveSourceCleanup: [String: @Sendable () -> Void] = [:]
 	private let _persistenceWriter = DownloadPersistenceWriter()
 	private var _persistenceRevision: UInt64 = 0
@@ -117,6 +121,10 @@ class DownloadManager: NSObject, ObservableObject {
 			sourceProvenance: sourceProvenance
 		)
 		downloads.append(download)
+		if AppMaintenanceGuard.isResetting {
+			download.state = .failed(.localized("Wait for the reset to finish."), download.onlyArchiving ? .retryProcessing : .restart)
+			return download
+		}
 		LibraryArtifactIndex.shared.recordImport(uuid: download.importIdentifier)
 		let task = _makeFreshTask(for: download)
 		download.task = task
@@ -144,10 +152,87 @@ class DownloadManager: NSObject, ObservableObject {
 			sourceIsStable: sourceIsStable
 		)
 		downloads.append(download)
+		if AppMaintenanceGuard.isResetting {
+			download.state = .failed(.localized("Wait for the reset to finish."), download.onlyArchiving ? .retryProcessing : .restart)
+			return download
+		}
 		LibraryArtifactIndex.shared.recordImport(uuid: download.importIdentifier)
 		_archiveSourceCleanup[download.id] = sourceCleanup
-		_startDownloadExecution(for: download)
+		_persistDownloads()
 		return download
+	}
+
+	/// Publish the row and acquire execution before a file provider starts copying.
+	func startExternalArchive(from url: URL, id: String) {
+		let download = startArchive(from: url, id: id, sourceIsStable: false)
+		download.isPreparingSource = true
+		retryProcessing(download)
+	}
+
+	private func _prepareExternalArchive(_ download: Download) {
+		guard _isCurrent(download), _processingTasks[download.id] == nil else { return }
+		download.state = .processing
+		download.isPreparingSource = true
+		guard _ensureProcessingExecution(download, subtitle: .localized("Preparing Import")) else { return }
+		download.waitingForForeground = false
+		let destinationURL: URL
+		do { destinationURL = try _store.makeStagingURL(for: download, suggestedFilename: download.fileName) }
+		catch { _failProcessing(download, error: error); return }
+		_persistDownloads()
+		let sourceURL = download.url
+		let worker = Task.detached(priority: .utility) { [weak self] in
+			let result = Result {
+				try Task.checkCancellation()
+				let file = try FileManager.default.materializePackageForImport(at: sourceURL) { message in
+					Task { @MainActor in
+						DebugLogManager.shared.log("[\(download.id)] \(message)", category: "Import")
+					}
+				}
+				defer { file.cleanup() }
+				try Task.checkCancellation()
+				let fileManager = FileManager.default
+				let partialURL = destinationURL.appendingPathExtension("partial")
+				defer { try? fileManager.removeItem(at: partialURL) }
+				try fileManager.removeFileIfNeeded(at: partialURL)
+				try fileManager.copyItemPreferClone(at: file.fileURL, to: partialURL)
+				try Task.checkCancellation()
+				try fileManager.removeFileIfNeeded(at: destinationURL)
+				try fileManager.moveItem(at: partialURL, to: destinationURL)
+				return destinationURL
+			}
+			await self?._externalArchivePrepared(download, result: result)
+		}
+		_processingTasks[download.id] = worker
+		#if !targetEnvironment(macCatalyst)
+		BackgroundTaskManager.shared.setCancellationHandler(for: download.id) { worker.cancel() }
+		#endif
+	}
+
+	private func _externalArchivePrepared(_ download: Download, result: Result<URL, Error>) {
+		_processingTasks.removeValue(forKey: download.id)
+		guard _isCurrent(download) else {
+			if case .success(let url) = result { Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: url) } }
+			return
+		}
+		#if !targetEnvironment(macCatalyst)
+		if BackgroundTaskManager.shared.isCancellationRequested(for: download.id) {
+			download.waitingForForeground = true
+			download.interruptionForegroundGeneration = _foregroundGeneration
+		}
+		#endif
+		switch result {
+		case .success(let url):
+			download.stagedFileName = url.lastPathComponent
+			download.isPreparingSource = false
+			_persistDownloads()
+			// Copying has finished. Waiting for the extraction gate must not retain a grant.
+			_stopContinuedTask(for: download, success: true)
+			if download.waitingForForeground { _resumeInterruptedProcessing() }
+			else { _startProcessing(download, sourceURL: url, sourceIsStable: true) }
+		case .failure(let error):
+			if download.waitingForForeground { _resumeInterruptedProcessing() }
+			else { _failProcessing(download, error: error) }
+		}
 	}
 
 	func pauseDownload(_ download: Download) {
@@ -224,10 +309,11 @@ class DownloadManager: NSObject, ObservableObject {
 	}
 
 	func retryProcessing(_ download: Download) {
+		guard !AppMaintenanceGuard.isResetting else { return }
 		guard _isCurrent(download) else { return }
 
-		if download.onlyArchiving {
-			_startProcessing(download, sourceURL: download.url, sourceIsStable: download.sourceIsStable)
+		if download.onlyArchiving && download.stagedFileName == nil {
+			_prepareExternalArchive(download)
 			return
 		}
 
@@ -248,6 +334,7 @@ class DownloadManager: NSObject, ObservableObject {
 	func deleteDownload(_ download: Download, completion: (@MainActor @Sendable () -> Void)? = nil) {
 		guard _isCurrent(download) else { completion?(); return }
 		let processing = _processingTasks.removeValue(forKey: download.id)
+		if processing != nil { _retiringProcessingCount += 1 }
 		let sourceCleanup = _archiveSourceCleanup.removeValue(forKey: download.id)
 		processing?.cancel()
 		download.task?.cancel()
@@ -264,10 +351,12 @@ class DownloadManager: NSObject, ObservableObject {
 		let importIdentifier = download.importIdentifier
 		Task.detached(priority: .utility) {
 			await processing?.value
+			await MainActor.run { self._store.cleanupArtifacts(for: download) }
 			sourceCleanup?()
 			await AppFileHandler.removeImportTransaction(
 				transactionIdentifier: importIdentifier
 			)
+			if processing != nil { await MainActor.run { self._retiringProcessingCount -= 1 } }
 			await completion?()
 		}
 	}
@@ -391,7 +480,6 @@ class DownloadManager: NSObject, ObservableObject {
 		guard _isCurrent(download), _processingTasks[download.id] == nil else { return }
 		download.state = .processing
 		download.unpackageProgress = 0
-		guard _ensureProcessingExecution(download, subtitle: .localized("Processing")) else { return }
 		download.waitingForForeground = false
 		_persistDownloads()
 
@@ -399,12 +487,28 @@ class DownloadManager: NSObject, ObservableObject {
 			sourceURL,
 			download: download,
 			transactionIdentifier: download.importIdentifier,
-			copySource: !sourceIsStable
+			copySource: !sourceIsStable,
+			beginProcessing: { [weak self, weak download] in
+				guard let self, let download, self._isCurrent(download), !Task.isCancelled else { return false }
+				guard self._ensureProcessingExecution(download, subtitle: .localized("Processing")) else { return false }
+				#if !targetEnvironment(macCatalyst)
+				if let worker = self._processingTasks[download.id] {
+					BackgroundTaskManager.shared.setCancellationHandler(for: download.id) { worker.cancel() }
+				}
+				#endif
+				return true
+			}
 		) { [weak self, weak download] error in
 			guard let self, let download else { return }
 			self._processingTasks.removeValue(forKey: download.id)
 			guard self._isCurrent(download) else { return }
 
+			#if !targetEnvironment(macCatalyst)
+			if BackgroundTaskManager.shared.isCancellationRequested(for: download.id) {
+				download.waitingForForeground = true
+				download.interruptionForegroundGeneration = self._foregroundGeneration
+			}
+			#endif
 			if download.waitingForForeground {
 				self._persistDownloads()
 				self._resumeInterruptedProcessing()
@@ -412,7 +516,7 @@ class DownloadManager: NSObject, ObservableObject {
 			}
 			if let error {
 				if !(error is CancellationError) {
-					UINotificationFeedbackGenerator().notificationOccurred(.error)
+					HapticManager.shared.impact()
 				}
 				self._failProcessing(download, error: error)
 			} else {
@@ -629,6 +733,7 @@ class DownloadManager: NSObject, ObservableObject {
 
 	private func _failProcessing(_ download: Download, error: Error) {
 		guard _isCurrent(download) else { return }
+		download.isPreparingSource = false
 		download.task = nil
 		download.resumeData = nil
 		_store.removeResumeData(for: download.id)
@@ -705,7 +810,6 @@ class DownloadManager: NSObject, ObservableObject {
 		_persistenceRevision &+= 1
 		let revision = _persistenceRevision
 		let records = downloads
-			.filter { !$0.onlyArchiving }
 			.map(StoredDownload.init)
 		let writer = _persistenceWriter
 		#if !targetEnvironment(macCatalyst)
@@ -724,7 +828,6 @@ class DownloadManager: NSObject, ObservableObject {
 		_persistenceRevision &+= 1
 		let revision = _persistenceRevision
 		let records = downloads
-			.filter { !$0.onlyArchiving }
 			.map(StoredDownload.init)
 		do {
 			try await _persistenceWriter.commit(records: records, revision: revision)
@@ -753,6 +856,16 @@ class DownloadManager: NSObject, ObservableObject {
 	}
 
 	private func _ensureProcessingExecution(_ download: Download, subtitle: String) -> Bool {
+		#if !targetEnvironment(macCatalyst)
+		if UIApplication.shared.applicationState != .active,
+			!BackgroundTaskManager.shared.hasNativeTask(for: download.id) {
+			download.waitingForForeground = true
+			download.interruptionForegroundGeneration = _foregroundGeneration
+			_persistDownloads()
+			DebugLogManager.shared.log("Processing deferred: no active native grant; id=\(download.id) stage=\(subtitle).", category: "Background", level: .notice)
+			return false
+		}
+		#endif
 		let accepted = _ensureOperationExecution(download, subtitle: subtitle)
 		if !accepted, UIApplication.shared.applicationState != .active {
 			download.waitingForForeground = true
@@ -794,10 +907,6 @@ class DownloadManager: NSObject, ObservableObject {
 	}
 
 	private func _startDownloadExecution(for download: Download) {
-		if download.onlyArchiving {
-			_ = _ensureProcessingExecution(download, subtitle: .localized("Processing"))
-			return
-		}
 		#if !targetEnvironment(macCatalyst)
 		DownloadResultNotifier.shared.requestPermissionIfNeeded()
 		#endif

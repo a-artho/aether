@@ -1,18 +1,4 @@
 import SwiftUI
-import NimbleExtensions
-import NimbleViews
-import UIKit
-
-@MainActor
-enum LibraryCertificateStatus {
-	static func forApp(_ app: AppInfoPresentable?) -> String? {
-		guard let app, app.isSigned else { return nil }
-		let certificate = Storage.shared.getCertificate(from: app)
-		if certificate?.revoked == true { return .localized("Revoked") }
-		if let expiration = certificate?.expiration?.expirationInfo() { return expiration.formatted }
-		return .localized("Signed")
-	}
-}
 
 /// Shared metadata hierarchy for Library apps and in-flight transfers.
 struct LibraryRowDetails: View {
@@ -36,7 +22,7 @@ struct LibraryRowDetails: View {
 				.lineLimit(1)
 
 			Text(_secondLine)
-				.nbFont(.subheadline)
+				.font(.subheadline)
 				.contentTransition(.interpolate)
 				.animation(animatesStatus && !reduceMotion ? .smooth(duration: 0.2) : nil, value: secondaryStatus)
 				.foregroundStyle(isFailed ? Color.red : Color.secondary)
