@@ -104,6 +104,9 @@ final class IconOptimizationTests:XCTestCase {
   IconProxy.setIconDeviceScope(pairingDigest:nil,endpoint:"test")
   XCTAssertNil(IconProxy.appIconInMemory(for:id,cacheVersion:"1"))
   UserDefaults.standard.removeObject(forKey:"InstalledIconRevision."+id)
+  // Retire this test's shared icon connection before later tests count native closes.
+  NotificationCenter.default.post(name:IconApplication.didEnterBackgroundNotification,object:nil)
+  try await Task.sleep(nanoseconds:50_000_000)
  }
  func testPairingAndEndpointScopeAndInstallInvalidation() throws {
   let file=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
