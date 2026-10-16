@@ -7,9 +7,14 @@
 //
 
 import SwiftUI
+import UIKit
+import NimbleExtensions
 
 struct ExtendedTabbarView: View {
 	@Environment(\.horizontalSizeClass) var horizontalSizeClass
+	@Environment(\.colorScheme) private var colorScheme
+	@AppStorage("Aether.spoofing.simulationMayBeActive") private var isSpoofingActive = false
+	@AppStorage("Aether.userTintColor") private var tintHex = "#848ef9"
 	@AppStorage("Aether.tabCustomization") var customization = TabViewCustomization()
 	@AppStorage("Aether.hideTabBarLabels") private var hideTabBarLabels = false
 	
@@ -56,13 +61,55 @@ struct ExtendedTabbarView: View {
 
 	@ViewBuilder
 	private func tabLabel(for tab: TabEnum) -> some View {
-		let icon = tab.icon
 		if hideTabBarLabels && horizontalSizeClass == .compact {
-			Label(tab.title, systemImage: tab == .library ? icon + ".fill" : icon)
-				.labelStyle(.iconOnly)
+			tabLabelContent(for: tab).labelStyle(.iconOnly)
 		} else {
-			Label(tab.title, systemImage: tab == .library ? icon + ".fill" : icon)
+			tabLabelContent(for: tab)
 		}
 	}
 
+	private func tabLabelContent(for tab: TabEnum) -> some View {
+		Label {
+			Text(tab.title)
+		} icon: {
+			if tab == .settings && isSpoofingActive {
+				Image(uiImage: SpoofingTabIcon.image(selected: tabManager.selectedTab == .settings,
+					tintHex: tintHex, dark: colorScheme == .dark))
+					.renderingMode(.original)
+			} else {
+				Image(systemName: tab == .library ? tab.icon + ".fill" : tab.icon)
+			}
+		}
+	}
+}
+
+/// A native tab item accepts one image; compose its small indicator into that
+/// image rather than placing an overlay over the system tab bar.
+@MainActor
+private enum SpoofingTabIcon {
+	private static let cache: NSCache<NSString, UIImage> = {
+		let cache = NSCache<NSString, UIImage>()
+		cache.countLimit = 8
+		return cache
+	}()
+
+	static func image(selected: Bool, tintHex: String, dark: Bool) -> UIImage {
+		let key = "\(selected)|\(tintHex)|\(dark)" as NSString
+		if let image = cache.object(forKey: key) { return image }
+		let traits = UITraitCollection(userInterfaceStyle: dark ? .dark : .light)
+		let foreground = selected ? UIColor(Color(hex: tintHex)) : UIColor.label.resolvedColor(with: traits)
+		let image = UIGraphicsImageRenderer(size: CGSize(width: 28, height: 28)).image { context in
+			UIImage(systemName: "gearshape", withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .regular))?
+				.withTintColor(foreground, renderingMode: .alwaysOriginal)
+				.draw(in: CGRect(x: 1, y: 3, width: 24, height: 24))
+			let badge = CGRect(x: 18, y: 0, width: 10, height: 10)
+			context.cgContext.setFillColor(UIColor.systemGreen.resolvedColor(with: traits).cgColor)
+			context.cgContext.fillEllipse(in: badge)
+			UIImage(systemName: "location.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 6, weight: .semibold))?
+				.withTintColor(.white, renderingMode: .alwaysOriginal)
+				.draw(in: badge.insetBy(dx: 2, dy: 2))
+		}.withRenderingMode(.alwaysOriginal)
+		cache.setObject(image, forKey: key)
+		return image
+	}
 }
