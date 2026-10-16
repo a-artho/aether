@@ -90,6 +90,7 @@ struct ProvisioningProfileInfo {}
 @MainActor final class Store {
 	var hasLoadedApps=false; var lastLoadedAt:Date?; var verifiedApps:[AppInfo]?; var initialBrowse:Task<[AppInfo]?,Never>?
  var iconPrefetchTask:Task<Void,Never>?; var needsTrailingRefresh=false; var refreshGeneration=UUID(); var apps:[AppInfo]=[]; var isLoading=false; var errorMessage:String?
+ func prefetchFirstScreenIcons() {}
  func updateApplications(with apps:[AppInfo],profiles:[ProvisioningProfileInfo]) { self.apps=apps }
 ''', method(store,'func load() async'), method(store,'func refreshOnForeground() async'), method(store,'func clear()'), method(store,'func refresh(force:'), r'''
 }
