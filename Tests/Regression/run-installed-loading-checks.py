@@ -18,6 +18,7 @@ public struct ProvisioningProfileInfo {
 struct InstalledApp {
  let bundleIdentifier:String;let name:String;let version:String?;let build:String?;let appInfo:AppInfo?
  var id:String {bundleIdentifier}
+ var iconCacheVersion:String {"\(version ?? "")|\(build ?? "")|\(InstallationAppProxy.iconCacheRevision(for:bundleIdentifier))"}
 }
 enum Level {case error, debug}
 @MainActor final class DebugLogManager {static let shared=DebugLogManager();func log(_ s:String,category:String,level:Level?=nil) {}}
@@ -36,7 +37,7 @@ enum Level {case error, debug}
  var needsTrailingRefresh=false;var refreshGeneration=UUID();var iconPrefetchTask:Task<Void,Never>?
  var isLoading=false;var errorMessage:String?
 '''
-for start in ['func stageInitialBrowse(', 'func stageVerifiedApps(', 'func load()', 'func refreshOnForeground()', 'func clear()', 'func refresh(force:', 'private func updateApplications(']:
+for start in ['func stageInitialBrowse(', 'func stageVerifiedApps(', 'func load()', 'func refreshOnForeground()', 'func clear()', 'func refresh(force:', 'private func prefetchFirstScreenIcons()', 'private func updateApplications(']:
  s+=declaration('Aether/Views/Installed/InstalledAppsStore.swift',start)+'\n'
 s+='}\n'
 s+=r'''
