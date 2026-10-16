@@ -29,7 +29,7 @@ enum Level {case error, debug}
  func fetchApps(applicationType:String?,lightweight:Bool) async throws -> [AppInfo] {Self.fetches+=1;return Self.result}
  func provisioningProfiles() async throws -> [ProvisioningProfileInfo] {Self.profileFetches+=1;return await withCheckedContinuation {Self.profileWaiter=$0}}
  static func getAppIconCached(for id:String,cacheVersion:String?) async throws -> String? {nil}
- static func iconCacheRevision(for id:String)->String {""}
+ nonisolated static func iconCacheRevision(for id:String)->String {""}
 }
 @MainActor final class Store {
  var apps:[InstalledApp]=[];var hasLoadedApps=false;var lastLoadedAt:Date?;var verifiedApps:[AppInfo]?
