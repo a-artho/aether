@@ -236,6 +236,18 @@ extension InstallationAppProxy {
 		UserDefaults.standard.set(UUID().uuidString, forKey: "InstalledIconRevision." + id)
 	}
 
+	/// A first-frame lookup only: never reads disk, decodes images, or opens a device connection.
+	static public func appIconInMemory(for id: String, cacheVersion: String? = nil) -> UIImage? {
+		guard let scope = iconCacheQueue.sync(execute: { selectedIconScope }) else { return nil }
+		let cacheKey = "\(scope)|\(id)|\(cacheVersion ?? "")|\(iconCacheRevision(for: id))"
+		return iconCache.image(for: cacheKey)
+	}
+
+	/// 50pt rows need at most 150 pixels at 3x. Called exclusively by background cache work.
+	fileprivate static func preparedRowIcon(data: Data) -> UIImage? {
+		UIImage(data: data)?.preparingThumbnail(of: CGSize(width: 150, height: 150))
+	}
+
 	static public func getAppIconCached(for id: String, cacheVersion: String? = nil) async throws -> UIImage? {
 		// File I/O and identity hashing never run on the UI thread.
 		let scope: String
@@ -251,7 +263,7 @@ extension InstallationAppProxy {
 					return image
 				}
 				let data = try await iconConnection.iconData(for: id, scope: scope)
-				guard let image = UIImage(data: data) else { return nil }
+				guard let image = preparedRowIcon(data: data) else { return nil }
 				iconDiskCache.store(data, for: cacheKey)
 				iconCache.insert(image, for: cacheKey)
 				return image
@@ -372,7 +384,7 @@ private final class InstalledIconDiskCache: @unchecked Sendable {
 			let url = directory.appendingPathComponent(Self.digest(Data(key.utf8)))
 			guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
 				let date = values.contentModificationDate, Date().timeIntervalSince(date) < 30 * 86400,
-				let data = try? Data(contentsOf: url), let image = UIImage(data: data) else { return nil }
+				let data = try? Data(contentsOf: url), let image = InstallationAppProxy.preparedRowIcon(data: data) else { return nil }
 			return image
 		}
 	}

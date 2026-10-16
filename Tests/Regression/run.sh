@@ -51,3 +51,5 @@ python3 "$test_dir/run-unified-progress-checks.py"
 python3 "$test_dir/run-installation-progress-checks.py"
 
 python3 "$test_dir/run-unified-handoff-checks.py"
+
+python3 "$test_dir/run-refresh-handoff-checks.py"

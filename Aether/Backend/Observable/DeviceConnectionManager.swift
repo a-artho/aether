@@ -85,6 +85,8 @@ public final class DeviceConnectionManager: ObservableObject {
 		didSet { if state != oldValue { _signalConnectionWorkChanged() } }
 	}
 	@Published public private(set) var diagnostic: DeviceDiagnosticStatus = .tunnelUnavailable
+	/// Cold launch can render before didBecomeActive starts automatic connection.
+	@Published public private(set) var isAwaitingAutomaticConnection = false
 	@Published public private(set) var hasPairingFile: Bool = false
 	@Published public private(set) var pairingVerification = PairingVerificationState()
 	@Published public private(set) var tunnelMethod: DeviceTunnelMethod
@@ -337,7 +339,10 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	public func setConnectAutomatically(_ enabled: Bool) {
 		guard isConnectAutomaticallyEnabled != enabled else { return }
-		if !enabled { _cancelForegroundRecovery() }
+		if !enabled {
+			isAwaitingAutomaticConnection = false
+			_cancelForegroundRecovery()
+		}
 		isConnectAutomaticallyEnabled = enabled
 		UserDefaults.standard.set(enabled, forKey: Self.connectAutomaticallyKey)
 		_log("Connect automatically set to \(enabled).", category: "Tunnel", level: .notice)
@@ -348,6 +353,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	public func handleAppForeground() {
 		guard UIApplication.shared.applicationState == .active else { return }
+		isAwaitingAutomaticConnection = false
 		lastVerifiedAt = 0
 		CellularAssistManager.shared.handleApplicationDidBecomeActive()
 		guard !CellularAssistManager.shared.isBusy else { return }
@@ -430,6 +436,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	public func handleAppBackground() {
 		// A delayed background notification must not close a resumed app's tunnel.
 		guard UIApplication.shared.applicationState == .background else { return }
+		isAwaitingAutomaticConnection = false
 		_cancelForegroundRecovery()
 		guard isDisconnectWhenIdleEnabled, isIDeviceInstallationMode else { return }
 		if hasActiveTunnelDependencies {
@@ -451,13 +458,16 @@ public final class DeviceConnectionManager: ObservableObject {
 			diagnostic = .tunnelUnavailable
 			return
 		}
-		guard isConnectAutomaticallyEnabled, UIApplication.shared.applicationState == .active else { return }
+		guard isConnectAutomaticallyEnabled else { return }
+		isAwaitingAutomaticConnection = hasPairingFile && UIApplication.shared.applicationState == .inactive
+		guard UIApplication.shared.applicationState == .active else { return }
 		_connectForIDeviceMode()
 	}
 
 	private func _connectForIDeviceMode() {
 		guard UIApplication.shared.applicationState != .background else { return }
 		guard isIDeviceInstallationMode, !isUpdating, !isConnected else { return }
+		isAwaitingAutomaticConnection = false
 		_syncPairingRecord()
 		guard hasPairingFile else {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
@@ -489,6 +499,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	// MARK: - Toggle Connection
 
 	public func setConnection(enabled: Bool, force: Bool = false) {
+		isAwaitingAutomaticConnection = false
 		if !enabled {
 			connectionEpoch &+= 1
 			activeVerificationID = nil

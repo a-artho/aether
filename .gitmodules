@@ -1,4 +1,0 @@
-[submodule "Zsign"]
-	path = Zsign
-	url = https://github.com/a-artho/zsign.git
-	branch = aether-progress

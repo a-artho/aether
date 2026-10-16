@@ -7,6 +7,13 @@
 
 import SwiftUI
 
+enum LaunchTab: String, CaseIterable, Identifiable {
+	case sources, library
+	var id: Self { self }
+	var tab: TabEnum { self == .sources ? .sources : .library }
+	var title: String { tab.title }
+}
+
 @MainActor
 final class AppTabManager: ObservableObject {
 	static let shared = AppTabManager()
@@ -42,7 +49,11 @@ final class AppTabManager: ObservableObject {
 	@Published private(set) var installationFocusRequest: UUID?
 	@Published private(set) var libraryFocusRequest: UUID?
 
-	private init() {}
+	private init() {
+		// Read once for a cold launch. Foregrounding and preference changes do not reset navigation.
+		let launchTab = LaunchTab(rawValue: UserDefaults.standard.string(forKey: "Aether.launchTab") ?? "") ?? .sources
+		selectedTab = launchTab.tab
+	}
 
 	func switchTo(_ tab: TabEnum, focusImports: Bool = true) {
 		if tab == .settings {

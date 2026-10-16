@@ -11,7 +11,7 @@ def declaration(start):
 s=r'''
 import Foundation
 func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
-@MainActor final class UIApplication {static let shared=UIApplication();enum State {case active,background};var applicationState=State.active}
+@MainActor final class UIApplication {static let shared=UIApplication();enum State {case active,inactive,background};var applicationState=State.active}
 @MainActor final class CellularAssistManager {static let shared=CellularAssistManager();var isBusy=false;func handleApplicationDidBecomeActive(){}}
 @MainActor final class AppInstallationManager {static let shared=AppInstallationManager();var isInstalling=false}
 @MainActor final class OnDevicePairingManager {static let shared=OnDevicePairingManager();var isActive=false}
@@ -19,6 +19,10 @@ func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
  var foregroundRecoveryTask:Task<Void,Never>?;var foregroundRecoveryID:UUID?
  var connectionWorkWaiters:[UUID:AsyncStream<Void>.Continuation]=[:]
  var reconciliationTask:Task<Void,Never>? {didSet {_signalConnectionWorkChanged()}};var lastVerifiedAt=0.0
+ enum State {case disconnected};var state=State.disconnected
+ enum Diagnostic {case tunnelUnavailable};var diagnostic=Diagnostic.tunnelUnavailable
+ var hasPairingFile=true
+ var isAwaitingAutomaticConnection=false
  var isConnectAutomaticallyEnabled=true;var isIDeviceInstallationMode=true
  var isConnected=true;var isUpdating=false {didSet {_signalConnectionWorkChanged()}};var starts=0;var checks=0;var verified=false
  var isDisconnectWhenIdleEnabled=true;var hasActiveTunnelDependencies=false;var stops=0
@@ -34,6 +38,7 @@ func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
 '''
 for method in ['public func handleAppForeground()', 'private func _scheduleForegroundRecovery()', 'private func _signalConnectionWorkChanged()', 'private func _waitForForegroundConnectionToSettle(', 'private func _cancelForegroundRecovery()', 'public func handleAppBackground()']:
  s+=declaration(method)+'\n'
+s+=declaration('private func _restoreInstallationMode()').replace('private func', 'func', 1)+'\n'
 s+='}\n'
 s+=r'''
 func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),label)}
@@ -43,6 +48,19 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   preconditionFailure("Recovery did not settle")
  }
  @MainActor static func main() async throws {
+  UIApplication.shared.applicationState = .inactive
+  let launch=Driver();launch.isConnected=false;launch._restoreInstallationMode()
+  check(launch.isAwaitingAutomaticConnection && launch.starts==0,"Inactive cold launch is pending, not unavailable; VPN waits for activation")
+  let manual=Driver();manual.isConnectAutomaticallyEnabled=false;manual._restoreInstallationMode()
+  check(!manual.isAwaitingAutomaticConnection,"Automatic connect off never shows pending")
+  let unpaired=Driver();unpaired.hasPairingFile=false;unpaired._restoreInstallationMode()
+  check(!unpaired.isAwaitingAutomaticConnection,"Missing pairing retains setup guidance")
+  let server=Driver();server.isIDeviceInstallationMode=false;server._restoreInstallationMode()
+  check(!server.isAwaitingAutomaticConnection,"Server mode never shows pending tunnel")
+  UIApplication.shared.applicationState = .background
+  let backgroundLaunch=Driver();backgroundLaunch._restoreInstallationMode()
+  check(!backgroundLaunch.isAwaitingAutomaticConnection && backgroundLaunch.starts==0,"Background launch never promises an automatic connection")
+  UIApplication.shared.applicationState = .active
   let delayed=Driver();delayed.handleAppBackground()
   check(delayed.stops==0,"Delayed background event cannot stop an active app")
   UIApplication.shared.applicationState = .background;delayed.handleAppForeground()
@@ -80,7 +98,8 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   UIApplication.shared.applicationState = .active
   let duplicate=Driver();duplicate.verified=true;duplicate.handleAppForeground();duplicate.handleAppForeground();try await settled(duplicate)
   check(duplicate.checks==1,"Repeated activation cancels the obsolete recovery")
-  let starting=Driver();starting.isConnected=false;starting.handleAppForeground()
+  let starting=Driver();starting.isConnected=false;starting.isAwaitingAutomaticConnection=true;starting.handleAppForeground()
+  check(!starting.isAwaitingAutomaticConnection,"Activation consumes the pending launch state")
   check(starting.starts==1,"Disconnected foreground starts immediately")
   starting.finishStart();try await settled(starting);check(starting.starts==1,"Successful initial start isn't repeated")
   print("Foreground tunnel recovery checks passed")

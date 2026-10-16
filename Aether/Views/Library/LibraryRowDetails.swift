@@ -1,7 +1,9 @@
 import SwiftUI
+import NimbleViews
 
 /// Shared metadata hierarchy for Library apps and in-flight transfers.
 struct LibraryRowDetails: View {
+	@AppStorage("Aether.rowTextStyle") private var rowTextStyle: NBRowTextStyle = .standard
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let name: String
 	let version: String?
@@ -14,14 +16,14 @@ struct LibraryRowDetails: View {
 	var showsNumericProgress = false
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: 2) {
+		VStack(alignment: .leading, spacing: rowTextStyle.lineSpacing) {
 			Text(name)
-				.font(.headline)
+				.nbRowTitle()
 				.foregroundStyle(.primary)
 				.lineLimit(1)
 
 			Text(_secondLine)
-				.font(.subheadline)
+				.nbRowSubtitle()
 				.contentTransition(.interpolate)
 				.animation(animatesStatus && !reduceMotion ? .smooth(duration: 0.2) : nil, value: secondaryStatus)
 				.foregroundStyle(isFailed ? Color.red : Color.secondary)

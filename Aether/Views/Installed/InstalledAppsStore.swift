@@ -306,28 +306,9 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			DebugLogManager.shared.log("App lookup seconds=\(ProcessInfo.processInfo.systemUptime - lookupStarted) reusedVerification=\(staged != nil && !force) count=\(installedApps.count).", category: "Device", level: .debug)
 			// Start the first screen's icons while any fallback profiles are loading.
 			// The list never waits for this work; row requests share the same cache/task.
-			iconPrefetchTask?.cancel()
-			let confirmedApps: [AppInfo] = installedApps.filter {
-				AppInstallationProvenanceClassifier.classify($0) == .sideloaded
-			}
-			let sortedApps = confirmedApps.sorted { lhs, rhs in
-				let leftName = lhs.CFBundleDisplayName ?? lhs.CFBundleName ?? lhs.CFBundleIdentifier ?? ""
-				let rightName = rhs.CFBundleDisplayName ?? rhs.CFBundleName ?? rhs.CFBundleIdentifier ?? ""
-				return leftName.localizedCaseInsensitiveCompare(rightName) == .orderedAscending
-			}
-			// Publish the initial confirmed rows without waiting for profile fallback.
-			// During refresh, retain the visible list until classification completes
-			// so profile-confirmed rows do not disappear and reappear.
+			// Publish confirmed rows immediately and warm only the first screen.
 			if apps.isEmpty { updateApplications(with: installedApps, profiles: []) }
-			let visibleCandidates = sortedApps.prefix(8)
-			iconPrefetchTask = Task {
-				for app in visibleCandidates {
-					guard !Task.isCancelled, let id = app.CFBundleIdentifier else { return }
-					_ = try? await InstallationAppProxy.getAppIconCached(
-						for: id, cacheVersion: "\(app.CFBundleShortVersionString ?? "")|\(app.CFBundleVersion ?? "")|\(InstallationAppProxy.iconCacheRevision(for: id))"
-					)
-				}
-			}
+			prefetchFirstScreenIcons()
 			let profiles: [ProvisioningProfileInfo]
 			if installedApps.contains(where: AppInstallationProvenanceClassifier.needsProvisioningProfile) {
 				do {
@@ -355,6 +336,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			}
 			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
 			updateApplications(with: installedApps, profiles: profiles)
+			prefetchFirstScreenIcons()
 			hasLoadedApps = true
 			lastLoadedAt = Date()
 			DebugLogManager.shared.log(
@@ -371,6 +353,20 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 				category: "Device",
 				level: .error
 			)
+		}
+	}
+
+	private func prefetchFirstScreenIcons() {
+		iconPrefetchTask?.cancel()
+		// Use the displayed order, including apps confirmed by profile fallback.
+		// Cache hits and in-flight requests are shared with visible rows.
+		let firstScreen = Array(apps.prefix(8))
+		iconPrefetchTask = Task {
+			for app in firstScreen {
+				guard !Task.isCancelled else { return }
+				_ = try? await InstallationAppProxy.getAppIconCached(
+					for: app.bundleIdentifier, cacheVersion: app.iconCacheVersion)
+			}
 		}
 	}
 

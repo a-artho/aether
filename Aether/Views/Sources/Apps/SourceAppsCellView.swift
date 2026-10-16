@@ -14,6 +14,7 @@ import NukeUI
 
 // thats a whole pharaghraph of codes
 struct SourceAppsCellView: View {
+	@AppStorage("Aether.rowTextStyle") private var rowTextStyle: NBRowTextStyle = .standard
 	@Environment(\.displayScale) private var displayScale
 	@AppStorage("Aether.storeCellAppearance") private var _storeCellAppearance: Int = 0
 	
@@ -42,7 +43,7 @@ struct SourceAppsCellView: View {
 				_selectableContent {
 					Text(desc)
 						.frame(maxWidth: .infinity, alignment: .leading)
-						.font(.subheadline)
+						.nbRowSubtitle()
 						.foregroundStyle(.secondary)
 						.padding(.top, 2)
 				}
@@ -87,10 +88,10 @@ struct SourceAppsCellView: View {
 	private func _subtitleView() -> some View {
 		let version = app.currentVersion.flatMap { $0.isEmpty ? nil : $0 }
 
-		VStack(alignment: .leading, spacing: 2) {
+		VStack(alignment: .leading, spacing: rowTextStyle.lineSpacing) {
 			if let version {
 				Text(version)
-					.font(.subheadline)
+					.nbRowSubtitle()
 					.foregroundStyle(.secondary)
 					.lineLimit(1)
 			}

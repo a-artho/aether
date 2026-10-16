@@ -27,6 +27,35 @@ final class SourcesViewModel: ObservableObject {
 	@Published private(set) var refreshErrors: [String: String] = [:]
 	
 	@Published private(set) var catalogRevision = 0
+	@Published private(set) var isRefreshRequested = false
+	@Published private var sourceRefreshOwners: [String: Set<UUID>] = [:]
+	private var requestedRefreshTask: Task<Void, Never>?
+
+	func isRefreshing(_ source: AltSource) -> Bool {
+		sourceRefreshOwners[source.objectID.uriRepresentation().absoluteString]?.isEmpty == false
+	}
+
+	/// Own user-triggered refresh independently of the pull control's short animation.
+	@discardableResult
+	func startRefresh(_ sources: [AltSource]) -> Task<Void, Never> {
+		if let requestedRefreshTask { return requestedRefreshTask }
+		isRefreshRequested = true
+		let task = Task { @MainActor in
+			defer { requestedRefreshTask = nil; isRefreshRequested = false }
+			if !isFinished {
+				let previousAttempt = _lastGlobalAttempt
+				for await finished in $isFinished.values {
+					if finished { break }
+				}
+				// Join an already-running global refresh instead of fetching it twice.
+				if _lastGlobalAttempt != previousAttempt { return }
+			}
+			await fetchSources(sources, refresh: true)
+		}
+		requestedRefreshTask = task
+		return task
+	}
+
 	@Published private(set) var isFinished = true
 	@Published private(set) var sources: [String: ASRepository] = [:]
 
@@ -140,7 +169,7 @@ final class SourcesViewModel: ObservableObject {
 
 	/// Check globally once per session, then on foreground after fifteen minutes.
 	func refreshIfNeeded(_ sources: [AltSource], now: Date = .now) async {
-		guard isFinished, !sources.isEmpty else { return }
+		guard isFinished, !isRefreshRequested, !sources.isEmpty else { return }
 		if !_hasStartedGlobalRefresh || now.timeIntervalSince(_lastGlobalAttempt ?? .distantPast) >= 15 * 60 {
 			await fetchSources(sources, refresh: true)
 		} else {
@@ -187,6 +216,14 @@ final class SourcesViewModel: ObservableObject {
 	private func _fetchRequests(_ requests: [SourceRequest], refresh: Bool, batchSize: Int, restoreCached: Bool = true) async {
 		let generation = cacheResetGeneration
 		guard !Task.isCancelled else { return }
+		let owner = UUID()
+		for request in requests { sourceRefreshOwners[request.key, default: []].insert(owner) }
+		defer {
+			for request in requests {
+				sourceRefreshOwners[request.key]?.remove(owner)
+				if sourceRefreshOwners[request.key]?.isEmpty == true { sourceRefreshOwners[request.key] = nil }
+			}
+		}
 		if restoreCached { await _restoreCachedSources(requests) }
 		guard generation == cacheResetGeneration else { return }
 		let service = _repositoryService
@@ -211,6 +248,8 @@ final class SourcesViewModel: ObservableObject {
 					}
 				}
 				for await (key, snapshot, error) in group {
+					sourceRefreshOwners[key]?.remove(owner)
+					if sourceRefreshOwners[key]?.isEmpty == true { sourceRefreshOwners[key] = nil }
 					guard !Task.isCancelled, generation == cacheResetGeneration else { group.cancelAll(); break }
 					guard !removedSourceKeys.contains(key) else { continue }
 					refreshErrors[key] = error

@@ -19,6 +19,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 	@State private var width: CGFloat = 320
 	@State private var isVisible = false
 	@State private var selectedInfoApp: InstalledApp?
+	@State private var infoDetent: PresentationDetent = .height(370)
 	@State private var pendingUninstall: InstalledApp?
 	@State private var deletingIDs = Set<String>()
 	@State private var deletionError: String?
@@ -48,6 +49,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 					Button {
 						searchFocused = false
 						HapticManager.shared.impact()
+						infoDetent = .height(370)
 						selectedInfoApp = app
 					} label: {
 						InstalledAppCellView(app: app, loadsIcon: loadsIcons)
@@ -98,6 +100,9 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 						}
 					}
 			}
+			.presentationDetents([.height(370), .large], selection: $infoDetent)
+			.presentationContentInteraction(.scrolls)
+			.presentationDragIndicator(.visible)
 		}
 		.onChange(of: store.apps.map(\.id)) { _, ids in
 			if let app = selectedInfoApp, !ids.contains(app.id) { selectedInfoApp = nil }

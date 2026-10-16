@@ -12,6 +12,7 @@ import NimbleViews
 
 // MARK: - View
 struct FRIconCellView<Subtitle: View>: View {
+	@AppStorage("Aether.rowTextStyle") private var rowTextStyle: NBRowTextStyle = .standard
 	@Environment(\.displayScale) private var displayScale
 	var title: String
 	var subtitleView: Subtitle
@@ -64,13 +65,13 @@ struct FRIconCellView<Subtitle: View>: View {
 				standardIcon
 			}
 			
-			VStack(alignment: .leading, spacing: 2) {
+			VStack(alignment: .leading, spacing: rowTextStyle.lineSpacing) {
 				Text(title)
-					.font(.headline)
+					.nbRowTitle()
 					.foregroundColor(.primary)
 					.lineLimit(1)
 				subtitleView
-					.font(.subheadline)
+					.nbRowSubtitle()
 					.foregroundColor(.secondary)
 					.lineLimit(1)
 			}

@@ -51,7 +51,7 @@ jobs:
             -configuration Release -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/AetherRelease" -skipPackagePluginValidation \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
-            DEVELOPMENT_TEAM= DEPLOYMENT_LOCATION=NO CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" build
+            DEVELOPMENT_TEAM= AD_HOC_CODE_SIGNING_ALLOWED=NO DEPLOYMENT_LOCATION=NO CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" build
           cp deps/* "$RUNNER_TEMP/AetherRelease/Build/Products/Release-iphoneos/Aether.app/"
 
       - name: Package and verify unsigned IPA

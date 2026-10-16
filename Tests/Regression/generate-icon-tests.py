@@ -16,6 +16,7 @@ private final class IconImage:NSObject {
  struct Pixels { let bytesPerRow=4; let height=1 }
  var cgImage:Pixels? { Pixels() }
  init?(data:Data) { if data.isEmpty { return nil }; super.init() }
+ func preparingThumbnail(of size:CGSize)->IconImage? { self }
 }
 private enum IconApplication { static let didEnterBackgroundNotification=Notification.Name("IconTestBackground"); static let didReceiveMemoryWarningNotification=Notification.Name("IconTestMemory") }
 private final class IconProxy {}
@@ -83,6 +84,26 @@ final class IconOptimizationTests:XCTestCase {
   let files=try FileManager.default.contentsOfDirectory(at:iconTestDirectory,includingPropertiesForKeys:nil)
   try FileManager.default.setAttributes([.modificationDate:Date().addingTimeInterval(-31*86400)],ofItemAtPath:files[0].path)
   XCTAssertNil(reopened.image(for:"device|app|1"))
+ }
+ func testFirstFrameMemoryLookupIsScopedAndDoesNotFetch() async throws {
+  let id="memory-"+UUID().uuidString
+  IconProxy.setIconDeviceScope(pairingDigest:Data([42]),endpoint:"test")
+  let count=IconNative.fetched
+  XCTAssertNil(IconProxy.appIconInMemory(for:id,cacheVersion:"1"))
+  XCTAssertEqual(IconNative.fetched,count)
+  let image=try await IconProxy.getAppIconCached(for:id,cacheVersion:"1")
+  XCTAssertNotNil(image)
+  XCTAssertTrue(IconProxy.appIconInMemory(for:id,cacheVersion:"1") === image)
+  let after=IconNative.fetched
+  XCTAssertNil(IconProxy.appIconInMemory(for:id,cacheVersion:"2"))
+  IconProxy.invalidateAppIcon(for:id)
+  XCTAssertNil(IconProxy.appIconInMemory(for:id,cacheVersion:"1"))
+  IconProxy.setIconDeviceScope(pairingDigest:Data([43]),endpoint:"test")
+  XCTAssertNil(IconProxy.appIconInMemory(for:id,cacheVersion:"1"))
+  XCTAssertEqual(IconNative.fetched,after,"Memory misses must not trigger device work")
+  IconProxy.setIconDeviceScope(pairingDigest:nil,endpoint:"test")
+  XCTAssertNil(IconProxy.appIconInMemory(for:id,cacheVersion:"1"))
+  UserDefaults.standard.removeObject(forKey:"InstalledIconRevision."+id)
  }
  func testPairingAndEndpointScopeAndInstallInvalidation() throws {
   let file=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

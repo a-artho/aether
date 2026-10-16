@@ -14,16 +14,20 @@ struct SourcesCellView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	
 	var source: AltSource
+	var isRefreshing = false
 	
 	// MARK: Body
 	var body: some View {
 		let isRegular = horizontalSizeClass != .compact
 		
+		HStack(spacing: 12) {
 		FRIconCellView(
 			title: source.name ?? .localized("Unknown"),
 			subtitle: source.sourceURL?.absoluteString ?? "",
 			iconUrl: source.iconURL
 		)
+			if isRefreshing { ProgressView().controlSize(.small) }
+		}
 		.padding(isRegular ? 12 : 0)
 		.background(
 			isRegular

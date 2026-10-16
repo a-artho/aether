@@ -13,6 +13,7 @@ struct SourcesView: View {
 	@StateObject var viewModel = SourcesViewModel.shared
 	@State private var _searchText = ""
 	@State private var _refreshErrorMessage: String?
+	@State private var _reportRefreshFailures = false
 	@State private var _toolbarWidth: CGFloat = 320
 	@State private var _isSearchFocused = false
 	// Keep the collection keyboard state outside the pushed destination.
@@ -83,7 +84,7 @@ struct SourcesView: View {
 									.source(objectURI: source.objectID.uriRepresentation().absoluteString)
 								)
 							) {
-								SourcesCellView(source: source)
+								SourcesCellView(source: source, isRefreshing: viewModel.isRefreshing(source))
 							}
 							.buttonStyle(.plain)
 						}
@@ -136,7 +137,13 @@ struct SourcesView: View {
 				}
 			}
 			.refreshable {
-				await viewModel.fetchSources(_sources, refresh: true)
+				_reportRefreshFailures = true
+				viewModel.startRefresh(Array(_sources))
+				await Task.yield()
+			}
+			.onChange(of: viewModel.isRefreshRequested) { old, requested in
+				guard old && !requested && _reportRefreshFailures else { return }
+				_reportRefreshFailures = false
 				let failures = _sources.compactMap { source -> String? in
 					let key = source.objectID.uriRepresentation().absoluteString
 					guard let error = viewModel.refreshErrors[key] else { return nil }

@@ -50,7 +50,7 @@ actor SourceRepositoryService {
  var fetches=0;var reads=0
  func cached(for url:URL) async -> Snapshot? {reads+=1;return nil}
  func fetch(from url:URL,refresh:Bool,allowEmptyCatalog:Bool) async throws -> Snapshot {
-  fetches+=1;try await Task.sleep(nanoseconds:100_000_000)
+  fetches+=1;try await Task.sleep(nanoseconds:url.lastPathComponent == "slow" ? 400_000_000 : 100_000_000)
   return Snapshot(revision:"one",repository:ASRepository(id:1))
  }
 }
@@ -58,10 +58,11 @@ struct Log {func error(_ s:String){}}
 enum Logger {static let misc=Log()}
 @MainActor final class VM {
  struct SourceRequest:Sendable {let key:String;let sourceURL:URL?}
+ var sourceRefreshOwners:[String:Set<UUID>]=[:]
  let _repositoryService=SourceRepositoryService();var sources:[String:ASRepository]=[:]
  var _revisions:[String:String]=[:];var removedSourceKeys=Set<String>();var cacheResetGeneration=UUID();var catalogRevision=0;var refreshErrors:[String:String]=[:]
 '''
-for name in ['func ensureSourcesLoaded(', 'private func _restoreCachedSources(', 'private func _fetchRequests(']:
+for name in ['func isRefreshing(', 'func ensureSourcesLoaded(', 'private func _restoreCachedSources(', 'private func _fetchRequests(']:
     s += declaration('Aether/Views/Sources/SourcesViewModel.swift', name)+'\n'
 s += '}\n'
 s += r'''
@@ -162,6 +163,18 @@ func check(_ value:@autoclosure ()->Bool,_ message:String){precondition(value(),
   check(vm.sources.isEmpty && vm.refreshErrors.isEmpty,"Cancellation publishes neither stale catalog nor failure")
   let reads=await vm._repositoryService.reads
   check(reads==8,"Navigation does not repeat cache-miss restoration")
+
+  check(vm.sourceRefreshOwners.isEmpty,"Cancellation releases repository row spinners")
+  let independent=VM()
+  let fast=AltSource(objectID:ObjectID(key:"source://fast"),sourceURL:URL(string:"https://fixture.test/fast"))
+  let slow=AltSource(objectID:ObjectID(key:"source://slow"),sourceURL:URL(string:"https://fixture.test/slow"))
+  let refresh=Task {await independent.ensureSourcesLoaded([fast,slow],batchSize:2)}
+  while await independent._repositoryService.fetches < 2 {await Task.yield()}
+  check(independent.isRefreshing(fast) && independent.isRefreshing(slow),"Concurrent repositories own separate row spinners")
+  try await Task.sleep(nanoseconds:200_000_000)
+  check(!independent.isRefreshing(fast) && independent.isRefreshing(slow),"Completed repository stops independently of a slow repository")
+  await refresh.value
+  check(independent.sourceRefreshOwners.isEmpty,"All repository indicators settle")
   check(Search(searchText:"fixture").matchesSearch("Other","com.fixture.app"),"Library search matches bundle identifiers")
   check(!Search(searchText:"absent").matchesSearch("Fixture"),"Unmatched entries are excluded")
   print("Whole-app restore/cancellation/search checks passed")

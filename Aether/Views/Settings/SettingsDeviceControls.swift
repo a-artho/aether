@@ -30,7 +30,7 @@ struct SettingsDeviceControls: View {
 
 	private var tunnelStatus: String {
 		if installationMethod != 1 { return .localized("Local only") }
-		if connection.isUpdating { return .localized("Connecting…") }
+		if connection.isUpdating || connection.isAwaitingAutomaticConnection { return .localized("Connecting…") }
 		if connection.isConnected { return .localized("Connected") }
 		if !connection.hasPairingFile { return .localized("Pairing needed") }
 		if connection.requiresInAppTunnelSetup { return .localized("Setup needed") }

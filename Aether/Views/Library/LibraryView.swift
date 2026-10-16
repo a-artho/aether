@@ -10,6 +10,7 @@ import UIKit
 
 @MainActor
 struct LibraryView: View {
+	@AppStorage("Aether.rowTextStyle") private var rowTextStyle: NBRowTextStyle = .standard
 	@StateObject private var imports = UnifiedImportsController()
 	@AppStorage("Aether.installationMethod") private var installationMethod = 0
 	@StateObject private var store: InstalledAppsStore
@@ -20,6 +21,12 @@ struct LibraryView: View {
 	@ObservedObject private var sourcesViewModel = SourcesViewModel.shared
 	@FetchRequest(sortDescriptors: []) private var sources: FetchedResults<AltSource>
 	@State private var updateContexts: [String: [SourceAppCatalogContext]] = [:]
+	@State private var libraryRefreshTask: Task<Void, Never>?
+	@State private var libraryRefreshInProgress = false
+	@State private var updateCheckID: UUID?
+	@State private var noUpdatesUntil: Date?
+	@State private var updateCheckRevision = 0
+
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@State private var searchText = ""
 	@State private var searchFocused = false
@@ -175,12 +182,16 @@ struct LibraryView: View {
 				.modifier(UnifiedImportsDataSource(controller: imports))
 				.refreshable {
 					guard loadsApps else { return }
-					await store.refresh(force: true)
+					startLibraryRefresh()
+					await Task.yield()
 				}
 			}
 			.task {
 				guard loadsApps else { return }
-				await store.load()
+				let repositories = sourcesViewModel.startRefresh(Array(sources))
+				async let installed: Void = store.load()
+				await repositories.value
+				await installed
 			}
 			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { toolbarWidth = $0 }
 			.modifier(SearchToolbarModifier(
@@ -209,12 +220,19 @@ struct LibraryView: View {
 			}
 		}
 		.task(id: updateRequest) {
+			let checkID = UUID()
+			updateCheckID = checkID
+			noUpdatesUntil = nil
+			defer { if updateCheckID == checkID { updateCheckID = nil } }
 			guard loadsApps, installationMethod == 1, !store.apps.isEmpty else {
 				updateContexts = [:]
 				_ = try? await InstalledAppUpdateCatalog.shared.updates(installedVersions: [:], contexts: [])
 				return
 			}
+			guard !libraryRefreshInProgress, !store.isLoading,
+				sourcesViewModel.isFinished, !sourcesViewModel.isRefreshRequested else { return }
 			await sourcesViewModel.ensureSourcesLoaded(Array(sources))
+			guard !Task.isCancelled else { return }
 			let versions = store.apps.reduce(into: [String: String]()) { values, app in
 				if let version = app.version { values[app.bundleIdentifier] = version }
 			}
@@ -227,27 +245,65 @@ struct LibraryView: View {
 				let matches = try await InstalledAppUpdateCatalog.shared.updates(installedVersions: versions, contexts: contexts)
 				try Task.checkCancellation()
 				updateContexts = matches
+				if matches.values.allSatisfy({ $0.isEmpty }), sourcesViewModel.refreshErrors.isEmpty,
+					store.errorMessage == nil, contexts.count == sources.count {
+					noUpdatesUntil = Date().addingTimeInterval(2)
+				}
 			} catch is CancellationError {} catch { updateContexts = [:] }
 		}
+		.task(id: noUpdatesUntil) {
+			guard let deadline = noUpdatesUntil else { return }
+			do {
+				try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+				if noUpdatesUntil == deadline { noUpdatesUntil = nil }
+			} catch {}
+		}
+	}
+
+	private func startLibraryRefresh() {
+		guard libraryRefreshTask == nil else { return }
+		libraryRefreshInProgress = true
+		noUpdatesUntil = nil
+		let repositories = sourcesViewModel.startRefresh(Array(sources))
+		libraryRefreshTask = Task { @MainActor in
+			defer {
+				libraryRefreshTask = nil
+				libraryRefreshInProgress = false
+				updateCheckRevision &+= 1
+			}
+			async let installed: Void = store.refresh(force: true)
+			await repositories.value
+			await installed
+		}
+	}
+
+	private var isCheckingForUpdates: Bool {
+		libraryRefreshInProgress || sourcesViewModel.isRefreshRequested || !sourcesViewModel.isFinished || updateCheckID != nil
+	}
+
+	private var isConnectingTunnel: Bool {
+		connection.isUpdating || connection.isAwaitingAutomaticConnection
 	}
 
 	private var showsDevicePlaceholder: Bool {
 		installationMethod == 0 || (store.apps.isEmpty && (
 			!connection.hasPairingFile || connection.requiresInAppTunnelSetup
 			|| (_showsCellularConnectionGuidance && _needsManualCellularRefresh)
-			|| (!connection.isConnected && !connection.isUpdating && !cellularAssist.isBusy)
+			|| (!connection.isConnected && !isConnectingTunnel && !cellularAssist.isBusy)
 		))
 	}
 
 	private var allAppsIsBusy: Bool {
-		connection.isUpdating || cellularAssist.isBusy || store.isLoading
+		isConnectingTunnel || cellularAssist.isBusy || store.isLoading || isCheckingForUpdates
 	}
 
 	private var allAppsSubtitle: String {
-		if connection.isUpdating || cellularAssist.isBusy {
+		if isConnectingTunnel || cellularAssist.isBusy {
 			return .localized("Connecting Tunnel")
 		}
 		if store.isLoading { return .localized("Loading Installed Apps") }
+		if isCheckingForUpdates { return .localized("Checking for Updates…") }
+		if noUpdatesUntil != nil { return .localized("No Updates Available") }
 		return .localized("See all sideloaded apps")
 	}
 
@@ -292,12 +348,12 @@ struct LibraryView: View {
 				.symbolRenderingMode(.hierarchical)
 				.foregroundStyle(.secondary)
 				.frame(width: 50, height: 50)
-			VStack(alignment: .leading, spacing: 2) {
+			VStack(alignment: .leading, spacing: rowTextStyle.lineSpacing) {
 				Text(String.localized("All Apps"))
-					.font(.headline)
+					.nbRowTitle()
 					.foregroundStyle(.primary)
 				Text(subtitle)
-					.font(.subheadline)
+					.nbRowSubtitle()
 					.foregroundStyle(.secondary)
 			}
 			.padding(.vertical, 2)
@@ -341,7 +397,9 @@ struct LibraryView: View {
 	}
 
 	private var updateRequest: [String] {
-		[String(installationMethod), String(sourcesViewModel.catalogRevision)]
+		[String(installationMethod), String(sourcesViewModel.catalogRevision),
+			String(store.isLoading), String(libraryRefreshInProgress),
+			String(sourcesViewModel.isFinished), String(sourcesViewModel.isRefreshRequested), String(updateCheckRevision)]
 			+ store.apps.flatMap { [$0.bundleIdentifier, $0.version ?? ""] }
 			+ sources.flatMap { [$0.objectID.uriRepresentation().absoluteString, $0.sourceURL?.absoluteString ?? ""] }
 	}
@@ -368,7 +426,7 @@ struct LibraryView: View {
 			return DeviceStatus(title: .localized("VPN Setup Required"), description: .localized("Set up Aether’s VPN profile to connect to your device."), icon: "network.badge.shield.half.filled", action: .setupVPN, buttonTitle: .localized("Set Up"))
 		} else if _showsCellularConnectionGuidance && store.apps.isEmpty {
 			return DeviceStatus(title: _needsManualCellularRefresh ? .localized("Refresh Cellular Connection") : .localized("Connecting on Cellular"), description: _needsManualCellularRefresh ? .localized("Turn off Mobile Data or briefly enable Airplane Mode. Switch it back on once Aether connects.") : .localized("Aether is refreshing the cellular connection to reach your device."), icon: "antenna.radiowaves.left.and.right", busy: true)
-		} else if connection.isUpdating && store.apps.isEmpty {
+		} else if isConnectingTunnel && store.apps.isEmpty {
 			return DeviceStatus(title: .localized("Connecting Tunnel"), description: .localized("Aether is connecting so you can view sideloaded apps or spoof device location."), icon: "network", busy: true)
 		} else if !connection.isConnected && store.apps.isEmpty {
 			return DeviceStatus(title: .localized("Tunnel Unavailable"), description: .localized("Reconnect the tunnel to view sideloaded apps or spoof device location."), icon: "network.slash", action: .reconnect, buttonTitle: .localized("Retry"))
@@ -509,13 +567,12 @@ struct InstalledAppIconView: View {
 
 	var body: some View {
 		Group {
-			if let image {
-				Image(uiImage: image).appIconStyle(size: size)
+			if let displayedImage = image ?? (loadsIcon ? InstallationAppProxy.appIconInMemory(for: bundleIdentifier, cacheVersion: cacheVersion) : nil) {
+				Image(uiImage: displayedImage).appIconStyle(size: size)
 			} else {
 				Image("App_Unknown").appIconStyle(size: size)
 			}
 		}
-		.animation(.easeIn(duration: 0.15), value: image != nil)
 		.task(id: bundleIdentifier + "|" + cacheVersion) {
 			await loadIcon()
 		}
@@ -528,7 +585,9 @@ struct InstalledAppIconView: View {
 			cacheVersion: cacheVersion
 		)
 		guard !Task.isCancelled else { return }
-		withAnimation(.easeIn(duration: 0.15)) { image = loaded }
+		var transaction = Transaction()
+		transaction.disablesAnimations = true
+		withTransaction(transaction) { image = loaded }
 	}
 }
 
