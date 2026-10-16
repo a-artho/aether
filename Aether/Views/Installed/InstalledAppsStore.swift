@@ -123,7 +123,7 @@ struct InstalledApp: Identifiable, Equatable, Hashable {
 @MainActor
 final class InstalledAppsStore: NSObject, ObservableObject {
 	static let shared = InstalledAppsStore()
-	private var hasLoadedApps = false
+	@Published private(set) var hasLoadedApps = false
 	private var lastLoadedAt: Date?
 	private var verifiedApps: [AppInfo]?
 	private var initialBrowse: Task<[AppInfo]?, Never>?
@@ -320,12 +320,12 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 						category: "Device"
 					)
 				} catch {
-					profiles = []
 					DebugLogManager.shared.log(
 						"Could not load provisioning profiles: \(error.localizedDescription)",
 						category: "Device",
 						level: .error
 					)
+					throw error
 				}
 			} else {
 				profiles = []

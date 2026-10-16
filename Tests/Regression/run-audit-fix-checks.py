@@ -67,7 +67,7 @@ enum State { case connected, disconnected, connecting, disconnecting }
 final class Connection {
  var connectionEpoch: UInt64 = 0; var activeVerificationID: UUID?
  func _cancelForegroundRecovery() {}
- var isAwaitingAutomaticConnection=false
+ var awaitingInitialActivation=false
  var connectionPreparation: UUID? = UUID(); var state: State = .connecting; var proceeded = false
  var isUpdating: Bool { state == .connecting || state == .disconnecting }
 '''+guards+'\n proceeded = true\n}\n}\n'

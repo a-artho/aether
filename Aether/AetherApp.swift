@@ -47,6 +47,7 @@ struct AetherApp: App {
 					Task { await deviceConnection.reconcile() }
 				}
 				.onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+					deviceConnection.prepareForForeground()
 					Task { await installedApps.refreshOnForeground() }
 				}
 			.onReceive(NotificationCenter.default.publisher(for: .heartbeatInvalidHost)) { _ in

@@ -228,36 +228,40 @@ final class SourcesViewModel: ObservableObject {
 		guard generation == cacheResetGeneration else { return }
 		let service = _repositoryService
 		let size = max(1, batchSize)
-		for startIndex in stride(from: 0, to: requests.count, by: size) {
-			guard !Task.isCancelled, generation == cacheResetGeneration else { return }
-			let batch = requests[startIndex..<min(startIndex + size, requests.count)]
-			await withTaskGroup(of: (String, SourceRepositoryService.Snapshot?, String?).self) { group in
-				for request in batch {
-					group.addTask {
-						guard !Task.isCancelled else { return (request.key, nil, nil) }
-						guard let url = request.sourceURL else { return (request.key, nil, "Invalid source URL.") }
-						do {
-							return (request.key, try await service.fetch(from: url, refresh: refresh, allowEmptyCatalog: true), nil)
-						} catch is CancellationError {
-							return (request.key, nil, nil)
-						} catch {
-							guard !Task.isCancelled else { return (request.key, nil, nil) }
-							Logger.misc.error("Source refresh failed: \(url.absoluteString): \(error.localizedDescription)")
-							return (request.key, nil, error.localizedDescription)
-						}
-					}
+		let fetch: @Sendable (SourceRequest) async -> (String, SourceRepositoryService.Snapshot?, String?) = { request in
+			guard !Task.isCancelled else { return (request.key, nil, nil) }
+			guard let url = request.sourceURL else { return (request.key, nil, "Invalid source URL.") }
+			do {
+				return (request.key, try await service.fetch(from: url, refresh: refresh, allowEmptyCatalog: true), nil)
+			} catch is CancellationError {
+				return (request.key, nil, nil)
+			} catch {
+				guard !Task.isCancelled else { return (request.key, nil, nil) }
+				Logger.misc.error("Source refresh failed: \(url.absoluteString): \(error.localizedDescription)")
+				return (request.key, nil, error.localizedDescription)
+			}
+		}
+		await withTaskGroup(of: (String, SourceRepositoryService.Snapshot?, String?).self) { group in
+			var nextIndex = 0
+			for request in requests.prefix(size) {
+				group.addTask { await fetch(request) }
+				nextIndex += 1
+			}
+			for await (key, snapshot, error) in group {
+				sourceRefreshOwners[key]?.remove(owner)
+				if sourceRefreshOwners[key]?.isEmpty == true { sourceRefreshOwners[key] = nil }
+				guard !Task.isCancelled, generation == cacheResetGeneration else { group.cancelAll(); break }
+				if nextIndex < requests.count {
+					let request = requests[nextIndex]
+					nextIndex += 1
+					group.addTask { await fetch(request) }
 				}
-				for await (key, snapshot, error) in group {
-					sourceRefreshOwners[key]?.remove(owner)
-					if sourceRefreshOwners[key]?.isEmpty == true { sourceRefreshOwners[key] = nil }
-					guard !Task.isCancelled, generation == cacheResetGeneration else { group.cancelAll(); break }
-					guard !removedSourceKeys.contains(key) else { continue }
-					refreshErrors[key] = error
-					if let snapshot, _revisions[key] != snapshot.revision {
-						_revisions[key] = snapshot.revision
-						self.sources[key] = snapshot.repository
-						catalogRevision += 1
-					}
+				guard !removedSourceKeys.contains(key) else { continue }
+				refreshErrors[key] = error
+				if let snapshot, _revisions[key] != snapshot.revision {
+					_revisions[key] = snapshot.revision
+					self.sources[key] = snapshot.repository
+					catalogRevision += 1
 				}
 			}
 		}

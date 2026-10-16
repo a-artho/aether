@@ -168,11 +168,14 @@ func check(_ value:@autoclosure ()->Bool,_ message:String){precondition(value(),
   let independent=VM()
   let fast=AltSource(objectID:ObjectID(key:"source://fast"),sourceURL:URL(string:"https://fixture.test/fast"))
   let slow=AltSource(objectID:ObjectID(key:"source://slow"),sourceURL:URL(string:"https://fixture.test/slow"))
-  let refresh=Task {await independent.ensureSourcesLoaded([fast,slow],batchSize:2)}
+  let later=AltSource(objectID:ObjectID(key:"source://later"),sourceURL:URL(string:"https://fixture.test/later"))
+  let refresh=Task {await independent.ensureSourcesLoaded([fast,slow,later],batchSize:2)}
   while await independent._repositoryService.fetches < 2 {await Task.yield()}
   check(independent.isRefreshing(fast) && independent.isRefreshing(slow),"Concurrent repositories own separate row spinners")
   try await Task.sleep(nanoseconds:200_000_000)
   check(!independent.isRefreshing(fast) && independent.isRefreshing(slow),"Completed repository stops independently of a slow repository")
+  let started=await independent._repositoryService.fetches
+  check(started==3,"A free refresh slot starts the next repo before the slow repo finishes")
   await refresh.value
   check(independent.sourceRefreshOwners.isEmpty,"All repository indicators settle")
   check(Search(searchText:"fixture").matchesSearch("Other","com.fixture.app"),"Library search matches bundle identifiers")

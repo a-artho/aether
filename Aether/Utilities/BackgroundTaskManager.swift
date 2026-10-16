@@ -61,7 +61,7 @@ class BackgroundTaskManager: ObservableObject {
         backgroundObserver = BackgroundNotificationToken(NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
             object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, UIApplication.shared.applicationState == .background else { return }
                 for (token, work) in Array(self.workByToken) where work.task == nil && work.fallback == .invalid {
                     self._interrupt(token, work: work, reason: "noExecutionOnBackground")
                 }

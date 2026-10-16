@@ -26,7 +26,7 @@ private enum StartupDiagnostic { case checking,pairingMissing,tunnelUnavailable 
 }
 @MainActor private final class StartupFixture {
  var isIDeviceInstallationMode=true;var isConnected=false;var hasPairingFile=true
- var isAwaitingAutomaticConnection=false
+ var awaitingInitialActivation=false
  var connectionEpoch:UInt64=0;var activeVerificationID:UUID?
  var connectionPreparation:UUID?;var diagnostic=StartupDiagnostic.tunnelUnavailable
  var isUpdating:Bool { connectionPreparation != nil }
@@ -139,7 +139,7 @@ private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UU
 @MainActor private final class AutomationFixture {
  static let disconnectWhenIdleKey="Aether.autoTunnelLifecycle",connectAutomaticallyKey="Aether.connectAutomatically",unresolvedSimulationKey="AutoTestSimulation"
  var isDisconnectWhenIdleEnabled:Bool;var isConnectAutomaticallyEnabled:Bool
- var isAwaitingAutomaticConnection=false;var hasPairingFile=true
+ var awaitingInitialActivation=false;var hasPairingFile=true
  var lastVerifiedAt:TimeInterval=0;var isIDeviceInstallationMode=true;var isConnected=false;var isUpdating=false
  var state=StartupFixture.StartupState.disconnected;var diagnostic=StartupDiagnostic.tunnelUnavailable
  var hasActiveTunnelDependencies=false;var starts=0;var stops=0

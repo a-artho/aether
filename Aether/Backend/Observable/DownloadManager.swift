@@ -61,14 +61,15 @@ class DownloadManager: NSObject, ObservableObject {
 		_foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
 			object: nil, queue: .main) { [weak self] _ in
 			Task { @MainActor in
-				self?._foregroundGeneration &+= 1
-				self?._resumeInterruptedProcessing()
+				guard let self, UIApplication.shared.applicationState == .active else { return }
+				self._foregroundGeneration &+= 1
+				self._resumeInterruptedProcessing()
 			}
 		}
 		_backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
 			object: nil, queue: .main) { [weak self] _ in
 			Task { @MainActor in
-				guard let self else { return }
+				guard let self, UIApplication.shared.applicationState == .background else { return }
 				#if !targetEnvironment(macCatalyst)
 				for download in self.downloads {
 					guard case .processing = download.state,

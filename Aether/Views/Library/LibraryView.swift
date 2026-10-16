@@ -188,9 +188,9 @@ struct LibraryView: View {
 			}
 			.task {
 				guard loadsApps else { return }
-				let repositories = sourcesViewModel.startRefresh(Array(sources))
+				async let repositories: Void = sourcesViewModel.refreshIfNeeded(Array(sources))
 				async let installed: Void = store.load()
-				await repositories.value
+				await repositories
 				await installed
 			}
 			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { toolbarWidth = $0 }
@@ -229,7 +229,7 @@ struct LibraryView: View {
 				_ = try? await InstalledAppUpdateCatalog.shared.updates(installedVersions: [:], contexts: [])
 				return
 			}
-			guard !libraryRefreshInProgress, !store.isLoading,
+			guard !libraryRefreshInProgress, !isLoadingInstalledApps,
 				sourcesViewModel.isFinished, !sourcesViewModel.isRefreshRequested else { return }
 			await sourcesViewModel.ensureSourcesLoaded(Array(sources))
 			guard !Task.isCancelled else { return }
@@ -293,15 +293,19 @@ struct LibraryView: View {
 		))
 	}
 
+	private var isLoadingInstalledApps: Bool {
+		store.isLoading || (connection.isConnected && !store.hasLoadedApps && store.errorMessage == nil)
+	}
+
 	private var allAppsIsBusy: Bool {
-		isConnectingTunnel || cellularAssist.isBusy || store.isLoading || isCheckingForUpdates
+		isConnectingTunnel || cellularAssist.isBusy || isLoadingInstalledApps || isCheckingForUpdates
 	}
 
 	private var allAppsSubtitle: String {
 		if isConnectingTunnel || cellularAssist.isBusy {
 			return .localized("Connecting Tunnel")
 		}
-		if store.isLoading { return .localized("Loading Installed Apps") }
+		if isLoadingInstalledApps { return .localized("Loading Installed Apps") }
 		if isCheckingForUpdates { return .localized("Checking for Updates…") }
 		if noUpdatesUntil != nil { return .localized("No Updates Available") }
 		return .localized("See all sideloaded apps")
@@ -398,7 +402,7 @@ struct LibraryView: View {
 
 	private var updateRequest: [String] {
 		[String(installationMethod), String(sourcesViewModel.catalogRevision),
-			String(store.isLoading), String(libraryRefreshInProgress),
+			String(store.isLoading), String(store.hasLoadedApps), String(libraryRefreshInProgress),
 			String(sourcesViewModel.isFinished), String(sourcesViewModel.isRefreshRequested), String(updateCheckRevision)]
 			+ store.apps.flatMap { [$0.bundleIdentifier, $0.version ?? ""] }
 			+ sources.flatMap { [$0.objectID.uriRepresentation().absoluteString, $0.sourceURL?.absoluteString ?? ""] }

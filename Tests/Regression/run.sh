@@ -53,3 +53,7 @@ python3 "$test_dir/run-installation-progress-checks.py"
 python3 "$test_dir/run-unified-handoff-checks.py"
 
 python3 "$test_dir/run-refresh-handoff-checks.py"
+
+python3 "$test_dir/run-lifecycle-event-checks.py"
+
+python3 "$test_dir/run-log-history-checks.py"

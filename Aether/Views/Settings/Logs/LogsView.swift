@@ -22,6 +22,7 @@ struct LogsView: View {
 	@State private var isVisible = false
 
 	var body: some View {
+		let filteredEntries = _logManager.filteredEntries
 		NBList(.localized("Logs"), displayMode: .inline, type: .list) {
 			// MARK: Options Section
 			Section {
@@ -92,14 +93,14 @@ struct LogsView: View {
 
 			// MARK: Logs List Section
 			Section {
-				if _logManager.isLoading && _logManager.filteredEntries.isEmpty {
+				if _logManager.isLoading && filteredEntries.isEmpty {
 					HStack {
 						Spacer()
 						ProgressView(.localized("Loading logs..."))
 							.padding()
 						Spacer()
 					}
-				} else if !_logManager.isLoggingEnabled && _logManager.filteredEntries.isEmpty {
+				} else if !_logManager.isLoggingEnabled && filteredEntries.isEmpty {
 					VStack(spacing: 10) {
 						Image(systemName: "doc.text.magnifyingglass")
 							.font(.system(size: 34))
@@ -115,7 +116,7 @@ struct LogsView: View {
 					}
 					.frame(maxWidth: .infinity)
 					.padding(.vertical, 30)
-				} else if _logManager.filteredEntries.isEmpty {
+				} else if filteredEntries.isEmpty {
 					VStack(spacing: 10) {
 						Image(systemName: "doc.text.magnifyingglass")
 							.font(.system(size: 34))
@@ -136,7 +137,7 @@ struct LogsView: View {
 					.frame(maxWidth: .infinity)
 					.padding(.vertical, 30)
 				} else {
-					ForEach(_logManager.filteredEntries) { item in
+					ForEach(filteredEntries) { item in
 						Button {
 							searchFocused = false
 							_selectedItemForDetail = item
@@ -177,8 +178,8 @@ struct LogsView: View {
 				HStack {
 					Text(.localized("Entries"))
 					Spacer()
-					if !_logManager.filteredEntries.isEmpty {
-						Text("\(_logManager.filteredEntries.count) of \(_logManager.entries.count)")
+					if !filteredEntries.isEmpty {
+						Text("\(filteredEntries.count) of \(_logManager.entries.count)")
 							.font(.caption2)
 							.foregroundColor(.secondary)
 					}

@@ -24,10 +24,10 @@ enum Level {case error, debug}
 @MainActor final class DebugLogManager {static let shared=DebugLogManager();func log(_ s:String,category:String,level:Level?=nil) {}}
 @MainActor final class DeviceConnectionManager {static let shared=DeviceConnectionManager();var isConnected=true}
 @MainActor final class InstallationAppProxy {
- static var fetches=0;static var profileFetches=0;static var profileWaiter:CheckedContinuation<[ProvisioningProfileInfo],Never>?
+ static var failProfiles=false;static var fetches=0;static var profileFetches=0;static var profileWaiter:CheckedContinuation<[ProvisioningProfileInfo],Never>?
  static var result:[AppInfo]=[]
  func fetchApps(applicationType:String?,lightweight:Bool) async throws -> [AppInfo] {Self.fetches+=1;return Self.result}
- func provisioningProfiles() async throws -> [ProvisioningProfileInfo] {Self.profileFetches+=1;return await withCheckedContinuation {Self.profileWaiter=$0}}
+ func provisioningProfiles() async throws -> [ProvisioningProfileInfo] {Self.profileFetches+=1;if Self.failProfiles {throw NSError(domain:"Test",code:1)};return await withCheckedContinuation {Self.profileWaiter=$0}}
  static func getAppIconCached(for id:String,cacheVersion:String?) async throws -> String? {nil}
  nonisolated static func iconCacheRevision(for id:String)->String {""}
 }
@@ -40,10 +40,17 @@ enum Level {case error, debug}
 for start in ['func stageInitialBrowse(', 'func stageVerifiedApps(', 'func load()', 'func refreshOnForeground()', 'func clear()', 'func refresh(force:', 'private func prefetchFirstScreenIcons()', 'private func updateApplications(']:
  s+=declaration('Aether/Views/Installed/InstalledAppsStore.swift',start)+'\n'
 s+='}\n'
+s+='@MainActor struct LoadingPresentation { let store:Store;let connection=DeviceConnectionManager.shared\n'+declaration('Aether/Views/Library/LibraryView.swift','private var isLoadingInstalledApps:').replace('private var','var',1)+'\n}\n'
 s+=r'''
 func check(_ value:@autoclosure ()->Bool,_ label:String){precondition(value(),label)}
 @main struct Checks {
  @MainActor static func main() async throws {
+  let initial=Store()
+  check(LoadingPresentation(store:initial).isLoadingInstalledApps,"A connected device waits for its first list load instead of showing empty")
+  initial.hasLoadedApps=true
+  check(!LoadingPresentation(store:initial).isLoadingInstalledApps,"A verified empty list can show its genuine empty state")
+  initial.hasLoadedApps=false;initial.errorMessage="failure"
+  check(!LoadingPresentation(store:initial).isLoadingInstalledApps,"A real load failure is not hidden behind loading")
   let known=AppInfo(SignerIdentity:"Developer",CFBundleIdentifier:"known")
   let unknown=AppInfo(Entitlements:["com.apple.developer.team-identifier":AnyCodable("TEAM")],CFBundleIdentifier:"unknown")
   let store=Store();InstallationAppProxy.result=[known,unknown]
@@ -55,6 +62,10 @@ func check(_ value:@autoclosure ()->Bool,_ label:String){precondition(value(),la
   InstallationAppProxy.profileWaiter?.resume(returning:[ProvisioningProfileInfo()]);InstallationAppProxy.profileWaiter=nil
   await load.value
   check(Set(store.apps.map(\.id))==Set(["known","unknown"]),"Fallback adds only profile-confirmed app")
+  InstallationAppProxy.failProfiles=true
+  await store.refresh(force:true)
+  check(Set(store.apps.map(\.id))==Set(["known","unknown"]) && store.errorMessage != nil,"Profile failure preserves existing confirmed apps and reports error")
+  InstallationAppProxy.failProfiles=false;InstallationAppProxy.fetches=0
   await store.refreshOnForeground()
   check(InstallationAppProxy.fetches==0,"Recent foreground return doesn't reload apps")
   InstallationAppProxy.result=[known]

@@ -85,8 +85,13 @@ public final class DeviceConnectionManager: ObservableObject {
 		didSet { if state != oldValue { _signalConnectionWorkChanged() } }
 	}
 	@Published public private(set) var diagnostic: DeviceDiagnosticStatus = .tunnelUnavailable
-	/// Cold launch can render before didBecomeActive starts automatic connection.
-	@Published public private(set) var isAwaitingAutomaticConnection = false
+	@Published private var awaitingInitialActivation = false
+
+	/// Keep the UI pending across activation, idle-disconnect completion, and verification.
+	/// This is presentation state, separate from the guards that permit a connection to start.
+	public var isAwaitingAutomaticConnection: Bool {
+		awaitingInitialActivation || foregroundRecoveryID != nil
+	}
 	@Published public private(set) var hasPairingFile: Bool = false
 	@Published public private(set) var pairingVerification = PairingVerificationState()
 	@Published public private(set) var tunnelMethod: DeviceTunnelMethod
@@ -110,7 +115,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	private var didBecomeActiveObserver: NSObjectProtocol?
 	private var didEnterBackgroundObserver: NSObjectProtocol?
 	private var foregroundRecoveryTask: Task<Void, Never>?
-	private var foregroundRecoveryID: UUID?
+	@Published private var foregroundRecoveryID: UUID?
 	private var transitionTask: Task<Void, Never>?
 	private var pendingTunnelMethod: DeviceTunnelMethod?
 	private var transitionGeneration: UUID?
@@ -152,11 +157,13 @@ public final class DeviceConnectionManager: ObservableObject {
 			object: nil,
 			queue: .main
 		) { [weak self] _ in
-			Task { @MainActor [weak self] in
+			// The observer is delivered on the main queue. Publish activation state
+			// synchronously, before the first resumed frame (including inactive-only returns).
+			MainActor.assumeIsolated {
 				guard let self else { return }
 				self.handleAppForeground()
 				if !self.isConnectAutomaticallyEnabled || !self.isIDeviceInstallationMode {
-					await self.reconcile()
+					Task { [weak self] in await self?.reconcile() }
 				}
 			}
 		}
@@ -228,9 +235,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		UserDefaults.standard.set(method.rawValue, forKey: "Aether.tunnelMethod")
 		diagnostic = .tunnelUnavailable
 		_log("Tunneling provider changed to \(method.displayName).", category: "Tunnel", level: .notice)
-		Task { [weak self] in
-			self?.reconnectForIDeviceMode()
-		}
+		reconnectForIDeviceMode()
 	}
 
 	// MARK: - Installation Mode
@@ -340,7 +345,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	public func setConnectAutomatically(_ enabled: Bool) {
 		guard isConnectAutomaticallyEnabled != enabled else { return }
 		if !enabled {
-			isAwaitingAutomaticConnection = false
+			awaitingInitialActivation = false
 			_cancelForegroundRecovery()
 		}
 		isConnectAutomaticallyEnabled = enabled
@@ -351,9 +356,14 @@ public final class DeviceConnectionManager: ObservableObject {
 		}
 	}
 
+	public func prepareForForeground() {
+		awaitingInitialActivation = isConnectAutomaticallyEnabled && isIDeviceInstallationMode
+			&& hasPairingFile && !requiresInAppTunnelSetup
+	}
+
 	public func handleAppForeground() {
 		guard UIApplication.shared.applicationState == .active else { return }
-		isAwaitingAutomaticConnection = false
+		awaitingInitialActivation = false
 		lastVerifiedAt = 0
 		CellularAssistManager.shared.handleApplicationDidBecomeActive()
 		guard !CellularAssistManager.shared.isBusy else { return }
@@ -436,7 +446,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	public func handleAppBackground() {
 		// A delayed background notification must not close a resumed app's tunnel.
 		guard UIApplication.shared.applicationState == .background else { return }
-		isAwaitingAutomaticConnection = false
+		awaitingInitialActivation = false
 		_cancelForegroundRecovery()
 		guard isDisconnectWhenIdleEnabled, isIDeviceInstallationMode else { return }
 		if hasActiveTunnelDependencies {
@@ -459,7 +469,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			return
 		}
 		guard isConnectAutomaticallyEnabled else { return }
-		isAwaitingAutomaticConnection = hasPairingFile && UIApplication.shared.applicationState == .inactive
+		awaitingInitialActivation = hasPairingFile && UIApplication.shared.applicationState == .inactive
 		guard UIApplication.shared.applicationState == .active else { return }
 		_connectForIDeviceMode()
 	}
@@ -467,7 +477,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	private func _connectForIDeviceMode() {
 		guard UIApplication.shared.applicationState != .background else { return }
 		guard isIDeviceInstallationMode, !isUpdating, !isConnected else { return }
-		isAwaitingAutomaticConnection = false
+		awaitingInitialActivation = false
 		_syncPairingRecord()
 		guard hasPairingFile else {
 			_finishTransition(to: .disconnected, diagnostic: .pairingMissing)
@@ -499,7 +509,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	// MARK: - Toggle Connection
 
 	public func setConnection(enabled: Bool, force: Bool = false) {
-		isAwaitingAutomaticConnection = false
+		awaitingInitialActivation = false
 		if !enabled {
 			connectionEpoch &+= 1
 			activeVerificationID = nil

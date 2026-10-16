@@ -216,7 +216,12 @@ actor SourceRepositoryService {
 		)
 		guard revisions[url] == revisionToken, !Task.isCancelled else { throw CancellationError() }
 		remember(Entry(stored: stored, snapshot: snapshot), for: url)
-		persist(stored)
+		// An unchanged HTTP 200 should not rewrite the complete catalog on every pull.
+		// Persist changed validators and the daily full-fetch checkpoint as well.
+		if previous?.snapshot.revision != revision || previous?.stored.etag != stored.etag
+			|| previous?.stored.lastModified != stored.lastModified || fullFetchDue {
+			persist(stored)
+		}
 		return snapshot
 	}
 

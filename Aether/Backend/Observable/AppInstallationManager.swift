@@ -93,7 +93,7 @@ final class AppInstallationManager: ObservableObject {
 		_backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
 			object: nil, queue: .main) { [weak self] _ in
 			Task { @MainActor in
-				guard let self, self.isInstalling else { return }
+				guard let self, UIApplication.shared.applicationState == .background, self.isInstalling else { return }
 				#if !targetEnvironment(macCatalyst)
 				if self.execution?.hasExecution != true {
 					self._interruptInstallation(generation: self.installGeneration)

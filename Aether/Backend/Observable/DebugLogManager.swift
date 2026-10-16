@@ -165,7 +165,8 @@ public final class DebugLogManager: ObservableObject {
 
 	private var _inMemoryEntries: [DebugLogItem] = []
 	private var _publishedEntryIDs = Set<UUID>()
-	private var _maxPublishedCount = 1000
+	private let _maxPublishedCount = 5000
+	private var _historyGeneration = UUID()
 	private let _maxInMemoryCount: Int = 1000
 	private let _lock = NSLock()
 	private let _logger = Logger(
@@ -242,6 +243,7 @@ public final class DebugLogManager: ObservableObject {
 	}
 
 	public func clearDiagnostics() {
+		_historyGeneration = UUID()
 		_lock.lock()
 		_inMemoryEntries.removeAll()
 		_lock.unlock()
@@ -259,7 +261,7 @@ public final class DebugLogManager: ObservableObject {
 		isLoading = true
 		defer { isLoading = false }
 
-		let memoryItems = _lock.withLock { _inMemoryEntries }
+		let generation = _historyGeneration
 
 		let fetched = await Task.detached(priority: .userInitiated) { () -> [DebugLogItem] in
 			var results: [DebugLogItem] = []
@@ -285,12 +287,16 @@ public final class DebugLogManager: ObservableObject {
 						message: msg
 					)
 					results.append(item)
+					// Keep history bounded without shifting the array for every arrival.
+					if results.count >= 10000 { results.removeFirst(5000) }
 				}
 			} catch {
 				// OSLogStore might fail in restricted environments; fallback to memory items
 			}
-			return results
+			return Array(results.suffix(5000))
 		}.value
+		guard generation == _historyGeneration, !Task.isCancelled else { return }
+		let memoryItems = _lock.withLock { _inMemoryEntries }
 
 		// Combine fetched OSLogStore items with memory items, avoiding duplicates in O(N)
 		var seenKeys = Set<String>()
@@ -317,11 +323,10 @@ public final class DebugLogManager: ObservableObject {
 		// Sort newest first by default
 		combined.sort { $0.date > $1.date }
 
-		await MainActor.run {
-			// Explicit history loading retains the requested time window for export.
-			// Live arrivals replace oldest entries instead of growing it indefinitely.
-			self.entries = combined
-			self._maxPublishedCount = max(self._maxInMemoryCount, combined.count)
+		do {
+			// Already on MainActor: publish without another suspension after merging.
+			// Keep the most recent history bounded even after leaving the Logs page.
+			self.entries = Array(combined.prefix(self._maxPublishedCount))
 			self._publishedEntryIDs = Set(self.entries.map(\.id))
 			self.lastFetchDate = Date()
 		}
@@ -341,6 +346,7 @@ public final class DebugLogManager: ObservableObject {
 	}
 
 	public var filteredEntries: [DebugLogItem] {
+		let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 		var list = entries.filter { item in
 			if item.source != selectedScope.logSource {
 				return false
@@ -366,8 +372,7 @@ public final class DebugLogManager: ObservableObject {
 			}
 
 			// Search text
-			if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-				let query = searchText.lowercased()
+			if !query.isEmpty {
 				let matchesMessage = item.message.lowercased().contains(query)
 				let matchesCategory = item.category.lowercased().contains(query)
 				let matchesSubsystem = item.subsystem.lowercased().contains(query)
