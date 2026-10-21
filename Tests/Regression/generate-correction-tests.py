@@ -20,7 +20,6 @@ enum QueuePersistenceFixture {
  struct Options: Codable, Sendable { let post_installAppAfterSigned: Bool }
 '''+declaration('struct SigningInput:')+'\n'+declaration('private struct StoredInstallation:')+'\n}\n'
 fixture=r'''
-enum DiagnosticLog {static func error(_ message:String,category:String){}}
 struct SourceAppProvenance: Codable, Sendable {}
 final class Download {
  enum FailureAction: String, Codable, Sendable { case resume, restart, retryProcessing }

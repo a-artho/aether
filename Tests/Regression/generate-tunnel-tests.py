@@ -125,7 +125,7 @@ controls='\n'.join(method(device, signature) for signature in [
  'public func handleAppForeground()', 'public func handleAppBackground()',
  'private func _restoreInstallationMode()'
 ]).replace('private func _restoreInstallationMode','func _restoreInstallationMode')
-for old,new in [('UserDefaults.standard','automationDefaults'),('CellularAssistManager','AutoCellular'),('EmbeddedTunnelManager','AutoEmbedded'),('AppInstallationManager','AutoInstaller'),('OnDevicePairingManager','AutoPairing'),('UIApplication','TunnelApplication')]: controls=controls.replace(old,new)
+for old,new in [('SpoofSession','AutoSpoofSession'),('UserDefaults.standard','automationDefaults'),('CellularAssistManager','AutoCellular'),('EmbeddedTunnelManager','AutoEmbedded'),('AppInstallationManager','AutoInstaller'),('OnDevicePairingManager','AutoPairing'),('UIApplication','TunnelApplication')]: controls=controls.replace(old,new)
 assignments='\n'.join(line.strip().replace('UserDefaults.standard','automationDefaults') for line in device.splitlines() if line.strip().startswith(('isDisconnectWhenIdleEnabled = UserDefaults','isConnectAutomaticallyEnabled = UserDefaults')))
 automation=r'''
 private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UUID().uuidString)!
@@ -134,6 +134,7 @@ private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UU
  func handleApplicationDidBecomeActive() {}
 }
 @MainActor private final class AutoEmbedded { static let shared=AutoEmbedded();func invalidateConfigurationCache() {} }
+@MainActor private final class AutoSpoofSession { static var existing: AutoSpoofSession?; var requiresBackgroundExecution = false }
 @MainActor private final class AutoInstaller { static let shared=AutoInstaller();var isInstalling=false }
 @MainActor private final class AutoPairing { static let shared=AutoPairing();var isActive=false }
 @MainActor private final class AutomationFixture {
