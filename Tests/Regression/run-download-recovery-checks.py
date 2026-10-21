@@ -10,7 +10,7 @@ store=store[store.index('struct StoredDownload:'):]
 old='private var rootURL: URL {\n\t\tfileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]\n\t\t\t.appendingPathComponent("AetherDownloads", isDirectory: true)\n\t}'
 assert old in store
 store=store.replace(old,'let rootURL: URL\n init(rootURL: URL) { self.rootURL = rootURL }')
-source='import Foundation\nimport CryptoKit\nextension String {static func localized(_ s:String)->String{s}}\n'+fixture+store+r'''
+source='import Foundation\nimport CryptoKit\nenum DiagnosticLog {static func error(_ message:String,category:String){}}\nextension String {static func localized(_ s:String)->String{s}}\n'+fixture+store+r'''
 @main struct Checks {
  @MainActor static func main() throws {
   let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
