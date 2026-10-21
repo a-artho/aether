@@ -13,6 +13,7 @@ import Foundation
 func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
 @MainActor final class UIApplication {static let shared=UIApplication();enum State {case active,inactive,background};var applicationState=State.active}
 @MainActor final class CellularAssistManager {static let shared=CellularAssistManager();var isBusy=false;func handleApplicationDidBecomeActive(){}}
+@MainActor final class SpoofSession {static var existing: SpoofSession?;var requiresBackgroundExecution=false}
 @MainActor final class AppInstallationManager {static let shared=AppInstallationManager();var isInstalling=false}
 @MainActor final class OnDevicePairingManager {static let shared=OnDevicePairingManager();var isActive=false}
 @MainActor final class Driver {
