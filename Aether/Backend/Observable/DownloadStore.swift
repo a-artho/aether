@@ -104,6 +104,10 @@ final class DownloadStore {
 	private let fileManager = FileManager.default
 	private let encoder = JSONEncoder()
 	private let decoder = JSONDecoder()
+    private var restorationFailed = false
+    private var recoveryCheckpointNeeded = false
+    private var recoveryMarker: URL { rootURL.appendingPathComponent("recovery-required") }
+    var hasUnrestoredArtifacts: Bool { restorationFailed || fileManager.fileExists(atPath: recoveryMarker.path) }
 
 	private var rootURL: URL {
 		fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -124,12 +128,21 @@ final class DownloadStore {
 
 	@MainActor
 	func loadDownloads() -> [Download] {
-		guard
-			let data = try? Data(contentsOf: recordsURL),
-			let records = try? decoder.decode([StoredDownload].self, from: data)
-		else {
-			return []
-		}
+        let records: [StoredDownload]
+        do {
+            records = try decoder.decode([StoredDownload].self, from: Data(contentsOf: recordsURL))
+        } catch {
+            let failure = error as NSError
+            let hasArtifacts = [resumeDirectoryURL, stagingDirectoryURL].contains {
+                !((try? fileManager.contentsOfDirectory(atPath: $0.path)) ?? []).isEmpty
+            }
+            // A new installation is empty; an unreadable queue is not proof that
+            // existing transfers and staged IPAs can be discarded.
+            if failure.domain != NSCocoaErrorDomain || failure.code != NSFileReadNoSuchFileError || hasArtifacts {
+                preserveUnrestoredArtifacts(error: error)
+            }
+            return []
+        }
 
 		let stagedFiles = (try? fileManager.contentsOfDirectory(at: stagingDirectoryURL,
 			includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])) ?? []
@@ -171,8 +184,11 @@ final class DownloadStore {
 	}
 
 	func save(records: [StoredDownload]) throws {
+        try checkpointUnrestoredArtifacts()
 		guard !records.isEmpty else {
-			try? fileManager.removeItem(at: rootURL)
+            // Artifact ownership is handled per transfer. Do not erase quarantined
+            // files just because the readable portion of the queue is now empty.
+            if fileManager.fileExists(atPath: recordsURL.path) { try fileManager.removeItem(at: recordsURL) }
 			return
 		}
 
@@ -239,6 +255,7 @@ final class DownloadStore {
 
 	@MainActor
 	func pruneArtifacts(keeping downloads: [Download]) {
+        guard !hasUnrestoredArtifacts else { return }
 		let retainedResumeFiles = Set(
 			downloads.compactMap { download in
 				download.resumeData == nil
@@ -251,6 +268,27 @@ final class DownloadStore {
 		prune(directory: resumeDirectoryURL, retaining: retainedResumeFiles)
 		prune(directory: stagingDirectoryURL, retaining: retainedStagingFiles)
 	}
+
+    private func preserveUnrestoredArtifacts(error: Error) {
+        restorationFailed = true
+        recoveryCheckpointNeeded = true
+        do { try checkpointUnrestoredArtifacts() }
+        catch {
+            DiagnosticLog.error("Could not checkpoint download recovery protection: \(error.localizedDescription)", category: "Download")
+        }
+        DiagnosticLog.error("Download queue could not be restored; preserving staged files and resume data: \(error.localizedDescription)", category: "Download")
+    }
+
+    private func checkpointUnrestoredArtifacts() throws {
+        guard recoveryCheckpointNeeded else { return }
+        try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        if fileManager.fileExists(atPath: recordsURL.path) {
+            let backup = rootURL.appendingPathComponent("queue-unreadable-\(UUID().uuidString).json")
+            try fileManager.copyItem(at: recordsURL, to: backup)
+        }
+        try Data("Preserve unknown download artifacts until explicit cleanup.".utf8).write(to: recoveryMarker, options: .atomic)
+        recoveryCheckpointNeeded = false
+    }
 
 	private func prepareDirectories() throws {
 		try fileManager.createDirectory(at: resumeDirectoryURL, withIntermediateDirectories: true)

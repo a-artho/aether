@@ -91,7 +91,7 @@ struct InstalledAppInformationView: View {
 			} catch is CancellationError {} catch { metadataError = error.localizedDescription }
 		}
 		.listStyle(.insetGrouped)
-		.navigationTitle(String.localized("Info"))
+		.navigationTitle(app.displayName)
 		.navigationBarTitleDisplayMode(.inline)
 
 		.overlay(alignment: .bottom) {

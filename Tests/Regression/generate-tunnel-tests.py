@@ -141,14 +141,15 @@ private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UU
  var isDisconnectWhenIdleEnabled:Bool;var isConnectAutomaticallyEnabled:Bool
  var awaitingInitialActivation=false;var hasPairingFile=true
  var lastVerifiedAt:TimeInterval=0;var isIDeviceInstallationMode=true;var isConnected=false;var isUpdating=false
- var state=StartupFixture.StartupState.disconnected;var diagnostic=StartupDiagnostic.tunnelUnavailable
+ enum State {case disconnected,disconnecting};var state=State.disconnected;var diagnostic=StartupDiagnostic.tunnelUnavailable
+ enum Method {case inApp,localDevVPN};var tunnelMethod=Method.inApp
  var hasActiveTunnelDependencies=false;var starts=0;var stops=0
  enum Level { case notice }
  func _log(_ message:String,category:String,level:Level) {}
  func _scheduleForegroundRecovery() {}
  func _cancelForegroundRecovery() {}
  func _connectForIDeviceMode() { starts += 1 }
- func setConnection(enabled:Bool) { if !enabled { stops += 1 } }
+ func setConnection(enabled:Bool,force:Bool=false) { if !enabled { stops += 1 } }
  init() {
 '''+assignments+r'''
  }

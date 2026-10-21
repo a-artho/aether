@@ -392,8 +392,25 @@ class DownloadManager: NSObject, ObservableObject {
 			}
 			return download
 		}
-		return downloads.first(where: { $0.task === task })
+        return downloads.first(where: { $0.task === task }) ?? _recoverUnrecordedSystemTask(task)
 	}
+
+    private func _recoverUnrecordedSystemTask(_ task: URLSessionDownloadTask) -> Download? {
+        guard _store.hasUnrestoredArtifacts, let url = task.originalRequest?.url,
+            ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        let id = task.taskDescription ?? UUID().uuidString
+        if let existing = _getDownload(transferIdentifier: id) { return existing }
+        let download = Download(transferIdentifier: id, logicalIdentifier: id, url: url,
+            fileName: task.response?.suggestedFilename)
+        download.task = task
+        task.taskDescription = id
+        downloads.append(download)
+        _restorableTransferIDs.insert(id)
+        _restoringTransferIDs.insert(id)
+        LibraryArtifactIndex.shared.recordImport(uuid: download.importIdentifier)
+        DebugLogManager.shared.log("Recovered system download without readable queue metadata: id=\(id).", category: "Download", level: .notice)
+        return download
+    }
 
 	private func _downloadIdentity(
 		url: URL,
@@ -542,7 +559,7 @@ class DownloadManager: NSObject, ObservableObject {
 							?? self.downloads.first(where: { $0.logicalIdentifier == description })
 					} ?? self.downloads.first(where: {
 						$0.url == task.originalRequest?.url && $0.isActive
-					})
+					}) ?? self._recoverUnrecordedSystemTask(task)
 
 					guard let download else {
 						task.cancel()

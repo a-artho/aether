@@ -384,6 +384,7 @@ private struct UnifiedImportMetadata: View {
 	let entry: UnifiedImportEntry
 	let model: InstallerStatusViewModel?
 	@StateObject private var activity: UnifiedImportActivity
+	@State private var showsErrorDetails = false
 
 	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?) {
 		self.entry = entry
@@ -397,14 +398,14 @@ private struct UnifiedImportMetadata: View {
 		if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
 			guard let model = model else { return (.localized("Queued"), false) }
 			if case .broken(let error) = model.status {
-				return (error is InstallationBackgroundError ? .localized("iOS interrupted background installation") : error.localizedDescription, true)
+				return (AppRowFailure.text(for: error, stage: entry.operation?.signing != nil ? .signing : .installation), true)
 			}
 			return (AppInstallationManager.shared.isFinishingInstallation ? .localized("Finishing Installation") : model.statusLabel, false)
 		}
 		if let export = entry.export {
 			switch export.state {
 			case .exporting: return ("\(String.localized("Processing")) \(Int(export.progress * 100))%", false)
-			case .failed(let message): return (message.isEmpty ? .localized("Error") : message, true)
+			case .failed(let message): return (AppRowFailure.text(message: message, stage: .export), true)
 			}
 		}
 		if let download = entry.download {
@@ -418,10 +419,17 @@ private struct UnifiedImportMetadata: View {
 				if download.waitingForForeground { return (.localized("Open Aether to resume"), false) }
 				if download.isPreparingSource { return (.localized("Preparing Import"), false) }
 				return ("\(String.localized("Processing")) \(Int(download.overallProgress * 100))%", false)
-			case .failed(let message, _): return (message.isEmpty ? .localized("Download Failed") : message, true)
+			case .failed(let message, _): return (AppRowFailure.text(message: message, stage: download.onlyArchiving || download.stagedFileName != nil ? .processing : .download), true)
 			}
 		}
 		return (nil, false)
+	}
+
+	private var failureDetails: String? {
+		if entry.operation != nil, case .broken(let error) = model?.status { return error.localizedDescription }
+		if let export = entry.export, case .failed(let message) = export.state { return message }
+		if let download = entry.download, case .failed(let message, _) = download.state { return message }
+		return nil
 	}
 
 	/// Progress values update in place; only changes of phase animate the status.
@@ -459,6 +467,10 @@ private struct UnifiedImportMetadata: View {
 			thirdLineAnimationKey: numericProgressPhase ?? status.text,
 			showsNumericProgress: numericProgressPhase != nil
 		)
+		.onTapGesture { if failureDetails != nil { showsErrorDetails = true } }
+		.alert(String.localized("Error Details"), isPresented: $showsErrorDetails) {
+			Button(String.localized("OK"), role: .cancel) {}
+		} message: { Text(failureDetails ?? "") }
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
 		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
 	}

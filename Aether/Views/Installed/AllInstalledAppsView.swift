@@ -91,7 +91,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 			if !presented { searchText = ""; searchFocused = false }
 		}
 		.sheet(item: $selectedInfoApp) { app in
-			NBNavigationView(String.localized("Info"), displayMode: .inline) {
+			NBNavigationView(app.displayName, displayMode: .inline) {
 				InstalledAppInformationView(app: store.apps.first(where: { $0.id == app.id }) ?? app)
 					.toolbar {
 						ToolbarItem(placement: .topBarTrailing) {

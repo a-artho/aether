@@ -34,3 +34,11 @@ Write records reuse their allocation, AES key schedule and pre-keyed HMAC state.
 ## Continuous payload progress
 
 `afc-upload-progress.patch` adds `afc_file_write_with_progress` on top of the existing 4 MiB writer. It reports payload bytes accepted by the socket transport, excludes AFC headers, and reserves each packet's last byte until its status reply succeeds. It keeps packet sizes, ordering, reply validation and hardware TLS unchanged. Swift receives updates at most four times per second and coalesces delivery. A blocked socket or reply produces no artificial advancement. The duplex tests cover progress inside packets, partial tails, monotonicity and failed acknowledgements that cannot report completion.
+
+## Connection establishment deadlines
+
+`connection-attempt-deadline.patch` adds a per-calling-thread connection scope. Swift supplies the remaining monotonic budget and a borrowed cancellation callback; the scope is cleared before Swift releases the callback context. Native TCP, saved-pairing verification, TLS/RSD setup and the RSD service-opening functions used by the Swift wrapper obey that deadline. Candidate TCP connections have a 350 ms cap, so stale ports do not consume the native five-second global TCP timeout. A cancellation check runs at most every 25 ms while establishment is pending; there is no idle timer. No global timeout is changed, and established AFC transfers, app browsing and installation operations are outside this scope.
+
+The Swift budget also covers lock acquisition, Bonjour discovery and retry backoff (1.5 seconds for connection verification, six seconds for ordinary service establishment). Reset signals a separate cancellation generation before waiting for the shared transport lock. One Bonjour browser stays active through discovery; all browsers/resolvers are cancelled on completion. The native build runs deadline/cancellation tests, including a real TCP peer that stalls during pairing; `run-connection-deadline-checks.py` covers lock cancellation and late/cancelled discovery.
+
+Regenerate the XCFramework with `make native` before building the app: these Swift changes require the new scope functions in the generated native header/library.

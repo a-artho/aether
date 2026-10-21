@@ -73,9 +73,14 @@ enum SpoofStatus: Equatable {
 
 @MainActor
 final class SpoofSession: ObservableObject {
+    // Lazy and app-owned: dismissing the map must not destroy an active spoof.
+    static let shared = SpoofSession()
+    private(set) static weak var existing: SpoofSession?
 	private static let unresolvedSimulationKey = "Aether.spoofing.simulationMayBeActive"
 
-    @Published var status: SpoofStatus = .idle
+    @Published var status: SpoofStatus = .idle {
+        didSet { handleStatusChange() }
+    }
     @Published var pin: CLLocationCoordinate2D?
     @Published var simulated: CLLocationCoordinate2D?
     @Published var travelMode: TravelMode = .walk
@@ -97,11 +102,15 @@ final class SpoofSession: ObservableObject {
     private var joystickVector: CGVector = .zero
     private var lastSuccessfulUpdateAt: Date?
     private let locationKeeper = BackgroundKeepAlive()
+    private var mapIsVisible = false
+    private var appIsForeground = UIApplication.shared.applicationState == .active
+    private var stopRequested = false
 
 	private let favoritesKey = "Aether.spoofing.favorites"
 	private let recentsKey = "Aether.spoofing.recents"
 
-    init() {
+    private init() {
+        Self.existing = self
         favorites = SavedPlace.load(key: favoritesKey)
         recents = SavedPlace.load(key: recentsKey)
         if UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey) {
@@ -123,6 +132,7 @@ final class SpoofSession: ObservableObject {
 
 	func teleport(to coordinate: CLLocationCoordinate2D) async {
 		guard !isBusy else { return }
+        stopRequested = false
         routeGeneration &+= 1
         routeTask?.cancel()
         routeTask = nil
@@ -133,6 +143,7 @@ final class SpoofSession: ObservableObject {
 
 	func stop() async {
 		guard status != .stopping else { return }
+        stopRequested = true
         operationGeneration &+= 1
         let generation = operationGeneration
         routeGeneration &+= 1
@@ -165,9 +176,6 @@ final class SpoofSession: ObservableObject {
             status = .idle
             lastError = nil
             endBackground()
-            // Keep location updates running so the map puck / locate button
-            // can return to the real GPS fix (not the leftover pin).
-            locationKeeper.start()
         case .failure(let error):
             lastError = error.localizedDescription
             status = .dropped(error.localizedDescription)
@@ -180,13 +188,52 @@ final class SpoofSession: ObservableObject {
         locationKeeper.lastKnownCoordinate
     }
 
-    /// Start lightweight GPS updates for the map puck / locate button.
-    func startLocationUpdates() {
-        locationKeeper.start()
+    func setMapVisible(_ visible: Bool, isForeground: Bool? = nil) {
+        mapIsVisible = visible
+        if let isForeground { appIsForeground = isForeground }
+        updateLocationTracking()
+    }
+
+    func setAppForeground(_ foreground: Bool) {
+        appIsForeground = foreground
+        updateLocationTracking()
+    }
+
+    var requiresBackgroundExecution: Bool {
+        switch status {
+        case .connecting, .active, .reconnecting, .stopping: return true
+        case .idle, .dropped: return false
+        }
+    }
+
+    private func handleStatusChange() {
+        updateLocationTracking()
+        guard !requiresBackgroundExecution else { return }
+        // A saved uncertain device location is a warning, not an active worker.
+        routeGeneration &+= 1
+        routeTask?.cancel()
+        routeTask = nil
+        stopJoystick()
+        stopResend()
+        endBackground()
+        if UIApplication.shared.applicationState == .background {
+            DeviceConnectionManager.shared.handleAppBackground()
+        }
+    }
+
+    private func updateLocationTracking() {
+        switch status {
+        case .connecting, .active, .reconnecting, .stopping:
+            // Includes user-requested setup/clear while its async operation runs.
+            locationKeeper.setMode(.background)
+        case .idle, .dropped:
+            locationKeeper.setMode(mapIsVisible && appIsForeground ? .foreground : .stopped)
+        }
     }
 
 	func startJoystick() async {
 		guard !isBusy else { return }
+        stopRequested = false
         let start = simulated ?? pin ?? locationKeeper.lastKnownCoordinate
         guard let start else {
             lastError = "Drop a pin or teleport somewhere before using the joystick."
@@ -218,7 +265,10 @@ final class SpoofSession: ObservableObject {
 
     /// Revalidate on return because in-process timers do not run while iOS suspends the app.
 	func refreshAfterForeground() async {
-		guard !isBusy, let simulated else { return }
+        guard !isBusy else { return }
+        // A failed Stop must retry clearing, never silently reapply the old location.
+        if stopRequested { await stop(); return }
+        guard let simulated else { return }
 		let generation = operationGeneration
 		guard await _ensureDeviceReady(generation: generation) else {
 			guard operationGeneration == generation else { return }
@@ -237,6 +287,7 @@ final class SpoofSession: ObservableObject {
 	func followRoute(_ coordinates: [CLLocationCoordinate2D]) {
 		guard !isBusy else { return }
         guard coordinates.count >= 2 else { return }
+        stopRequested = false
         routeGeneration &+= 1
         let generation = routeGeneration
         routeTask?.cancel()
@@ -368,7 +419,12 @@ final class SpoofSession: ObservableObject {
 			return false
 		}
 		guard operationGeneration == generation else { return false }
-		guard !Task.isCancelled else { isBusy = false; return false }
+		guard !Task.isCancelled else {
+            isBusy = false
+            status = simulated != nil || hadUnconfirmedLocation ? .dropped("Location update cancelled.") : .idle
+            if status == .idle { endBackground() }
+            return false
+        }
         // Persist before the remote call: it can take effect even if the app exits
         // before receiving a reply. Only a confirmed clear removes this marker.
         UserDefaults.standard.set(true, forKey: Self.unresolvedSimulationKey)
@@ -404,7 +460,6 @@ final class SpoofSession: ObservableObject {
             status = .active
             lastError = nil
             beginBackground()
-            locationKeeper.start()
 			startResend()
             if markRecent {
                 pushRecent(coordinate)
@@ -455,7 +510,7 @@ final class SpoofSession: ObservableObject {
 
     private func markTunnelUnavailable() {
         guard !status.isDropped else { return }
-		let message = "The device tunnel is unavailable. Reconnect it; Aether will retry while open."
+		let message = "The device tunnel is unavailable. Reconnect it, then try again."
         status = .dropped(message)
         lastError = message
         postDropNotification(message)

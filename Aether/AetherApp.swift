@@ -292,7 +292,8 @@ struct AetherApp: App {
 			}
 		} else {
 			let pathExtension = url.pathExtension.lowercased()
-			if pathExtension == "ipa" || pathExtension == "tipa" {
+			if pathExtension == "ipa" || pathExtension == "tipa"
+                || ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
 				_importExternalPackage(from: url)
 				return
 			}
@@ -312,7 +313,11 @@ struct AetherApp: App {
 		AppTabManager.shared.switchTo(.library)
 		let importID = UUID().uuidString
 		DebugLogManager.shared.log("[\(importID)] External package received: \(externalURL.lastPathComponent); inbox=\(externalURL.path.contains("/Inbox/")), appState=\(UIApplication.shared.applicationState.rawValue).", category: "Import")
-		DownloadManager.shared.startExternalArchive(from: externalURL, id: "AetherManualDownload_\(importID)")
+        if ["http", "https"].contains(externalURL.scheme?.lowercased() ?? "") {
+            Task { _ = await DownloadManager.shared.startDownload(from: externalURL, id: "AetherManualDownload_\(importID)") }
+        } else {
+			DownloadManager.shared.startExternalArchive(from: externalURL, id: "AetherManualDownload_\(importID)")
+        }
 	}
 }
 

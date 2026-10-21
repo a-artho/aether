@@ -116,6 +116,7 @@ enum SourceAppBodyText {
 }
 
 struct ExpandableText: View {
+	@AppStorage("Aether.mutedSectionHeaders") private var mutedSectionHeaders = false
 	let text: String
 	let lineLimit: Int
 	var textStyle: Font.TextStyle = .body
@@ -131,7 +132,7 @@ struct ExpandableText: View {
 		VStack(alignment: .leading, spacing: 4) {
 			Text(displayText)
 				.font(.system(textStyle))
-				.foregroundStyle(.secondary)
+				.foregroundStyle(mutedSectionHeaders ? Color.primary : Color.secondary)
 				.lineSpacing(3)
 				.lineLimit(expanded ? nil : lineLimit)
 				.background {

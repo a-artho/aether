@@ -33,8 +33,9 @@ struct LibraryRowDetails: View {
 				Text(text)
 					.font(.footnote)
 					.foregroundStyle(.secondary)
-					.lineLimit(thirdLineStatus != nil ? nil : 1)
-					.fixedSize(horizontal: false, vertical: thirdLineStatus != nil)
+					.lineLimit(1)
+					.minimumScaleFactor(thirdLineStatus != nil ? 0.5 : 1)
+					.allowsTightening(thirdLineStatus != nil)
 					.contentTransition(showsNumericProgress ? .identity : .interpolate)
 					.animation(animatesStatus && thirdLineStatus != nil && !reduceMotion ? .smooth(duration: 0.2) : nil,
 						value: thirdLineAnimationKey ?? thirdLineStatus)

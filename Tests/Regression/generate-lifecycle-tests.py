@@ -47,7 +47,7 @@ struct Keeper { func start() {} }
 @MainActor final class Session {
  static let unresolvedSimulationKey="RegressionOnlySpoofState"
  let gate=Gate(); var status:Status = .active; var isBusy=false
- var operationGeneration=0; var routeGeneration=0; var routeTask:Task<Void,Never>?
+ var stopRequested=false; var operationGeneration=0; var routeGeneration=0; var routeTask:Task<Void,Never>?
  var connectionDetail:String?; var simulated:CLLocationCoordinate2D? = .init(latitude:1,longitude:1)
  var lastSuccessfulUpdateAt:Date?; var lastError:String?; var pin:CLLocationCoordinate2D?
  let locationKeeper=Keeper()

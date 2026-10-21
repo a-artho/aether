@@ -381,7 +381,6 @@ extension SourceAppsDetailView {
 			} label: {
 				HStack(spacing: 4) {
 					Text("App Store")
-						.underline()
 						.foregroundStyle(.secondary)
 
 					Image(systemName: "arrow.up.right")

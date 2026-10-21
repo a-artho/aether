@@ -91,6 +91,11 @@ struct SourcesView: View {
 					}
 				}
 			}
+			.modifier(SourcesRefreshModifier(isEnabled: !_sources.isEmpty) {
+				_reportRefreshFailures = true
+				viewModel.startRefresh(Array(_sources))
+				await Task.yield()
+			})
 			.scrollDismissesKeyboard(.immediately)
 			.overlay {
 				if _sources.isEmpty {
@@ -135,11 +140,6 @@ struct SourcesView: View {
 					_isSearchFocused = false
 					_searchText = ""
 				}
-			}
-			.refreshable {
-				_reportRefreshFailures = true
-				viewModel.startRefresh(Array(_sources))
-				await Task.yield()
 			}
 			.onChange(of: viewModel.isRefreshRequested) { old, requested in
 				guard old && !requested && _reportRefreshFailures else { return }
@@ -277,6 +277,21 @@ struct SourcesView: View {
 				sourceObjectURI: objectURI,
 				appName: appName
 			)
+		}
+	}
+}
+
+/// Attach the native refresh gesture only when there are sources to refresh.
+private struct SourcesRefreshModifier: ViewModifier {
+	let isEnabled: Bool
+	let action: @Sendable () async -> Void
+
+	@ViewBuilder
+	func body(content: Content) -> some View {
+		if isEnabled {
+			content.refreshable(action: action)
+		} else {
+			content
 		}
 	}
 }

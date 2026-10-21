@@ -1,0 +1,252 @@
+--- a/ffi/src/afc.rs
++++ b/ffi/src/afc.rs
+@@ -82,7 +82,7 @@
+     if provider.is_null() || handshake.is_null() || client.is_null() {
+         return ffi_err!(IdeviceError::FfiInvalidArg);
+     }
+-    let res: Result<AfcClient, IdeviceError> = run_sync_local(async move {
++    let res: Result<AfcClient, IdeviceError> = crate::connection_attempt::run_connection_sync(async move {
+         let provider_ref = unsafe { &mut (*provider).0 };
+         let handshake_ref = unsafe { &mut (*handshake).0 };
+         AfcClient::connect_rsd(provider_ref, handshake_ref).await
+--- /dev/null
++++ b/ffi/src/connection_attempt.rs
+@@ -0,0 +1,142 @@
++//! Per-calling-thread limits for connection establishment only. No global timeout changes.
++use std::{cell::Cell, ffi::c_void, future::Future, time::{Duration, Instant}};
++use idevice::IdeviceError;
++
++#[derive(Clone, Copy)]
++struct Scope {
++    deadline: Instant,
++    tcp_budget: Duration,
++    cancelled: Option<extern "C" fn(*mut c_void) -> bool>,
++    context: *mut c_void,
++}
++thread_local! { static SCOPE: Cell<Option<Scope>> = const { Cell::new(None) }; }
++
++/// Call and end on the same thread, keeping the borrowed callback context alive until end.
++#[unsafe(no_mangle)]
++pub extern "C" fn idevice_connection_attempt_begin(timeout_ms: u64, tcp_timeout_ms: u64,
++    cancelled: Option<extern "C" fn(*mut c_void) -> bool>, context: *mut c_void) {
++    SCOPE.set(Some(Scope { deadline: Instant::now() + Duration::from_millis(timeout_ms),
++        tcp_budget: Duration::from_millis(tcp_timeout_ms), cancelled, context }));
++}
++#[unsafe(no_mangle)]
++pub extern "C" fn idevice_connection_attempt_end() { SCOPE.set(None); }
++
++async fn bounded<T>(scope: Option<Scope>, future: impl Future<Output = Result<T, IdeviceError>>) -> Result<T, IdeviceError> {
++    let Some(scope) = scope else { return future.await; };
++    let is_cancelled = || scope.cancelled.is_some_and(|f| f(scope.context));
++    if is_cancelled() { return Err(IdeviceError::CanceledByUser); }
++    if Instant::now() >= scope.deadline { return Err(IdeviceError::Timeout); }
++    tokio::pin!(future);
++    let timer = tokio::time::sleep_until(tokio::time::Instant::from_std(scope.deadline));
++    tokio::pin!(timer);
++    let mut cancellation = tokio::time::interval(Duration::from_millis(25));
++    loop {
++        tokio::select! {
++            biased;
++            _ = cancellation.tick() => { if is_cancelled() { return Err(IdeviceError::CanceledByUser); } }
++            _ = &mut timer => return Err(IdeviceError::Timeout),
++            result = &mut future => return result,
++        }
++    }
++}
++
++pub(crate) fn run_connection_sync<T: 'static>(future: impl Future<Output = Result<T, IdeviceError>>) -> Result<T, IdeviceError> {
++    // Capture before entering Tokio: callbacks may be polled on runtime threads.
++    let scope = SCOPE.get();
++    crate::run_sync_local(bounded(scope, future))
++}
++
++pub(crate) async fn connect_candidate(address: std::net::SocketAddr) -> Result<tokio::net::TcpStream, IdeviceError> {
++    let budget = SCOPE.get().map(|s| s.tcp_budget);
++    if let Some(budget) = budget {
++        tokio::time::timeout(budget, tokio::net::TcpStream::connect(address))
++            .await.map_err(|_| IdeviceError::Timeout)?.map_err(Into::into)
++    } else {
++        crate::run_global_timeout(|| tokio::net::TcpStream::connect(address)).await
++    }
++}
++
++#[cfg(test)]
++mod connection_attempt_tests {
++    use super::*;
++    use std::sync::atomic::{AtomicBool, Ordering};
++    extern "C" fn cancelled(context: *mut c_void) -> bool {
++        unsafe { &*(context as *const AtomicBool) }.load(Ordering::Relaxed)
++    }
++    #[test]
++    fn deadline_drops_pending_future() {
++        idevice_connection_attempt_begin(30, 10, None, std::ptr::null_mut());
++        let start = Instant::now();
++        let result: Result<(), _> = run_connection_sync(std::future::pending());
++        idevice_connection_attempt_end();
++        assert!(matches!(result, Err(IdeviceError::Timeout)));
++        assert!(start.elapsed() < Duration::from_secs(1));
++    }
++    #[test]
++    fn cancellation_interrupts_pending_future() {
++        let flag = AtomicBool::new(false);
++        idevice_connection_attempt_begin(5000, 10, Some(cancelled), &flag as *const _ as *mut _);
++        std::thread::scope(|s| {
++            s.spawn(|| { std::thread::sleep(Duration::from_millis(30)); flag.store(true, Ordering::Relaxed); });
++            let start = Instant::now();
++            let result: Result<(), _> = run_connection_sync(std::future::pending());
++            assert!(matches!(result, Err(IdeviceError::CanceledByUser)));
++            assert!(start.elapsed() < Duration::from_secs(1));
++        });
++        idevice_connection_attempt_end();
++    }
++    #[test]
++    fn successful_and_unscoped_calls_are_unchanged() {
++        idevice_connection_attempt_begin(1000, 10, None, std::ptr::null_mut());
++        assert_eq!(run_connection_sync(async { Ok(7) }).unwrap(), 7);
++        let rejection: Result<(), _> = run_connection_sync(async { Err(IdeviceError::InvalidHostID) });
++        assert!(matches!(rejection, Err(IdeviceError::InvalidHostID)));
++        idevice_connection_attempt_end();
++        assert_eq!(run_connection_sync(async { Ok(8) }).unwrap(), 8);
++    }
++    #[cfg(all(unix, feature = "remote_pairing"))]
++    #[test]
++    fn real_pairing_handshake_obeys_deadline_and_cancellation() {
++        for cancel in [false, true] {
++            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
++            let port = listener.local_addr().unwrap().port();
++            let flag = AtomicBool::new(false);
++            let mut address: libc::sockaddr_in = unsafe { std::mem::zeroed() };
++            address.sin_family = libc::AF_INET as _;
++            address.sin_port = port.to_be();
++            address.sin_addr.s_addr = u32::from_ne_bytes([127, 0, 0, 1]);
++            let mut pairing = crate::rp_pairing_file::RpPairingFileHandle(
++                idevice::remote_pairing::RpPairingFile::generate("DeadlineTest"));
++            let mut adapter = std::ptr::null_mut();
++            let mut handshake = std::ptr::null_mut();
++            // Accept TCP, but never answer the pairing protocol. This used to
++            // outlive the Swift discovery timeout while holding its shared lock.
++            std::thread::scope(|threads| {
++                threads.spawn(|| {
++                    let (_peer, _) = listener.accept().unwrap();
++                    std::thread::sleep(Duration::from_millis(250));
++                });
++                if cancel {
++                    threads.spawn(|| {
++                        std::thread::sleep(Duration::from_millis(40));
++                        flag.store(true, Ordering::Relaxed);
++                    });
++                }
++                idevice_connection_attempt_begin(if cancel { 5000 } else { 80 }, 350,
++                    Some(cancelled), &flag as *const _ as *mut _);
++                let start = Instant::now();
++                let error = unsafe { crate::tunnel_provider::tunnel_create_rppairing(
++                    &address as *const _ as *const _, std::mem::size_of_val(&address) as _,
++                    c"DeadlineTest".as_ptr(), &mut pairing, None, std::ptr::null_mut(),
++                    &mut adapter, &mut handshake) };
++                idevice_connection_attempt_end();
++                assert!(!error.is_null());
++                assert_eq!(unsafe { (*error).code }, if cancel { 27 } else { 109 });
++                assert!(start.elapsed() < Duration::from_millis(200));
++                assert!(adapter.is_null() && handshake.is_null());
++                unsafe { crate::errors::idevice_error_free(error) };
++            });
++        }
++    }
++
++}
+--- a/ffi/src/core_device/app_service.rs
++++ b/ffi/src/core_device/app_service.rs
+@@ -7,7 +7,7 @@
+ use idevice::core_device::AppServiceClient;
+ use idevice::{IdeviceError, ReadWrite};
+ 
+-use crate::{IdeviceFfiError, ReadWriteOpaque, ffi_err, run_sync, run_sync_local};
++use crate::{IdeviceFfiError, ReadWriteOpaque, ffi_err, run_sync};
+ #[cfg(all(feature = "core_device_proxy", feature = "rsd"))]
+ use crate::{core_device_proxy::AdapterHandle, rsd::RsdHandshakeHandle};
+ #[cfg(all(feature = "core_device_proxy", feature = "rsd"))]
+@@ -83,7 +83,7 @@
+     }
+ 
+     let res: Result<AppServiceClient<Box<dyn ReadWrite>>, IdeviceError> =
+-        run_sync_local(async move {
++        crate::connection_attempt::run_connection_sync(async move {
+             let provider_ref = unsafe { &mut (*provider).0 };
+             let handshake_ref = unsafe { &mut (*handshake).0 };
+ 
+--- a/ffi/src/installation_proxy.rs
++++ b/ffi/src/installation_proxy.rs
+@@ -79,7 +79,7 @@
+     if provider.is_null() || handshake.is_null() || client.is_null() {
+         return ffi_err!(IdeviceError::FfiInvalidArg);
+     }
+-    let res: Result<InstallationProxyClient, IdeviceError> = run_sync_local(async move {
++    let res: Result<InstallationProxyClient, IdeviceError> = crate::connection_attempt::run_connection_sync(async move {
+         let provider_ref = unsafe { &mut (*provider).0 };
+         let handshake_ref = unsafe { &mut (*handshake).0 };
+         InstallationProxyClient::connect_rsd(provider_ref, handshake_ref).await
+--- a/ffi/src/lib.rs
++++ b/ffi/src/lib.rs
+@@ -1,3 +1,4 @@
++mod connection_attempt;
+ // Jackson Coxson
+ 
+ #[cfg(feature = "tunnel_tcp_stack")]
+--- a/ffi/src/misagent.rs
++++ b/ffi/src/misagent.rs
+@@ -75,7 +75,7 @@
+     if provider.is_null() || handshake.is_null() || client.is_null() {
+         return ffi_err!(IdeviceError::FfiInvalidArg);
+     }
+-    let res: Result<MisagentClient, IdeviceError> = run_sync_local(async move {
++    let res: Result<MisagentClient, IdeviceError> = crate::connection_attempt::run_connection_sync(async move {
+         let provider_ref = unsafe { &mut (*provider).0 };
+         let handshake_ref = unsafe { &mut (*handshake).0 };
+         MisagentClient::connect_rsd(provider_ref, handshake_ref).await
+--- a/ffi/src/os_trace_relay.rs
++++ b/ffi/src/os_trace_relay.rs
+@@ -111,7 +111,7 @@
+     if provider.is_null() || handshake.is_null() || client.is_null() {
+         return ffi_err!(IdeviceError::FfiInvalidArg);
+     }
+-    let res: Result<OsTraceRelayClient, IdeviceError> = run_sync_local(async move {
++    let res: Result<OsTraceRelayClient, IdeviceError> = crate::connection_attempt::run_connection_sync(async move {
+         let provider_ref = unsafe { &mut (*provider).0 };
+         let handshake_ref = unsafe { &mut (*handshake).0 };
+         OsTraceRelayClient::connect_rsd(provider_ref, handshake_ref).await
+--- a/ffi/src/springboardservices.rs
++++ b/ffi/src/springboardservices.rs
+@@ -86,7 +86,7 @@
+     if provider.is_null() || handshake.is_null() || client.is_null() {
+         return ffi_err!(IdeviceError::FfiInvalidArg);
+     }
+-    let res: Result<SpringBoardServicesClient, IdeviceError> = run_sync_local(async move {
++    let res: Result<SpringBoardServicesClient, IdeviceError> = crate::connection_attempt::run_connection_sync(async move {
+         let provider_ref = unsafe { &mut (*provider).0 };
+         let handshake_ref = unsafe { &mut (*handshake).0 };
+         SpringBoardServicesClient::connect_rsd(provider_ref, handshake_ref).await
+--- a/ffi/src/syslog_relay.rs
++++ b/ffi/src/syslog_relay.rs
+@@ -75,7 +75,7 @@
+     if provider.is_null() || handshake.is_null() || client.is_null() {
+         return ffi_err!(IdeviceError::FfiInvalidArg);
+     }
+-    let res: Result<SyslogRelayClient, IdeviceError> = run_sync_local(async move {
++    let res: Result<SyslogRelayClient, IdeviceError> = crate::connection_attempt::run_connection_sync(async move {
+         let provider_ref = unsafe { &mut (*provider).0 };
+         let handshake_ref = unsafe { &mut (*handshake).0 };
+         SyslogRelayClient::connect_rsd(provider_ref, handshake_ref).await
+--- a/ffi/src/tunnel_provider.rs
++++ b/ffi/src/tunnel_provider.rs
+@@ -324,9 +324,9 @@
+     // remains available through the pairing APIs.
+     let _ = (pin_callback, pin_context);
+ 
+-    let res = run_sync_local(async {
++    let res = crate::connection_attempt::run_connection_sync(async {
+         // Connect directly and use raw RPPairing protocol
+-        let stream = run_global_timeout(|| tokio::net::TcpStream::connect(socket_addr))
++        let stream = crate::connection_attempt::connect_candidate(socket_addr)
+             .await
+             .map_err(|e| IdeviceError::InternalError(format!("connect: {e}")))?;
+         let conn = RpPairingSocket::new(stream);

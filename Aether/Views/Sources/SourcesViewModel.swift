@@ -169,9 +169,11 @@ final class SourcesViewModel: ObservableObject {
 
 	/// Check globally once per session, then on foreground after fifteen minutes.
 	func refreshIfNeeded(_ sources: [AltSource], now: Date = .now) async {
-		guard isFinished, !isRefreshRequested, !sources.isEmpty else { return }
+		guard !Task.isCancelled, isFinished, !isRefreshRequested, !sources.isEmpty else { return }
 		if !_hasStartedGlobalRefresh || now.timeIntervalSince(_lastGlobalAttempt ?? .distantPast) >= 15 * 60 {
-			await fetchSources(sources, refresh: true)
+			// The page may disappear or become inactive while the request is in
+			// flight. Shared ownership keeps catalog and timestamp commits together.
+			await startRefresh(sources).value
 		} else {
 			await fetchSources(sources)
 		}

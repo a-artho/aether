@@ -204,8 +204,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			guard values["result"] == "\(Self.helperVersion)_ON" else {
 				_handleRuntimeFailure(
 					"Mobile Data may still be off. Check it in Settings.",
-					command: .on,
-					preservingRestoreDebt: true
+					command: .on
 				)
 				return
 			}
@@ -246,7 +245,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			}
 			return
 		}
-		guard isEnabled, UserDefaults.standard.bool(forKey: Self.restoreKey), !isBusy, !didAttemptRestore else { return }
+		guard UserDefaults.standard.bool(forKey: Self.restoreKey), !isBusy, !didAttemptRestore else { return }
 		guard _shortcutsAvailable() else {
 			_disableForMissingShortcuts()
 			return
@@ -258,7 +257,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		retryTask?.cancel()
 		retryTask = nil
 		_clearActiveOperation()
-		guard isEnabled, UserDefaults.standard.bool(forKey: Self.restoreKey) else {
+		guard UserDefaults.standard.bool(forKey: Self.restoreKey) else {
 			state = .idle
 			return
 		}
@@ -318,9 +317,6 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 	private func _startShortcut(_ command: Command) {
 		guard _shortcutsAvailable() else {
-			if command == .off {
-				UserDefaults.standard.set(false, forKey: Self.restoreKey)
-			}
 			_disableForMissingShortcuts()
 			return
 		}
@@ -355,9 +351,6 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		guard let url = request.url else { return }
 		UIApplication.shared.open(url, options: [:]) { [weak self] opened in
 			guard let self, !opened, self.operationID == id, self.activeCommand == command else { return }
-			if command == .off {
-				UserDefaults.standard.set(false, forKey: Self.restoreKey)
-			}
 			self._disableForMissingShortcuts()
 		}
 	}
@@ -410,7 +403,6 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			: "Apple Shortcuts isn’t available."
 		_finishRuntimeFailure(
 			message,
-			preservingRestoreDebt: shouldPreserveRestoreDebt,
 			showShortcutsUnavailablePrompt: true
 		)
 	}
@@ -429,8 +421,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		case .off, .on:
 			_handleRuntimeFailure(
 				command == .on ? "Mobile Data may still be off. Check it in Settings." : "Aether Cellular failed or isn’t configured.",
-				command: command,
-				preservingRestoreDebt: command == .on && UserDefaults.standard.bool(forKey: Self.restoreKey)
+				command: command
 			)
 		}
 	}
@@ -457,15 +448,18 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		isEnabled = false
 		UserDefaults.standard.set(false, forKey: Self.enabledKey)
 		state = .idle
+        if UserDefaults.standard.bool(forKey: Self.restoreKey) {
+            cancelAndRestoreIfNeeded()
+        }
 	}
 
 	private func _finishHelperSetupFailure(_ message: String) {
-		_finishTerminalState(preservingRestoreDebt: false, state: .failed(message))
+		_finishTerminalState(state: .failed(message))
 		_presentTerminalAlert(title: "Cellular Assist", message: message)
 	}
 
 	private func _finishPostInstallVerificationFailure() {
-		_finishTerminalState(preservingRestoreDebt: false, state: .failed("Shortcut Not Ready"))
+		_finishTerminalState(state: .failed("Shortcut Not Ready"))
 		guard !didPresentTerminalPrompt else { return }
 		didPresentTerminalPrompt = true
 		let retry = UIAlertAction(title: .localized("Try Again"), style: .default) { [weak self] _ in
@@ -492,19 +486,20 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 	private func _handleRuntimeFailure(
 		_ message: String,
-		command: Command? = nil,
-		preservingRestoreDebt: Bool = false
+		command: Command? = nil
 	) {
-		let shouldPreserveRestoreDebt = preservingRestoreDebt || (command == .on && UserDefaults.standard.bool(forKey: Self.restoreKey))
-		_finishRuntimeFailure(message, preservingRestoreDebt: shouldPreserveRestoreDebt)
+		let shouldPreserveRestoreDebt = UserDefaults.standard.bool(forKey: Self.restoreKey)
+		_finishRuntimeFailure(message)
+        if command == .off, shouldPreserveRestoreDebt, UIApplication.shared.applicationState == .active {
+            _restoreMobileDataOnce(force: true)
+        }
 	}
 
 	private func _finishRuntimeFailure(
 		_ message: String,
-		preservingRestoreDebt: Bool = false,
 		showShortcutsUnavailablePrompt: Bool = false
 	) {
-		_finishTerminalState(preservingRestoreDebt: preservingRestoreDebt, state: .failed(message))
+		_finishTerminalState(state: .failed(message))
 		if showShortcutsUnavailablePrompt {
 			_presentShortcutsUnavailableAlert(message: message)
 		} else {
@@ -512,7 +507,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		}
 	}
 
-	private func _finishTerminalState(preservingRestoreDebt: Bool, state: State) {
+	private func _finishTerminalState(state: State) {
 		retryTask?.cancel()
 		retryTask = nil
 		pendingTransportFailureMessage = nil
@@ -522,9 +517,8 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		automaticRecoveryEpisode = .consumed
 		isEnabled = false
 		UserDefaults.standard.set(false, forKey: Self.enabledKey)
-		if !preservingRestoreDebt {
-			UserDefaults.standard.set(false, forKey: Self.restoreKey)
-		}
+        // Only a confirmed data-on callback clears an outstanding restore debt.
+        // Disabling the feature or failing setup must not erase that obligation.
 		self.state = state
 	}
 

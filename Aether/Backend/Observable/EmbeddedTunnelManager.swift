@@ -307,6 +307,10 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		state = .disconnected
 		return
 		#elseif os(iOS) && !targetEnvironment(macCatalyst)
+		// A cold-launch start can still be loading preferences when idle-off
+		// supersedes it. Find an existing running profile even if prepare() has
+		// not yet published its manager. This does not create a VPN profile.
+		if manager == nil { await refresh() }
 		guard let manager else {
 			state = .disconnected
 			return

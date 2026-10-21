@@ -20,6 +20,7 @@ if [[ -d "$source_dir" ]]; then
 fi
 tar -xzf "$archive" -C "$work_dir"
 patch -d "$source_dir" -p1 < "$native_dir/verify-saved-pairing.patch"
+patch -d "$source_dir" -p1 < "$native_dir/connection-attempt-deadline.patch"
 patch -d "$source_dir" -p1 < "$native_dir/afc-large-writes.patch"
 patch -d "$source_dir" -p1 < "$native_dir/afc-transfer-diagnostics.patch"
 patch -d "$source_dir" -p1 < "$native_dir/tls-stream-optimization.patch"
@@ -60,6 +61,7 @@ cargo_for_target "$host_target" test --locked -p idevice --no-default-features -
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features remote_pairing,rustcrypto verification_only_wire_tests
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features afc,remote_pairing,rustcrypto afc_large_write_tests
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features afc,remote_pairing,rustcrypto tls_stream_tests
+cargo_for_target "$host_target" test --locked -p idevice-ffi connection_attempt_tests
 for target in "${targets[@]}"; do
   cargo_for_target "$target" build --locked --release -p idevice-ffi --target "$target"
 done

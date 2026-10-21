@@ -318,7 +318,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	/// Checks whether any long-running operation requires the device tunnel to stay open in background.
 	public var hasActiveTunnelDependencies: Bool {
 		// 1. Location spoofing
-		if UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey) {
+		if SpoofSession.existing?.requiresBackgroundExecution == true {
 			return true
 		}
 		// 2. Active app installation
@@ -451,15 +451,19 @@ public final class DeviceConnectionManager: ObservableObject {
 		guard isDisconnectWhenIdleEnabled, isIDeviceInstallationMode else { return }
 		if hasActiveTunnelDependencies {
 			_log(
-				"App backgrounded; keeping device tunnel active because an operation is in progress (spoofing: \(UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey)), installing: \(AppInstallationManager.shared.isInstalling), pairing: \(OnDevicePairingManager.shared.isActive), cellular assist: \(CellularAssistManager.shared.isBusy)).",
+				"App backgrounded; keeping device tunnel active because an operation is in progress (spoofing: \(SpoofSession.existing?.requiresBackgroundExecution == true), locationUnverified: \(UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey)), installing: \(AppInstallationManager.shared.isInstalling), pairing: \(OnDevicePairingManager.shared.isActive), cellular assist: \(CellularAssistManager.shared.isBusy)).",
 				category: "Tunnel",
 				level: .notice
 			)
 			return
 		}
-		guard isConnected, !isUpdating else { return }
+		// LocalDevVPN uses a foreground app handoff to connect. Do not interrupt
+		// that handoff; an in-app VPN has no such requirement and must also stop
+		// while preparation / start is pending, not just after it is Connected.
+		guard state != .disconnecting,
+			isConnected || (tunnelMethod == .inApp && isUpdating) else { return }
 		_log("App backgrounded with no active tasks; automatically closing device tunnel.", category: "Tunnel", level: .notice)
-		setConnection(enabled: false)
+		setConnection(enabled: false, force: tunnelMethod == .inApp)
 	}
 
 	private func _restoreInstallationMode() {
@@ -530,7 +534,15 @@ public final class DeviceConnectionManager: ObservableObject {
 		diagnostic = .checking
 		_log("\(enabled ? "Connecting" : "Disconnecting") with \(method.displayName).", category: "Tunnel", level: .notice)
 
+		#if !targetEnvironment(macCatalyst)
+		// Acquire before yielding: a backgrounded app can otherwise be suspended
+		// while retiring the old RSD transport, before stopVPNTunnel is sent.
+		let stopLease = !enabled && method == .inApp ? IdleTunnelStopLease() : nil
+		#endif
 		Task { [weak self] in
+			#if !targetEnvironment(macCatalyst)
+			defer { stopLease?.end() }
+			#endif
 			guard let self else { return }
 			await self._resetRSDTunnel()
 			guard self.transitionGeneration == generation else { return }
@@ -595,8 +607,9 @@ public final class DeviceConnectionManager: ObservableObject {
 
 		let checkedRecord = _syncPairingRecord()
 		if let checkedRecord { pairingVerification.beginChecking(checkedRecord) }
+		let cancelled = HeartbeatManager.shared.rsdConnectionCancellationCheck()
 		let checkResult = await Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, cancelled: cancelled)
 		}.value
 
 		guard _reconciliationIsCurrent(epoch: epoch) else { throw CancellationError() }
@@ -745,15 +758,19 @@ public final class DeviceConnectionManager: ObservableObject {
 					cellularAssistTransaction: cellularAssistTransaction, startedAt: verificationStarted)
 			}
 		}
+		let cancelled = HeartbeatManager.shared.rsdConnectionCancellationCheck()
 		let verification = Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, includeApps: includeApps, onVerified: publishReadiness)
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, includeApps: includeApps, onVerified: publishReadiness, cancelled: cancelled)
 		}
 		if includeApps {
 			InstalledAppsStore.shared.stageInitialBrowse(Task { await verification.value.apps })
 		}
 		let checkResult = await withTaskCancellationHandler {
 			await verification.value
-		} onCancel: { verification.cancel() }
+		} onCancel: {
+			verification.cancel()
+			HeartbeatManager.shared.cancelPendingRSDConnections()
+		}
 
 		guard
 			_reconciliationIsCurrent(epoch: epoch),
@@ -867,6 +884,9 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _resetRSDTunnel() async {
+		// Signal without taking the native lock: an obsolete handshake must yield
+		// before the reset worker can acquire that lock and retire its handles.
+		HeartbeatManager.shared.cancelPendingRSDConnections()
 		lastVerifiedAt = 0
 		await Task.detached(priority: .utility) {
 			HeartbeatManager.shared.resetRSDTunnel()
@@ -1050,3 +1070,22 @@ public final class DeviceConnectionManager: ObservableObject {
 		DebugLogManager.shared.log(message, category: category, level: level)
 	}
 }
+
+#if !targetEnvironment(macCatalyst)
+/// A brief system grant for retiring an idle VPN; never an ongoing keep-alive.
+@MainActor
+private final class IdleTunnelStopLease {
+	private var identifier: UIBackgroundTaskIdentifier = .invalid
+	init() {
+		guard UIApplication.shared.applicationState == .background else { return }
+		identifier = UIApplication.shared.beginBackgroundTask(withName: "Disconnect idle tunnel") { [weak self] in
+			Task { @MainActor in self?.end() }
+		}
+	}
+	func end() {
+		guard identifier != .invalid else { return }
+		UIApplication.shared.endBackgroundTask(identifier)
+		identifier = .invalid
+	}
+}
+#endif

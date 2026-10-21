@@ -30,7 +30,15 @@ struct SpoofingRootView: View {
         } message: {
             Text(session.lastError ?? "")
         }
+        .onAppear {
+            session.setMapVisible(true, isForeground: scenePhase == .active)
+        }
+        .onDisappear {
+            session.setMapVisible(false)
+            session.stopJoystick()
+        }
         .onChange(of: scenePhase) { _, phase in
+            session.setAppForeground(phase == .active)
             if phase == .background { session.stopJoystick() }
         }
         .task(id: scenePhase) {

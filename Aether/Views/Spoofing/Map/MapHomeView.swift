@@ -115,9 +115,6 @@ struct MapHomeView: View {
 
             topChrome
         }
-        .onAppear {
-            session.startLocationUpdates()
-        }
         .onChange(of: session.pin?.latitude) { _, newValue in
             if newValue == nil { pinSelected = false }
         }

@@ -19,15 +19,17 @@ func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
  var foregroundRecoveryTask:Task<Void,Never>?;var foregroundRecoveryID:UUID?
  var connectionWorkWaiters:[UUID:AsyncStream<Void>.Continuation]=[:]
  var reconciliationTask:Task<Void,Never>? {didSet {_signalConnectionWorkChanged()}};var lastVerifiedAt=0.0
- enum State {case disconnected};var state=State.disconnected
+ enum State {case disconnected,disconnecting};var state=State.disconnected
  enum Diagnostic {case tunnelUnavailable};var diagnostic=Diagnostic.tunnelUnavailable
+ enum Method {case inApp,localDevVPN};var tunnelMethod=Method.inApp
  var hasPairingFile=true
  var awaitingInitialActivation=false;var requiresInAppTunnelSetup=false
  var isConnectAutomaticallyEnabled=true;var isIDeviceInstallationMode=true
  var isConnected=true;var isUpdating=false {didSet {_signalConnectionWorkChanged()}};var starts=0;var checks=0;var verified=false
  var isDisconnectWhenIdleEnabled=true;var hasActiveTunnelDependencies=false;var stops=0
  static let unresolvedSimulationKey="test"
- func setConnection(enabled:Bool){if !enabled {stops+=1;_cancelForegroundRecovery()}}
+ var forcedStop=false
+ func setConnection(enabled:Bool,force:Bool=false){forcedStop=force;if !enabled {stops+=1;_cancelForegroundRecovery()}}
  enum Level {case notice}
  func _log(_ s:String,category:String,level:Level){}
  func _connectForIDeviceMode(){starts+=1;isUpdating=true}
@@ -80,6 +82,13 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   UIApplication.shared.applicationState = .background;delayed.handleAppForeground()
   check(delayed.foregroundRecoveryTask == nil,"Delayed foreground event cannot start recovery in background")
   delayed.handleAppBackground();check(delayed.stops==1,"Real background event still disconnects an idle tunnel")
+
+  let connecting=Driver();connecting.isConnected=false;connecting.isUpdating=true;connecting.handleAppBackground()
+  check(connecting.stops==1 && connecting.forcedStop,"Background idle stop supersedes an in-app connection still in progress")
+  let helper=Driver();helper.isConnected=false;helper.isUpdating=true;helper.tunnelMethod = .localDevVPN;helper.handleAppBackground()
+  check(helper.stops==0,"LocalDevVPN's required app handoff is not interrupted")
+  let stoppingAgain=Driver();stoppingAgain.state = .disconnecting;stoppingAgain.handleAppBackground()
+  check(stoppingAgain.stops==0,"Repeated background callbacks do not restart an existing stop")
   let dependent=Driver();dependent.hasActiveTunnelDependencies=true;dependent.handleAppBackground()
   check(dependent.stops==0,"Background installation/spoofing dependencies retain their tunnel")
   UIApplication.shared.applicationState = .active
@@ -138,9 +147,11 @@ struct AppInfo:Sendable {}
 enum DeviceConnectionError:Error {case pairingMissing,invalidPairing,tunnelUnavailable(String),serviceUnavailable(String)}
 struct DeviceConnectionCheck:Sendable {var isConnected=false;var apps:[AppInfo]?;var rejectsPairingRecord=false;var error:String?="fixture failure"}
 final class HeartbeatManager:@unchecked Sendable {
+ func cancelPendingRSDConnections() {}
+ func rsdConnectionCancellationCheck() -> @Sendable () -> Bool {{false}}
  static let shared=HeartbeatManager();var ipAddress="";let isRsd=true
  func checkSocketConnection(timeoutInSeconds:Double)->DeviceConnectionCheck {DeviceConnectionCheck()}
- func checkDeviceConnection(timeoutInSeconds:Double,includeApps:Bool=false,onVerified:@Sendable ()->Void = {})->DeviceConnectionCheck {DeviceConnectionCheck()}
+ func checkDeviceConnection(timeoutInSeconds:Double,includeApps:Bool=false,onVerified:@Sendable ()->Void = {},cancelled:@escaping @Sendable ()->Bool = {false})->DeviceConnectionCheck {DeviceConnectionCheck()}
 }
 @MainActor final class Gate {
  var pending:CheckedContinuation<Void,Never>?

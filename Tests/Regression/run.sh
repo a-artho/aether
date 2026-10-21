@@ -57,3 +57,16 @@ python3 "$test_dir/run-refresh-handoff-checks.py"
 python3 "$test_dir/run-lifecycle-event-checks.py"
 
 python3 "$test_dir/run-log-history-checks.py"
+
+python3 "$test_dir/run-row-failure-checks.py"
+
+python3 "$test_dir/run-idle-tunnel-stop-checks.py"
+
+python3 "$test_dir/run-automatic-refresh-checks.py"
+
+python3 "$test_dir/run-connection-deadline-checks.py"
+
+python3 "$test_dir/run-spoof-location-checks.py"
+
+python3 "$test_dir/run-resource-recovery-checks.py"
+python3 "$test_dir/run-download-recovery-checks.py"
