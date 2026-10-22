@@ -173,7 +173,10 @@ func check(_ value:@autoclosure ()->Bool,_ message:String){precondition(value(),
   let refresh=Task {await independent.ensureSourcesLoaded([fast,slow,later],batchSize:2)}
   while await independent._repositoryService.fetches < 2 {await Task.yield()}
   check(independent.isRefreshing(fast) && independent.isRefreshing(slow),"Concurrent repositories own separate row spinners")
-  try await Task.sleep(nanoseconds:200_000_000)
+  let deadline = ContinuousClock.now + .seconds(3)
+  while independent.isRefreshing(fast) && ContinuousClock.now < deadline {
+    try await Task.sleep(nanoseconds:20_000_000)
+  }
   check(!independent.isRefreshing(fast) && independent.isRefreshing(slow),"Completed repository stops independently of a slow repository")
   let started=await independent._repositoryService.fetches
   check(started==3,"A free refresh slot starts the next repo before the slow repo finishes")
