@@ -35,7 +35,7 @@ import XCTest
  }
 }
 @MainActor private final class IconViewFixture {
- let bundleIdentifier="app";var cacheVersion="old";let loadsIcon=true;var image:String?
+ let bundleIdentifier="app";var cacheVersion="old";let loadsIcon=true;var image:String?;var iconIsLoading=false;var iconLoadGeneration=UUID()
 ''' + icon + r'''
 }
 final class UIStateRegressionTests:XCTestCase {
@@ -56,9 +56,11 @@ final class UIStateRegressionTests:XCTestCase {
   old.cancel();fixture.cacheVersion="new"
   let new=Task { await fixture.loadIcon() }
   while UIIconProxy.replies["new"] == nil { await Task.yield() }
-  UIIconProxy.replies.removeValue(forKey:"new")!.resume(returning:"new-image");await new.value
   UIIconProxy.replies.removeValue(forKey:"old")!.resume(returning:"old-image");await old.value
+  XCTAssertTrue(fixture.iconIsLoading,"Old cancellation must not stop the new icon's loading state")
+  UIIconProxy.replies.removeValue(forKey:"new")!.resume(returning:"new-image");await new.value
   XCTAssertEqual(fixture.image,"new-image")
+  XCTAssertFalse(fixture.iconIsLoading)
  }
 }
 '''
