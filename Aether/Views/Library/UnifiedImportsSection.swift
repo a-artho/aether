@@ -389,8 +389,11 @@ private final class UnifiedImportActivity: ObservableObject {
 
 private extension UnifiedImportEntry {
 	func signOnlyCompleted(model: InstallerStatusViewModel?) -> Bool {
-		guard operation?.installRequested == false else { return false }
-		if case .completed(.success) = model?.status { return true }
+		guard let operation, !operation.installRequested else { return false }
+		// A committed sign-only request retains its signed snapshot after the
+		// status model retires. Never fall back to a queued ring in that interval.
+		if operation.signing == nil, operation.app.isSigned { return true }
+		if case .completed(.success) = model?.status { return app?.isSigned == true }
 		return false
 	}
 }
@@ -534,11 +537,13 @@ private struct UnifiedImportAccessory: View {
 					if app.isSigned {
 						if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
 					} else { controller.signingApp = AnyApp(base: app) }
-				} label: { NBButton(app.isSigned ? .localized("Install") : .localized("Sign"), style: .text) }
+				} label: {
+				NBButton(app.isSigned ? .localized("Install") : .localized("Sign"), style: .text)
+					.foregroundStyle(Color.accentColor)
+			}
 				.buttonStyle(.borderless)
 			}
 		}
-			.id(stage)
 			.transition(.opacity)
 		}
 		.animation(reduceMotion ? nil : .smooth(duration: 0.25), value: stage)

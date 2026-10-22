@@ -69,3 +69,5 @@ python3 "$test_dir/run-spoof-location-checks.py"
 
 python3 "$test_dir/run-resource-recovery-checks.py"
 python3 "$test_dir/run-download-recovery-checks.py"
+
+python3 "$test_dir/run-sign-only-handoff-checks.py"
