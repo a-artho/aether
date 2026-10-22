@@ -327,6 +327,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 						category: "Device",
 						level: .error
 					)
+					errorMessage = error.localizedDescription
 					profiles = []
 					profileFallbackFailed = true
 				}
