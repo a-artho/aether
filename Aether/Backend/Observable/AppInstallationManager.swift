@@ -8,6 +8,7 @@
 import SwiftUI
 import Combine
 import Foundation
+import CoreData
 import IDeviceSwift
 
 @MainActor
@@ -46,6 +47,21 @@ final class AppInstallationManager: ObservableObject {
     @Published private var completedArtifacts = Set(UserDefaults.standard.stringArray(forKey: "Aether.completedInstallArtifacts") ?? [])
     func installActionTitle(for app: AppInfoPresentable) -> String {
         completedArtifacts.contains(InstallationRequest.appKey(for: app)) ? .localized("Reinstall") : .localized("Install")
+    }
+
+    func forgetInstallation(of app: AppInfoPresentable) {
+        completedArtifacts.remove(InstallationRequest.appKey(for: app))
+        UserDefaults.standard.set(Array(completedArtifacts), forKey: "Aether.completedInstallArtifacts")
+    }
+    func forgetInstallations(bundleIdentifier: String) {
+        let storage = Storage.shared
+        for entity in ["Signed", "Imported"] {
+            let request = NSFetchRequest<NSManagedObject>(entityName: entity)
+            request.predicate = NSPredicate(format: "identifier == %@", bundleIdentifier)
+            for object in (try? storage.context.fetch(request)) ?? [] {
+                if let app = object as? AppInfoPresentable { forgetInstallation(of: app) }
+            }
+        }
     }
 
 	@Published private(set) var currentRequest: InstallationRequest?

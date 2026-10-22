@@ -240,6 +240,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		}
 		defer { installations.endUninstall(bundleIdentifier: app.bundleIdentifier) }
 		try await AppLifecycleService.uninstallApp(bundleIdentifier: app.bundleIdentifier)
+		installations.forgetInstallations(bundleIdentifier: app.bundleIdentifier)
 		// A refresh may have fetched this app before the uninstall completed.
 		refreshGeneration = UUID()
 		isLoading = false

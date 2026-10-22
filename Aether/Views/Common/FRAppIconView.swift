@@ -16,30 +16,28 @@ enum FRIconAppearance: Int {
 private actor FRIconRenderGate {
 	static let shared = FRIconRenderGate(maximumConcurrentRenders: 2)
 
-	private var availablePermits: Int
-	private var waiters: [CheckedContinuation<Void, Never>] = []
-
-	init(maximumConcurrentRenders: Int) {
-		availablePermits = maximumConcurrentRenders
-	}
-
-	func acquire() async {
-		if availablePermits > 0 {
-			availablePermits -= 1
-			return
-		}
-
-		await withCheckedContinuation { waiters.append($0) }
-	}
-
-	func release() {
-		if let waiter = waiters.first {
-			waiters.removeFirst()
-			waiter.resume()
-		} else {
-			availablePermits += 1
-		}
-	}
+    private var availablePermits: Int
+    private var waiters: [(UUID, CheckedContinuation<Bool, Never>)] = []
+    init(maximumConcurrentRenders: Int) { availablePermits = maximumConcurrentRenders }
+    func acquire() async -> Bool {
+        guard !Task.isCancelled else { return false }
+        if availablePermits > 0 { availablePermits -= 1; return true }
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled { continuation.resume(returning: false) }
+                else { waiters.append((id, continuation)) }
+            }
+        } onCancel: { Task { await self.cancelWaiter(id) } }
+    }
+    private func cancelWaiter(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.0 == id }) else { return }
+        waiters.remove(at: index).1.resume(returning: false)
+    }
+    func release() {
+        if !waiters.isEmpty { waiters.removeFirst().1.resume(returning: true) }
+        else { availablePermits += 1 }
+    }
 }
 
 /// Share identical renders; the permit covers actual work rather than each view.
@@ -62,7 +60,7 @@ private actor FRIconRequests {
             flight = existing
         } else {
             let task = Task.detached(priority: .userInitiated) {
-                await FRIconRenderGate.shared.acquire()
+                guard await FRIconRenderGate.shared.acquire() else { return nil as UIImage? }
                 guard !Task.isCancelled else { await FRIconRenderGate.shared.release(); return nil as UIImage? }
                 let image = iconTest(url, scale, appearance == .dark ? 2 : 1)
                 await FRIconRenderGate.shared.release()
@@ -167,6 +165,11 @@ final class FRAppIconLoader: ObservableObject {
 		}
 	}
 
+	func clear() {
+		cancel()
+		image = nil
+	}
+
 	func cancel() {
 		isLoading = false
 		generation = UUID()
@@ -231,12 +234,13 @@ struct FRAppIconView: View {
 		let bundleURL: URL
 
 		if let app {
-			guard let directory = Storage.shared.getUuidDirectory(for: app) else { return }
+			guard let directory = Storage.shared.getUuidDirectory(for: app) else { loader.clear(); return }
 			let found = await Task.detached(priority: .userInitiated) { FileManager.default.getPath(in: directory, for: "app") }.value
-			guard !Task.isCancelled, let url = found else { return }
+			guard !Task.isCancelled else { return }
+			guard let url = found else { loader.clear(); return }
 			bundleURL = url
 		} else {
-			guard usesDefaultApp else { return }
+			guard usesDefaultApp else { loader.clear(); return }
 			bundleURL = Bundle.main.bundleURL
 		}
 

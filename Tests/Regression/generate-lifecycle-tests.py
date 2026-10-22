@@ -60,6 +60,7 @@ struct Keeper { func start() {} }
 }
 @MainActor final class DeviceConnectionManager { static let shared=DeviceConnectionManager(); var isConnected=true }
 struct AppInfo {
+ var name:String { id }
  var id:String
  var CFBundleIdentifier:String? { id }; var CFBundleDisplayName:String? { id }
  var CFBundleName:String? { id }; var CFBundleShortVersionString:String? { nil }; var CFBundleVersion:String? { nil }

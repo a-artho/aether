@@ -15,6 +15,7 @@ struct FRIconCellView<Subtitle: View>: View {
 	@Environment(\.displayScale) private var displayScale
 	var title: String
 	var subtitleView: Subtitle
+	var badgeURL: URL? = nil
 	var iconUrl: URL?
 	var size: CGFloat = 50
 	var isCircle: Bool = false
@@ -23,12 +24,14 @@ struct FRIconCellView<Subtitle: View>: View {
 		title: String,
 		subtitle: String,
 		iconUrl: URL? = nil,
+		badgeURL: URL? = nil,
 		size: CGFloat = 50,
 		isCircle: Bool = false
 	) where Subtitle == Text {
 		self.title = title
 		self.subtitleView = Text(subtitle)
 		self.iconUrl = iconUrl
+		self.badgeURL = badgeURL
 		self.size = size
 		self.isCircle = isCircle
 	}
@@ -36,6 +39,7 @@ struct FRIconCellView<Subtitle: View>: View {
 	init(
 		title: String,
 		iconUrl: URL? = nil,
+		badgeURL: URL? = nil,
 		size: CGFloat = 50,
 		isCircle: Bool = false,
 		@ViewBuilder subtitle: () -> Subtitle
@@ -43,6 +47,7 @@ struct FRIconCellView<Subtitle: View>: View {
 		self.title = title
 		self.subtitleView = subtitle()
 		self.iconUrl = iconUrl
+		self.badgeURL = badgeURL
 		self.size = size
 		self.isCircle = isCircle
 	}
@@ -50,6 +55,7 @@ struct FRIconCellView<Subtitle: View>: View {
 	// MARK: Body
 	var body: some View {
 		HStack(spacing: 18) {
+			Group {
 			if let iconURL = iconUrl {
 				LazyImage(request: ImageRequest(url: iconURL, userInfo: [
 					.thumbnailKey: ImageRequest.ThumbnailOptions(maxPixelSize: Float(size * displayScale))
@@ -64,6 +70,18 @@ struct FRIconCellView<Subtitle: View>: View {
 				standardIcon
 			}
 			
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if let badgeURL {
+                    LazyImage(url: badgeURL) { state in
+                        if let image = state.image {
+                            image.appIconStyle(size: 18, isCircle: true, background: Color(uiColor: .secondarySystemBackground))
+                                .offset(x: 4, y: 4)
+                        }
+                    }.processors([.resize(width: 18 * displayScale)])
+                    .frame(width: 18, height: 18)
+                }
+            }
 			VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
 				Text(title)
 					.nbRowTitle()

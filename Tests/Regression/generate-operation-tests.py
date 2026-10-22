@@ -13,6 +13,7 @@ import XCTest
 // Platform dependencies are controlled; the operation bodies below are copied from production.
 @MainActor enum StorageFixture {
  protocol AppInfoPresentable { var uuid:String? { get }; var isSigned:Bool { get } }
+ struct AppSnapshot: AppInfoPresentable { let uuid:String?;let isSigned:Bool;init(_ app:AppInfoPresentable){uuid=app.uuid;isSigned=app.isSigned} }
  class NSManagedObject {}
  final class App:NSManagedObject,AppInfoPresentable { let uuid:String?="fixture"; let isSigned=true }
  final class NSFetchRequest<T> {var predicate:NSPredicate?;init(entityName:String){}}
@@ -23,6 +24,7 @@ import XCTest
   func rollback(){deleted=false}
  }
  final class AppInstallationManager {
+ func forgetInstallation(of app:AppInfoPresentable) {}; func forgetInstallations(bundleIdentifier:String) {};
   struct InstallationRequest { let appKey:String; static func appKey(for app:AppInfoPresentable)->String { app.uuid ?? "" } }
   static let shared=AppInstallationManager(); var currentRequest:InstallationRequest?; var queuedInstalls:[InstallationRequest]=[]; var retiringAppKey:String?
   var queued:Bool { get { currentRequest != nil } set { currentRequest = newValue ? .init(appKey:"fixture") : nil } }

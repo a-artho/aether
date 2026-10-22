@@ -65,22 +65,10 @@ struct SourceAppsCellView: View {
 	}
 
 	private var _appDetails: some View {
-		FRIconCellView(title: app.currentName, iconUrl: app.iconURL) {
-			_subtitleView()
-		}
-		.overlay(alignment: .bottomLeading) {
-			if showSourceBadge, let iconURL = source.currentIconURL {
-				LazyImage(request: ImageRequest(url: iconURL, userInfo: [
-					.thumbnailKey: ImageRequest.ThumbnailOptions(maxPixelSize: Float(18 * displayScale))
-				])) { state in
-					if let image = state.image {
-						image
-							.appIconStyle(size: 18, isCircle: true, background: Color(uiColor: .secondarySystemBackground))
-							.offset(x: 36, y: 4)
-					}
-				}
-			}
-		}
+        FRIconCellView(title: app.currentName, iconUrl: app.iconURL,
+            badgeURL: showSourceBadge ? source.currentIconURL : nil) {
+            _subtitleView()
+        }
 	}
 
 	@ViewBuilder

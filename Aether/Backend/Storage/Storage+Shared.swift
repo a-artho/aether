@@ -30,6 +30,7 @@ extension Storage {
 			DebugLogManager.shared.log("Kept app files required by an installation, import, or export.", category: "Library", level: .notice)
 			return false
 		}
+		let deletedSnapshot = AppSnapshot(app)
 		var movedDirectory: (original: URL, staged: URL)?
 		var beganDeletion = false
 		do {
@@ -58,6 +59,7 @@ extension Storage {
 			DebugLogManager.shared.log("Could not delete app: \(error.localizedDescription)", category: "Library", level: .error)
 			return false
 		}
+		AppInstallationManager.shared.forgetInstallation(of: deletedSnapshot)
 		if let movedDirectory {
 			if let stagedCleanup {
 				stagedCleanup(movedDirectory.staged)
