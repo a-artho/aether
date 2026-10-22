@@ -35,7 +35,7 @@ import XCTest
  }
 }
 @MainActor private final class IconViewFixture {
- let bundleIdentifier="app";var cacheVersion="old";let loadsIcon=true;var image:String?;var iconIsLoading=false;var iconLoadGeneration=UUID()
+ let bundleIdentifier="app";var cacheVersion="old";let loadsIcon=true;var image:String?;var loadedIdentity:String?;var iconIsLoading=false;var iconLoadGeneration=UUID()
 ''' + icon + r'''
 }
 final class UIStateRegressionTests:XCTestCase {
