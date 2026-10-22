@@ -72,11 +72,14 @@ struct SourceAppsView: View {
 
 	// MARK: Body
 	var body: some View {
-		ZStack {
-			if isLoading || (_sourceContexts?.contains(where: { !$0.repository.apps.isEmpty }) == true) {
+		// Seed the table from an already-loaded catalog before onAppear runs.
+		// Otherwise a cached opening briefly mounts the loading table first.
+		let displayedContexts = _sourceContexts ?? _catalogContexts()
+		return ZStack {
+			if isLoading || displayedContexts.contains(where: { !$0.repository.apps.isEmpty }) {
 				SourceAppsTableRepresentableView(
-					sourceContexts: _sourceContexts ?? [],
-					isCatalogLoading: isLoading,
+					sourceContexts: displayedContexts,
+					isCatalogLoading: isLoading && displayedContexts.isEmpty,
 					searchText: $_searchText,
 					sortOption: $_sortOption,
 					sortAscending: _sortOption == .name,
@@ -172,7 +175,14 @@ struct SourceAppsView: View {
 		}
 		isLoading = true
 
-		let loadedSources = object.compactMap { source -> SourceRepositoryContext? in
+		_sourceContexts = _catalogContexts()
+		_loadedCatalogRevision = viewModel.catalogRevision
+		isLoading = false
+		_consumePendingAppRequestIfPossible()
+	}
+
+	private func _catalogContexts() -> [SourceRepositoryContext] {
+		object.compactMap { source -> SourceRepositoryContext? in
 			guard let repository = viewModel.repository(for: source) else { return nil }
 			return SourceRepositoryContext(
 				sourceObjectURI: source.objectID.uriRepresentation().absoluteString,
@@ -181,10 +191,6 @@ struct SourceAppsView: View {
 				revision: viewModel.revision(for: source)
 			)
 		}
-		_sourceContexts = loadedSources
-		_loadedCatalogRevision = viewModel.catalogRevision
-		isLoading = false
-		_consumePendingAppRequestIfPossible()
 	}
 
 	private func _consumePendingAppRequestIfPossible() {
