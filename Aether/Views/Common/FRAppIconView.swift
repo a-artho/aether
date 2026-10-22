@@ -160,12 +160,13 @@ struct FRAppIconView: View {
 			} else if let remoteIconURL {
 				LazyImage(url: remoteIconURL) { state in
 					if let image = state.image { image.appIconStyle(size: size) }
-					else { Image("App_Unknown").appIconStyle(size: size) }
+					else { skeleton }
 				}.processors([.resize(width: size * displayScale)])
 			} else {
-				Image("App_Unknown").appIconStyle(size: size)
+				skeleton
 			}
 		}
+		.transaction { $0.animation = nil }
 		.task(id: "\(app?.uuid ?? "")|\(app?.isSigned ?? false)|\(appearance.rawValue)\(selectedColorHex)\(shouldTintIcons)\(shouldChangeIconsBasedOffStyle)\(displayScale)") {
 			_load()
 		}
@@ -174,6 +175,13 @@ struct FRAppIconView: View {
 		}
 	}
 	
+	private var skeleton: some View {
+		RoundedRectangle(cornerRadius: size * 0.2677, style: .continuous)
+			.fill(Color(uiColor: .tertiarySystemFill))
+			.frame(width: size, height: size)
+			.accessibilityHidden(true)
+	}
+
 	private func _load() {
 		let bundleURL: URL
 

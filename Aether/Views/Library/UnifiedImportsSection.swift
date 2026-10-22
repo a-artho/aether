@@ -15,6 +15,18 @@ struct UnifiedImportEntry: Identifiable {
 	var export: AppExport?
 	var date: Date?
 
+	/// Ignore retired request snapshots while the List's projection catches up.
+	func reconciled(with requests: [AppInstallationManager.InstallationRequest]) -> Self {
+		guard let previous = operation else { return self }
+		var row = self
+		row.operation = requests.first { $0.id == previous.id }
+		let request = row.operation ?? previous
+		if request.signing == nil, request.app.isSigned {
+			row.app = request.app
+		}
+		return row
+	}
+
 	var signature: String {
 		var components: [String] = [id]
 		components.append(app?.uuid ?? "")
@@ -237,7 +249,12 @@ struct UnifiedImportsRows: View {
 }
 
 private struct UnifiedImportRow: View {
-	let entry: UnifiedImportEntry
+	let snapshot: UnifiedImportEntry
+	init(entry: UnifiedImportEntry, controller: UnifiedImportsController) {
+		self.snapshot = entry
+		self.controller = controller
+	}
+	private var entry: UnifiedImportEntry { snapshot.reconciled(with: installations.installationCards) }
 	@ObservedObject var controller: UnifiedImportsController
 	@ObservedObject private var installations = AppInstallationManager.shared
 	@State private var retainedIconURL: URL?
@@ -303,9 +320,15 @@ private struct UnifiedImportRow: View {
 
 /// Shared actions for the list-owned context menu and each row's native swipe.
 struct UnifiedImportActions: View {
-	let entry: UnifiedImportEntry
+	let snapshot: UnifiedImportEntry
 	@ObservedObject var controller: UnifiedImportsController
-	var forSwipe = false
+	let forSwipe: Bool
+	init(entry: UnifiedImportEntry, controller: UnifiedImportsController, forSwipe: Bool = false) {
+		self.snapshot = entry
+		self.controller = controller
+		self.forSwipe = forSwipe
+	}
+	private var entry: UnifiedImportEntry { snapshot.reconciled(with: installations.installationCards) }
 	@ObservedObject private var installations = AppInstallationManager.shared
 	private var protected: Bool { controller.isProtected(entry) }
 
@@ -350,8 +373,7 @@ struct UnifiedImportActions: View {
 			let isCurrent = installations.currentRequest?.id == request.id
 			let completed = isCurrent && installations.viewModel?.isCompleted == true
 			Button(completed ? .localized("Dismiss") : .localized("Cancel"), systemImage: "xmark", role: forSwipe && !entry.id.hasPrefix("operation:") ? nil : .destructive) {
-				if isCurrent { installations.cancel() }
-				else { installations.cancelQueuedInstall(id: request.id) }
+				installations.cancelRequest(id: request.id)
 			}
 			.tint(.red)
 			.disabled(isCurrent && installations.isFinishingInstallation)

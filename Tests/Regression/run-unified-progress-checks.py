@@ -41,10 +41,12 @@ import Combine
 @MainActor struct UnifiedImportEntry {
  var id = UUID().uuidString
  var signature: String { id }
- struct Operation { var installRequested: Bool }
+ struct App {var isSigned=true}
+ struct Operation {var installRequested:Bool;var signing:Bool?=true;var app=App()}
  var download: Download?
  var export: AppExport?
  var operation: Operation?
+ var app:App?=App()
 }
 enum Failure: Error { case fixture }
 @MainActor private final class WeakReference {

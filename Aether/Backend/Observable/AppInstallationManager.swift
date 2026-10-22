@@ -272,10 +272,22 @@ final class AppInstallationManager: ObservableObject {
 		return true
 	}
 
+	/// Resolve at activation time: a menu can remain open while a queued job starts.
+	func cancelRequest(id: UUID) {
+		if currentRequest?.id == id { cancel() }
+		else { cancelQueuedInstall(id: id) }
+	}
+
 	func cancelQueuedInstall(id: UUID) {
+		guard queuedInstalls.contains(where: { $0.id == id }) else {
+			_log("Cancel ignored for retired queue request id=\(id).", category: "Signing", level: .debug)
+			return
+		}
 		queuedInstalls.removeAll { $0.id == id }
+		_log("Cancelled queued request id=\(id); remaining=\(queuedInstalls.count).", category: "Signing", level: .notice)
 		execution?.updateQueue(pendingJobs: installationCards.count - (hasCompletedSuccessfully ? 1 : 0))
 		_persistInstallQueue()
+		_startNextIfPossible()
 	}
 
 	func retryActiveInstall() {
@@ -285,8 +297,15 @@ final class AppInstallationManager: ObservableObject {
 	}
 
 	private func _startNextIfPossible() {
-		guard currentRequest == nil, retirementTask == nil, !queuedInstalls.isEmpty else { return }
-		guard UIApplication.shared.applicationState == .active || execution?.hasExecution == true else { return }
+		guard !queuedInstalls.isEmpty else { return }
+		guard currentRequest == nil, retirementTask == nil else {
+			_log("Queue waiting current=\(currentRequest?.id.uuidString ?? "none") retiring=\(retirementTask != nil) queued=\(queuedInstalls.count).", category: "Signing", level: .debug)
+			return
+		}
+		guard UIApplication.shared.applicationState == .active || execution?.hasExecution == true else {
+			_log("Queue waiting for foreground execution; queued=\(queuedInstalls.count).", category: "Signing", level: .debug)
+			return
+		}
 		if execution == nil || execution?.isFinished == true { execution = AppOperationExecution() }
 		let request = queuedInstalls.removeFirst()
 		let generation = UUID()
