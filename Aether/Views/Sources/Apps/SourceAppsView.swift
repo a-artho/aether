@@ -73,12 +73,10 @@ struct SourceAppsView: View {
 	// MARK: Body
 	var body: some View {
 		ZStack {
-			if
-				let _sourceContexts,
-				_sourceContexts.contains(where: { !$0.repository.apps.isEmpty })
-			{
+			if isLoading || (_sourceContexts?.contains(where: { !$0.repository.apps.isEmpty }) == true) {
 				SourceAppsTableRepresentableView(
-					sourceContexts: _sourceContexts,
+					sourceContexts: _sourceContexts ?? [],
+					isCatalogLoading: isLoading,
 					searchText: $_searchText,
 					sortOption: $_sortOption,
 					sortAscending: _sortOption == .name,
@@ -93,8 +91,6 @@ struct SourceAppsView: View {
 					}
 				)
 				.ignoresSafeArea()
-			} else if isLoading {
-				ProgressView()
 			} else {
 				TabPlaceholderView(
 					title: .localized("No Apps"),

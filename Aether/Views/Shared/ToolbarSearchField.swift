@@ -72,14 +72,18 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 								secondaryButton
 							}
 						}
-					} else if secondaryAction != nil {
-						ToolbarItemGroup(placement: .topBarTrailing) {
-							if !transition.expanded { searchButton }
-							secondaryButton
-						}
 					} else {
-						ToolbarItem(id: "search-action", placement: .topBarTrailing) {
-							searchButton
+						// Match the search item's identity across root and pushed pages.
+						// Consecutive trailing items share the system glass background.
+						if secondaryAction == nil || !transition.expanded {
+							ToolbarItem(id: "search-action", placement: .topBarTrailing) {
+								searchButton
+							}
+						}
+						if secondaryAction != nil {
+							ToolbarItem(id: "navigation-add", placement: .topBarTrailing) {
+								secondaryButton
+							}
 						}
 					}
 				}

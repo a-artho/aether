@@ -74,6 +74,7 @@ final class SourcesViewModel: ObservableObject {
 		cacheResetGeneration = UUID()
 		await _repositoryService.clearCache()
 		await SourceAppListStore.shared.clearCache()
+		await SourceAppListStore.updates.clearCache()
 		await InstalledAppUpdateCatalog.shared.clearCache()
 		_revisions.removeAll()
 		sources.removeAll()
@@ -93,6 +94,7 @@ final class SourcesViewModel: ObservableObject {
 		catalogRevision += 1
 		Task {
 			await SourceAppListStore.shared.removeSource(key)
+			await SourceAppListStore.updates.removeSource(key)
 			await InstalledAppUpdateCatalog.shared.removeSource(key)
 			if evictURL, let url { await _repositoryService.remove(url) }
 		}

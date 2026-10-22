@@ -5,7 +5,7 @@ import AltSourceKit
 struct InstalledAppUpdatesView: View {
 	let contexts: [SourceAppCatalogContext]
 	// Subset projections must not replace the full repository's cached projection.
-	@State private var listStore = SourceAppListStore(cacheDirectory: nil)
+	private let listStore = SourceAppListStore.updates
 	@State private var selectedUpdate: SelectedUpdate?
 
 	private struct SelectedUpdate {

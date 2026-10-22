@@ -64,6 +64,7 @@ struct PreparedSourceAppList: Sendable {
 /// Filtering, sorting, hashing, grouping and disk access all run on this actor, away from UI work.
 actor SourceAppListStore {
 	static let shared = SourceAppListStore()
+	static let updates = SourceAppListStore(cacheDirectory: nil)
 	private struct Key: Hashable, Codable {
 		let sources: [String]
 		let sort: String
@@ -98,15 +99,28 @@ actor SourceAppListStore {
 		if let cacheDirectory { try? FileManager.default.removeItem(at: cacheDirectory) }
 	}
 
+	/// A cache hit bypasses loading presentation; no disk I/O or projection work occurs here.
+	func cachedList(contexts: [SourceAppCatalogContext], sort: String, ascending: Bool,
+		query: String, unknownDate: String) -> PreparedSourceAppList? {
+		guard query.isEmpty else { return nil }
+		return prepared[listKey(contexts: contexts, sort: sort, ascending: ascending, unknownDate: unknownDate)]
+	}
+
+	private func listKey(contexts: [SourceAppCatalogContext], sort: String, ascending: Bool,
+		unknownDate: String) -> Key {
+		let sources = contexts.filter { !removedSources.contains($0.sourceObjectURI) }
+			.flatMap { [$0.sourceObjectURI, $0.sourceURL?.absoluteString ?? "", $0.revision] }
+		return Key(sources: sources, sort: sort, ascending: ascending,
+			locale: Locale.current.identifier, timeZone: TimeZone.current.identifier, unknownDate: unknownDate)
+	}
+
 	func list(
 		contexts: [SourceAppCatalogContext], sort: String, ascending: Bool,
 		query: String, unknownDate: String
 	) throws -> PreparedSourceAppList {
 		try Task.checkCancellation()
 		let contexts = contexts.filter { !removedSources.contains($0.sourceObjectURI) }
-		let sourceKeys = contexts.flatMap { [$0.sourceObjectURI, $0.sourceURL?.absoluteString ?? "", $0.revision] }
-		let key = Key(sources: sourceKeys, sort: sort, ascending: ascending,
-			locale: Locale.current.identifier, timeZone: TimeZone.current.identifier, unknownDate: unknownDate)
+		let key = listKey(contexts: contexts, sort: sort, ascending: ascending, unknownDate: unknownDate)
 		let base: PreparedSourceAppList
 		if let cached = prepared[key] {
 			base = cached

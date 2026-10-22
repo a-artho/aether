@@ -17,30 +17,38 @@ private final class SourceAppTableCell: UITableViewCell {
 	override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool { false }
 }
 
-private struct SourceAppsLoadingSkeleton: View {
+/// Uses the same hosting margins, typography and native section layout as real rows.
+private struct SourceAppsSkeletonRow: View {
+	@AppStorage("Aether.storeCellAppearance") private var appearance = 0
+	var showsDownloadButton: Bool
 	var body: some View {
-		VStack(spacing: 0) {
-			ForEach(0..<6) { _ in
-				HStack(spacing: 18) {
-					AppIconSkeleton(size: 50)
+		VStack {
+			HStack(spacing: 18) {
+				AppIconSkeleton(size: 50)
+				VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
+					Text("Application name").nbRowTitle()
 					VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
-						RoundedRectangle(cornerRadius: 3).frame(width: 140, height: 14)
-						RoundedRectangle(cornerRadius: 3).frame(width: 64, height: 10)
-						RoundedRectangle(cornerRadius: 3).frame(maxWidth: 220).frame(height: 10)
+						Text("1.0.0").nbRowSubtitle()
+						if appearance == 0 { Text("Application description").font(.footnote) }
 					}
-					.foregroundStyle(Color(uiColor: .tertiarySystemFill))
-					.frame(maxWidth: .infinity, alignment: .leading)
 				}
-				.frame(minHeight: 80)
+				.padding(.vertical, 2)
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.redacted(reason: .placeholder)
+				.foregroundStyle(.tertiary)
+				if showsDownloadButton {
+					RoundedRectangle(cornerRadius: 4)
+						.fill(Color(uiColor: .tertiarySystemFill))
+						.frame(width: 22, height: 18).frame(width: 44, height: 44)
+				}
 			}
-			Spacer(minLength: 0)
+			if appearance != 0 {
+				Text("Application description\nAdditional application details")
+					.nbRowSubtitle().frame(maxWidth: .infinity, alignment: .leading)
+					.padding(.top, 2).redacted(reason: .placeholder).foregroundStyle(.tertiary)
+			}
 		}
-		.padding(.horizontal, 16)
-		.padding(.top, 16)
-		.clipped()
-		.allowsHitTesting(false)
-		.accessibilityElement(children: .ignore)
-		.accessibilityLabel(String.localized("Loading apps"))
+		.accessibilityHidden(true)
 	}
 }
 
@@ -48,6 +56,7 @@ private struct SourceAppsLoadingSkeleton: View {
 struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	@AppStorage("Aether.showRepoDownloadButtons") private var showsDownloadButtons = true
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
+	var isCatalogLoading = false
 	@Binding var searchText: String
 	@Binding var sortOption: SourceAppsView.SortOption
 	var sortAscending: Bool
@@ -62,7 +71,6 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		tableView.sectionFooterHeight = .leastNormalMagnitude
 		tableView.estimatedSectionFooterHeight = .leastNormalMagnitude
 		tableView.delegate = context.coordinator
-		context.coordinator.attach(to: tableView)
 		tableView.register(SourceAppTableCell.self, forCellReuseIdentifier: "AppCell")
 		tableView.register(UITableViewHeaderFooterView.self, forHeaderFooterViewReuseIdentifier: "SectionHeader")
 
@@ -73,11 +81,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		tableView.sectionHeaderHeight = UITableView.automaticDimension
 		tableView.allowsSelection = true
 		tableView.keyboardDismissMode = .onDrag
-		// Catalog availability precedes async sorting/grouping and snapshot application.
-		// Keep loading feedback visible until the table actually has its first snapshot.
-		tableView.backgroundView = UIHostingConfiguration {
-			SourceAppsLoadingSkeleton()
-		}.margins(.all, 0).makeContentView()
+		context.coordinator.attach(to: tableView)
 
 		return tableView
 	}
@@ -87,6 +91,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		context.coordinator.onSelect = onSelect
 		
 		let sourcesChanged = context.coordinator.sourceContexts != sourceContexts
+		let loadingChanged = context.coordinator.isCatalogLoading != isCatalogLoading
 		let searchChanged = context.coordinator.searchText != searchText
 		let sortOptionChanged = context.coordinator.sortOption != sortOption
 		let sortDirectionChanged = context.coordinator.sortAscending != sortAscending
@@ -94,6 +99,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		let accessoryChanged = context.coordinator.showsDownloadButtons != showsDownloadButtons
 		
 		context.coordinator.sourceContexts = sourceContexts
+		context.coordinator.isCatalogLoading = isCatalogLoading
 		context.coordinator.searchText = searchText
 		context.coordinator.sortOption = sortOption
 		context.coordinator.sortAscending = sortAscending
@@ -102,7 +108,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		context.coordinator.updateNewsHeader(for: tableView)
 		if accessoryChanged { context.coordinator.refreshVisibleAccessories() }
 		
-		if sourcesChanged || searchChanged || sortOptionChanged || sortDirectionChanged || badgeChanged {
+		if sourcesChanged || loadingChanged || searchChanged || sortOptionChanged || sortDirectionChanged || badgeChanged {
 			context.coordinator.prepareList(
 				debouncingSearch: searchChanged && !sourcesChanged && !sortOptionChanged && !sortDirectionChanged && !badgeChanged,
 				preserveScroll: sourcesChanged && !searchChanged && !sortOptionChanged && !sortDirectionChanged,
@@ -115,6 +121,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	func makeCoordinator() -> Coordinator {
 		Coordinator(
 			sourceContexts: sourceContexts,
+			isCatalogLoading: isCatalogLoading,
 			searchText: searchText,
 			sortOption: sortOption,
 			sortAscending: sortAscending,
@@ -133,6 +140,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		scrollView.window?.endEditing(true)
 	}
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
+	var isCatalogLoading: Bool
 	var searchText: String
 	var sortOption: SourceAppsView.SortOption
 	var sortAscending: Bool
@@ -147,6 +155,8 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	private var _prepareTask: Task<Void, Never>?
 	private var _generation = 0
 	private var _hasAppliedList = false
+	private var _loadingDeadline: ContinuousClock.Instant?
+	private static let loadingSection = "aether-loading"
 	private var _newsHeaderController: UIHostingController<SourceNewsView>?
 	private var _newsHeaderSignature: String?
 	private var _newsHeaderWidth: CGFloat = 0
@@ -166,6 +176,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 
 	init(
 		sourceContexts: [SourceAppsView.SourceRepositoryContext],
+		isCatalogLoading: Bool,
 		searchText: String,
 		sortOption: SourceAppsView.SortOption,
 		sortAscending: Bool,
@@ -175,6 +186,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		onSelect: @escaping (SourceAppsView.SourceAppSelection) -> Void
 	) {
 		self.sourceContexts = sourceContexts
+		self.isCatalogLoading = isCatalogLoading
 		self.searchText = searchText
 		self.sortOption = sortOption
 		self.sortAscending = sortAscending
@@ -195,10 +207,20 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		uiTableView = tableView
 		_dataSource = DataSource(tableView: tableView) { [weak self] table, indexPath, id in
 			let cell = table.dequeueReusableCell(withIdentifier: "AppCell", for: indexPath)
-			guard let self, let row = self._displayed?.rows[id] ?? self._previousDisplay?.rows[id] else { return cell }
-			self.configureVisibleCell(cell, row: row)
+			guard let self else { return cell }
+			if id.source == Self.loadingSection {
+				cell.selectionStyle = .none
+				cell.accessoryType = self.showsDownloadButtons ? .none : .disclosureIndicator
+				cell.backgroundConfiguration = .listCell()
+				let showsDownload = self.showsDownloadButtons
+				cell.contentConfiguration = UIHostingConfiguration { SourceAppsSkeletonRow(showsDownloadButton: showsDownload) }
+				cell.isAccessibilityElement = false
+			} else if let row = self._displayed?.rows[id] ?? self._previousDisplay?.rows[id] {
+				self.configureVisibleCell(cell, row: row)
+			}
 			return cell
 		}
+		if isCatalogLoading && sourceContexts.isEmpty { showLoadingList() }
 		// Relative labels update on midnight/foreground without a repeating timer.
 		for name in [UIApplication.significantTimeChangeNotification, UIApplication.willEnterForegroundNotification,
 			NSLocale.currentLocaleDidChangeNotification] {
@@ -209,9 +231,20 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		prepareList()
 	}
 
+	private func showLoadingList() {
+		guard !_hasAppliedList, _loadingDeadline == nil else { return }
+		_loadingDeadline = .now + .milliseconds(500)
+		var loading = NSDiffableDataSourceSnapshot<String, SourceAppRowID>()
+		loading.appendSections([Self.loadingSection])
+		loading.appendItems((0..<8).map { SourceAppRowID(source: Self.loadingSection, identity: "loading", occurrence: $0) })
+		_dataSource?.apply(loading, animatingDifferences: false)
+	}
+
 	private func configureVisibleCell(_ cell: UITableViewCell, row: SourceAppRow) {
 		let showBadge = showSourceBadge
 		let showDownload = showsDownloadButtons
+		cell.selectionStyle = .default
+		cell.isAccessibilityElement = true
 		cell.accessoryType = showDownload ? .none : .disclosureIndicator
 		// A cell needs repository metadata, not its entire app/news catalog.
 		var source = row.source
@@ -236,6 +269,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 
 	func prepareList(debouncingSearch: Bool = false, preserveScroll: Bool = false, refreshVisibleRows: Bool = false, fadeSearchResults: Bool = false) {
 		_prepareTask?.cancel()
+		guard !isCatalogLoading || !sourceContexts.isEmpty else { return }
 		_generation += 1
 		let generation = _generation
 		let contexts = sourceContexts
@@ -247,10 +281,21 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		_prepareTask = Task { [weak self] in
 			do {
 				if debouncingSearch { try await Task.sleep(for: .milliseconds(120)) }
-				let list = try await store.list(contexts: contexts, sort: sort, ascending: ascending,
+				let cached = await store.cachedList(contexts: contexts, sort: sort, ascending: ascending,
 					query: query, unknownDate: .localized("Unknown Date"))
-				let changed = await store.changedRows(in: list, comparedTo: previous)
 				guard !Task.isCancelled, let self, self._generation == generation else { return }
+				if cached == nil { self.showLoadingList() }
+				let list: PreparedSourceAppList
+				if let cached { list = cached }
+				else {
+					list = try await store.list(contexts: contexts, sort: sort, ascending: ascending,
+						query: query, unknownDate: .localized("Unknown Date"))
+				}
+				let changed = await store.changedRows(in: list, comparedTo: previous)
+				if !self._hasAppliedList, let deadline = self._loadingDeadline {
+					try await Task.sleep(until: deadline, clock: .continuous)
+				}
+				guard !Task.isCancelled, self._generation == generation else { return }
 				self.apply(list, changed: changed, preserveScroll: preserveScroll, refreshVisibleRows: refreshVisibleRows, fadeSearchResults: fadeSearchResults)
 			} catch is CancellationError {
 				// A newer query/catalog owns the next update.
@@ -290,7 +335,6 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		let update = {
 			dataSource.apply(snapshot, animatingDifferences: false) { [weak self, weak table] in
 				guard let self, let table else { return }
-				table.backgroundView = nil
 				if self._generation == generation {
 					self._previousDisplay = nil
 					self.refreshVisibleHeaders()
@@ -407,6 +451,14 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	}
 
 	private func configureHeader(_ header: UITableViewHeaderFooterView, section: Int) {
+		if !_hasAppliedList {
+			header.backgroundConfiguration = .clear()
+			header.contentConfiguration = UIHostingConfiguration {
+				SourceAppDateChip(title: String.localized("Today"))
+					.redacted(reason: .placeholder).accessibilityHidden(true)
+			}.margins(.vertical, 4)
+			return
+		}
 		guard let sections = _displayed?.sections, sections.indices.contains(section) else { return }
 		let title = sections[section].displayTitle(today: .localized("Today"), yesterday: .localized("Yesterday"))
 		header.backgroundConfiguration = .clear()

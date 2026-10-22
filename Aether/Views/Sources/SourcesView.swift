@@ -125,7 +125,7 @@ struct SourcesView: View {
 			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _toolbarWidth = $0 }
 			.modifier(SearchToolbarModifier(
 				text: $_searchText, isPresented: _rootSearchPresented,
-				focus: $_isSearchFocused, title: .localized("Sources"), width: _toolbarWidth, isTabRoot: true, hasTitleMenu: false,
+				focus: $_isSearchFocused, title: .localized("Sources"), width: _toolbarWidth, isScreenActive: router.path.isEmpty, isTabRoot: true, hasTitleMenu: false,
 				secondaryLabel: .localized("Add Source"),
 				secondaryAction: { router.presentAddSource() }
 			) { EmptyView() })
