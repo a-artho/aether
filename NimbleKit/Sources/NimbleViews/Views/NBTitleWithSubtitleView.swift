@@ -8,7 +8,6 @@
 import SwiftUI
 
 public struct NBTitleWithSubtitleView: View {
-	@AppStorage("Aether.rowTextStyle") private var rowTextStyle: NBRowTextStyle = .standard
 	private let _title: String
 	private let _subtitle: String
 	private var _linelimit: Int? = nil
@@ -20,7 +19,7 @@ public struct NBTitleWithSubtitleView: View {
 	}
 	
 	public var body: some View {
-		VStack(alignment: .leading, spacing: rowTextStyle.lineSpacing) {
+		VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
 			Text(_title)
 				.nbRowTitle()
 				.foregroundColor(.primary)

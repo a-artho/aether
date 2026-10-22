@@ -18,6 +18,13 @@ actor AppStoreLookup {
 	static let shared = AppStoreLookup()
 	private var cache: [LookupKey: AppStoreDestination] = [:]
 
+	/// Available before network resolution so the information row never appears late.
+	nonisolated static func fallbackDestination(appName: String) -> AppStoreDestination? {
+		let name = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+		guard !name.isEmpty else { return nil }
+		return _searchDestination(for: _searchQueries(for: name).first ?? name)
+	}
+
 	private struct LookupKey: Hashable {
 		let bundleID: String
 		let appName: String
@@ -50,7 +57,7 @@ actor AppStoreLookup {
 			return destination
 		}
 
-		for query in _searchQueries(for: name) {
+		for query in Self._searchQueries(for: name) {
 			guard let entries = await _search(query: query) else { continue }
 			if let entry = _bestNameMatch(in: entries, for: query) {
 				let destination = AppStoreDestination(url: entry, isDirectMatch: true)
@@ -59,7 +66,7 @@ actor AppStoreLookup {
 			}
 		}
 
-		let destination = _searchDestination(for: _searchQueries(for: name).first ?? name)
+		let destination = Self.fallbackDestination(appName: name)
 		if let destination {
 			cache[key] = destination
 		}
@@ -108,7 +115,7 @@ actor AppStoreLookup {
 		}?.trackViewUrl
 	}
 
-	private func _searchQueries(for name: String) -> [String] {
+	nonisolated private static func _searchQueries(for name: String) -> [String] {
 		let normalizedSeparators = name.replacingOccurrences(of: "_", with: " ")
 		let versionSuffix = try? NSRegularExpression(pattern: #"(?i)(?:\s|-)+v?\d+(?:\.\d+)+(?:\s.*)?$"#)
 		let range = NSRange(normalizedSeparators.startIndex..., in: normalizedSeparators)
@@ -121,7 +128,7 @@ actor AppStoreLookup {
 			.removingDuplicates()
 	}
 
-	private func _searchDestination(for query: String) -> AppStoreDestination? {
+	nonisolated private static func _searchDestination(for query: String) -> AppStoreDestination? {
 		guard var components = URLComponents(string: "itms-apps://itunes.apple.com/search") else { return nil }
 		components.queryItems = [URLQueryItem(name: "term", value: query)]
 		guard let url = components.url else { return nil }

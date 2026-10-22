@@ -3,7 +3,6 @@ import NimbleViews
 
 /// Shared metadata hierarchy for Library apps and in-flight transfers.
 struct LibraryRowDetails: View {
-	@AppStorage("Aether.rowTextStyle") private var rowTextStyle: NBRowTextStyle = .standard
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let name: String
 	let version: String?
@@ -16,7 +15,7 @@ struct LibraryRowDetails: View {
 	var showsNumericProgress = false
 
 	var body: some View {
-		VStack(alignment: .leading, spacing: rowTextStyle.lineSpacing) {
+		VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
 			Text(name)
 				.nbRowTitle()
 				.foregroundStyle(.primary)

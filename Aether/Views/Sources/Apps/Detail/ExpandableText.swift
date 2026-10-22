@@ -173,20 +173,15 @@ struct ExpandableText: View {
 	}
 }
 
-/// Follow Appearance text sizing without applying list-row padding to prose.
+/// Shared body sizing follows the fixed balanced row typography.
 struct SourceAppBodyFont: ViewModifier {
-	@AppStorage("Aether.rowTextStyle") private var style: NBRowTextStyle = .standard
-	@ScaledMetric private var compactSize: CGFloat
-	@ScaledMetric private var balancedSize: CGFloat
-	let textStyle: Font.TextStyle
+	@ScaledMetric private var size: CGFloat
 
 	init(textStyle: Font.TextStyle) {
-		self.textStyle = textStyle
-		_compactSize = ScaledMetric(wrappedValue: 13, relativeTo: textStyle)
-		_balancedSize = ScaledMetric(wrappedValue: 14, relativeTo: textStyle)
+		_size = ScaledMetric(wrappedValue: 14, relativeTo: textStyle)
 	}
 
 	func body(content: Content) -> some View {
-		content.font(style == .standard ? .system(textStyle) : .system(size: style == .compact ? compactSize : balancedSize))
+		content.font(.system(size: size))
 	}
 }

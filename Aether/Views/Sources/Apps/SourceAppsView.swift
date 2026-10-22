@@ -120,13 +120,13 @@ struct SourceAppsView: View {
 			}
 		}
 		.onAppear {
+			_sortOption = _sortOptionRawValue == "date"
+				? .latest
+				: SortOption(rawValue: _sortOptionRawValue) ?? .latest
 			if !hasLoadedOnce, viewModel.isFinished || object.contains(where: { viewModel.repository(for: $0) != nil }) {
 				_load()
 				hasLoadedOnce = true
 			}
-			_sortOption = _sortOptionRawValue == "date"
-				? .latest
-				: SortOption(rawValue: _sortOptionRawValue) ?? .latest
 		}
 		.task {
 			await viewModel.ensureSourcesLoaded(object)
@@ -187,9 +187,7 @@ struct SourceAppsView: View {
 		}
 		_sourceContexts = loadedSources
 		_loadedCatalogRevision = viewModel.catalogRevision
-		withAnimation(.easeIn(duration: 0.2)) {
-			isLoading = false
-		}
+		isLoading = false
 		_consumePendingAppRequestIfPossible()
 	}
 

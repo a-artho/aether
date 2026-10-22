@@ -16,6 +16,9 @@ struct SourceAppsDetailView: View {
 	@State private var _isScreenshotPreviewPresented: Bool = false
 	@State private var _selectedScreenshotIndex: Int = 0
 	@State private var _appStoreDestination: AppStoreDestination?
+	private var _appStoreLinkDestination: AppStoreDestination? {
+		_appStoreDestination ?? AppStoreLookup.fallbackDestination(appName: app.currentName)
+	}
 
 	let sourceURL: URL?
 	let source: ASRepository
@@ -166,10 +169,12 @@ struct SourceAppsDetailView: View {
 			)
 		}
 		.task(id: "\(app.id ?? "")|\(app.currentName)") {
-			_appStoreDestination = await AppStoreLookup.shared.destination(
+			let destination = await AppStoreLookup.shared.destination(
 				bundleID: app.id,
 				appName: app.currentName
 			)
+			guard !Task.isCancelled else { return }
+			_appStoreDestination = destination
 		}
 	}
 
@@ -372,7 +377,7 @@ extension SourceAppsDetailView {
 
 	@ViewBuilder
 	private func _appStoreLink() -> some View {
-		if let destination = _appStoreDestination {
+		if let destination = _appStoreLinkDestination {
 			Button {
 				_openAppStore(destination.url)
 			} label: {
@@ -382,8 +387,10 @@ extension SourceAppsDetailView {
 					HStack(spacing: 4) {
 						Text(.localized("Open in App Store"))
 							.underline()
+							.foregroundStyle(.primary)
 						Image(systemName: "arrow.up.right")
 							.font(.caption2.weight(.semibold))
+							.foregroundStyle(Color.accentColor)
 					}
 				}
 				.font(.subheadline)
@@ -426,7 +433,7 @@ extension SourceAppsDetailView {
 				_infoRow(
 					title: row.title,
 					value: row.value,
-					isLast: index == rows.count - 1 && _appStoreDestination == nil
+					isLast: index == rows.count - 1 && _appStoreLinkDestination == nil
 				)
 			}
 			_appStoreLink()

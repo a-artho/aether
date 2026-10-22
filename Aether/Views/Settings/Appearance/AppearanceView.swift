@@ -13,7 +13,6 @@ import UIKit
 // dear god help me
 struct AppearanceView: View {
 	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .sources
-	@AppStorage("Aether.rowTextStyle") private var _rowTextStyle: NBRowTextStyle = .standard
 	@AppStorage("Aether.settingsRowIconStyle") private var _settingsRowIconStyle: SettingsRowIconStyle = .colored
 	@AppStorage("Aether.deviceControlsStyle") private var _deviceControlsStyle: DeviceControlsStyle = .standard
 	@AppStorage("Aether.sectionHeaderMatchesPageTitle") private var _sectionHeaderMatchesPageTitle = false
@@ -104,18 +103,6 @@ struct AppearanceView: View {
 					}
 				} label: {
 					SettingsRowLabel(.localized("Card Style"), systemImage: "rectangle.on.rectangle", backgroundColor: .gray)
-				}
-				.pickerStyle(.menu)
-				.tint(.secondary)
-			}
-
-			NBSection(.localized("Rows")) {
-				Picker(selection: $_rowTextStyle) {
-					ForEach(NBRowTextStyle.allCases) { style in
-						Text(style.title).tag(style)
-					}
-				} label: {
-					SettingsRowLabel(.localized("Text Size"), systemImage: "textformat.size", backgroundColor: .gray)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)

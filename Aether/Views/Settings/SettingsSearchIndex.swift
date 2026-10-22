@@ -47,7 +47,7 @@ enum SettingsSearchIndex {
 			("Appearance", "light dark system theme"), ("Theme", "color tint"), ("Custom Theme Color", "colour tint"),
 			("Card Style", "settings device controls tunnel pairing certificate default liquid glass native raised card tiles background"),
 			("Row Icons", "settings flat colored monochrome white muted gray grey icons"),
-			("Text Size", "rows compact balanced default smaller fonts titles subtitles spacing 17 16 15 14 13"), ("Section Header Size", "heading font text size"), ("Muted Section Headers", "headings gray grey"), ("Hide Tab Labels", "tab bar icons hide labels"),
+			("Section Header Size", "heading font text size"), ("Muted Section Headers", "headings gray grey"), ("Hide Tab Labels", "tab bar icons hide labels"),
 			("Launch Tab", "startup cold launch start sources library default tab"),
 			("Search Placement", "page title right navigation"),
 			("Left-Aligned Page Titles", "leading left navigation main tabs title alignment"), ("Hide Search Icon", "page title magnifying glass"), ("Dynamic Icons", "app light dark"),

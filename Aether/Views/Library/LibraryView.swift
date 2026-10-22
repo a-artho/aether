@@ -10,7 +10,6 @@ import UIKit
 
 @MainActor
 struct LibraryView: View {
-	@AppStorage("Aether.rowTextStyle") private var rowTextStyle: NBRowTextStyle = .standard
 	@StateObject private var imports = UnifiedImportsController()
 	@AppStorage("Aether.installationMethod") private var installationMethod = 0
 	@StateObject private var store: InstalledAppsStore
@@ -34,6 +33,7 @@ struct LibraryView: View {
 	@State private var toolbarWidth: CGFloat = 320
 	@State private var appNavigationPath: [InstalledAppsRoute] = []
 	@State private var isRootListVisible = false
+	@State private var hasLoadedInitialContent = false
 	@State private var visibleUnifiedInstallRows: [UUID: Set<String>] = [:]
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
@@ -187,7 +187,7 @@ struct LibraryView: View {
 							.transition(.opacity)
 					}
 				}
-				.animation(reduceMotion ? nil : .snappy, value: layout)
+				.animation(reduceMotion || !hasLoadedInitialContent ? nil : .snappy, value: layout)
 				.modifier(UnifiedImportsDataSource(controller: imports))
 				.refreshable {
 					guard loadsApps else { return }
@@ -199,8 +199,9 @@ struct LibraryView: View {
 				guard loadsApps else { return }
 				async let repositories: Void = sourcesViewModel.refreshIfNeeded(Array(sources))
 				async let installed: Void = store.load()
-				await repositories
 				await installed
+				if !Task.isCancelled { hasLoadedInitialContent = true }
+				await repositories
 			}
 			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { toolbarWidth = $0 }
 			.modifier(SearchToolbarModifier(
@@ -361,7 +362,7 @@ struct LibraryView: View {
 				.symbolRenderingMode(.hierarchical)
 				.foregroundStyle(.secondary)
 				.frame(width: 50, height: 50)
-			VStack(alignment: .leading, spacing: rowTextStyle.lineSpacing) {
+			VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
 				Text(String.localized("All Apps"))
 					.nbRowTitle()
 					.foregroundStyle(.primary)

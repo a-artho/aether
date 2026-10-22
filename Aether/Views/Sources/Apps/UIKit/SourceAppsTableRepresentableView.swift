@@ -8,12 +8,40 @@
 import SwiftUI
 import AltSourceKit
 import UIKit
+import NimbleViews
 
 private final class SourceAppTableCell: UITableViewCell {
 	// These rows have no responder editing actions. Their copy/download menus are
 	// supplied by the table delegate. UIKit's default implementation searches its
 	// tentative-cell map for each accessibility attribute, quadratically on large lists.
 	override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool { false }
+}
+
+private struct SourceAppsLoadingSkeleton: View {
+	var body: some View {
+		VStack(spacing: 0) {
+			ForEach(0..<6) { _ in
+				HStack(spacing: 18) {
+					AppIconSkeleton(size: 50)
+					VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
+						RoundedRectangle(cornerRadius: 3).frame(width: 140, height: 14)
+						RoundedRectangle(cornerRadius: 3).frame(width: 64, height: 10)
+						RoundedRectangle(cornerRadius: 3).frame(maxWidth: 220).frame(height: 10)
+					}
+					.foregroundStyle(Color(uiColor: .tertiarySystemFill))
+					.frame(maxWidth: .infinity, alignment: .leading)
+				}
+				.frame(minHeight: 80)
+			}
+			Spacer(minLength: 0)
+		}
+		.padding(.horizontal, 16)
+		.padding(.top, 16)
+		.clipped()
+		.allowsHitTesting(false)
+		.accessibilityElement(children: .ignore)
+		.accessibilityLabel(String.localized("Loading apps"))
+	}
 }
 
 // MARK: - Representable
@@ -45,6 +73,11 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		tableView.sectionHeaderHeight = UITableView.automaticDimension
 		tableView.allowsSelection = true
 		tableView.keyboardDismissMode = .onDrag
+		// Catalog availability precedes async sorting/grouping and snapshot application.
+		// Keep loading feedback visible until the table actually has its first snapshot.
+		tableView.backgroundView = UIHostingConfiguration {
+			SourceAppsLoadingSkeleton()
+		}.margins(.all, 0).makeContentView()
 
 		return tableView
 	}
@@ -257,6 +290,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		let update = {
 			dataSource.apply(snapshot, animatingDifferences: false) { [weak self, weak table] in
 				guard let self, let table else { return }
+				table.backgroundView = nil
 				if self._generation == generation {
 					self._previousDisplay = nil
 					self.refreshVisibleHeaders()
