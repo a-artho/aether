@@ -105,6 +105,25 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
   let context=SourceAppCatalogContext(sourceObjectURI:"source-key",sourceURL:url,repository:snapshot.repository,revision:snapshot.revision)
   let list=try await listStore.list(contexts:[context],sort:"name",ascending:true,query:"NEEDLE",unknownDate:"Unknown")
   check(list.rows.count == 1,"Description search retained")
+  let sameCatalog=try await listStore.list(contexts:[context],sort:"latest",ascending:false,query:"",unknownDate:"Unknown")
+  check(sameCatalog.changedRows(comparedTo:list).isEmpty,"Search and sorting preserve unchanged row content")
+  var edited=snapshot.repository
+  edited.apps[0].description="Updated description"
+  let editedContext=SourceAppCatalogContext(sourceObjectURI:"source-key",sourceURL:url,repository:edited,revision:"edited-1")
+  let editedList=try await listStore.list(contexts:[editedContext],sort:"latest",ascending:false,query:"",unknownDate:"Unknown")
+  check(editedList.changedRows(comparedTo:sameCatalog).count==1,"Catalog refresh still detects changed descriptions")
+  var renamed=edited
+  renamed.name="Renamed source"
+  let renamedContext=SourceAppCatalogContext(sourceObjectURI:"source-key",sourceURL:url,repository:renamed,revision:"renamed-1")
+  let renamedList=try await listStore.list(contexts:[renamedContext],sort:"latest",ascending:false,query:"",unknownDate:"Unknown")
+  check(renamedList.changedRows(comparedTo:editedList).count==1,"Shared source fingerprint still invalidates affected rows")
+  let indexDirectory=root.appendingPathComponent("indexes")
+  let diskListStore=SourceAppListStore(cacheDirectory:indexDirectory)
+  _=try await diskListStore.list(contexts:[context],sort:"latest",ascending:false,query:"",unknownDate:"Unknown")
+  await diskListStore.clearCache()
+  try await Task.sleep(nanoseconds:30_000_000)
+  check(!fm.fileExists(atPath:indexDirectory.path),"Queued index writes cannot restore a reset disk cache")
+
   check(list.rows.values.allSatisfy { $0.source.apps.isEmpty && $0.source.news == nil },"Rows retain repository metadata without app catalogs")
   check(SourceAppBodyText.subtitle(in:"Hello 😀 😃 · World",followingVersion:false)=="Hello · World","Emoji/separator runs remain collapsed after caching")
   check(SourceAppBodyText.body(in:"😀 😃") == nil,"Emoji-only bodies remain hidden")

@@ -49,10 +49,12 @@ struct PreparedSourceAppList: Sendable {
 	}
 	let sections: [Section]
 	let rows: [SourceAppRowID: SourceAppRow]
+	var catalogRevisions: [String] = []
 
 	/// Content changes exclude random decoder UUIDs. UIKit keeps unchanged cells alive.
 	func changedRows(comparedTo previous: Self?) -> [SourceAppRowID] {
 		guard let previous else { return [] }
+		if !catalogRevisions.isEmpty, catalogRevisions == previous.catalogRevisions { return [] }
 		return rows.compactMap { id, row in
 			guard let old = previous.rows[id], old.contentRevision != row.contentRevision else { return nil }
 			return id
@@ -64,8 +66,7 @@ struct PreparedSourceAppList: Sendable {
 /// Filtering, sorting, hashing, grouping and disk access all run on this actor, away from UI work.
 actor SourceAppListStore {
 	static let shared = SourceAppListStore()
-	static let updates = SourceAppListStore(cacheDirectory: nil)
-	private struct Key: Hashable, Codable {
+	private struct Key: Hashable, Codable, Sendable {
 		let sources: [String]
 		let sort: String
 		let ascending: Bool
@@ -74,8 +75,8 @@ actor SourceAppListStore {
 		let unknownDate: String
 		var formatVersion = 3
 	}
-	private struct Order: Codable {
-		struct Section: Codable { let title: String; let indices: [Int]; let date: Date? }
+	private struct Order: Codable, Sendable {
+		struct Section: Codable, Sendable { let title: String; let indices: [Int]; let date: Date? }
 		let key: Key
 		let sections: [Section]
 	}
@@ -84,6 +85,7 @@ actor SourceAppListStore {
 		let rows: [SourceAppRow]
 	}
 	private let cacheDirectory: URL?
+	private let diskWriter = DispatchQueue(label: "Aether.SourceListIndexes", qos: .utility)
 	private var projections: [String: Projection] = [:]
 	private var removedSources = Set<String>()
 	private var prepared: [Key: PreparedSourceAppList] = [:]
@@ -96,22 +98,10 @@ actor SourceAppListStore {
 	func clearCache() {
 		prepared.removeAll()
 		projections.removeAll()
-		if let cacheDirectory { try? FileManager.default.removeItem(at: cacheDirectory) }
-	}
-
-	/// A cache hit bypasses loading presentation; no disk I/O or projection work occurs here.
-	func cachedList(contexts: [SourceAppCatalogContext], sort: String, ascending: Bool,
-		query: String, unknownDate: String) -> PreparedSourceAppList? {
-		guard query.isEmpty else { return nil }
-		return prepared[listKey(contexts: contexts, sort: sort, ascending: ascending, unknownDate: unknownDate)]
-	}
-
-	private func listKey(contexts: [SourceAppCatalogContext], sort: String, ascending: Bool,
-		unknownDate: String) -> Key {
-		let sources = contexts.filter { !removedSources.contains($0.sourceObjectURI) }
-			.flatMap { [$0.sourceObjectURI, $0.sourceURL?.absoluteString ?? "", $0.revision] }
-		return Key(sources: sources, sort: sort, ascending: ascending,
-			locale: Locale.current.identifier, timeZone: TimeZone.current.identifier, unknownDate: unknownDate)
+		if let cacheDirectory {
+			// Drain older writes before deleting so they cannot restore a reset index.
+			diskWriter.sync { try? FileManager.default.removeItem(at: cacheDirectory) }
+		}
 	}
 
 	func list(
@@ -120,7 +110,9 @@ actor SourceAppListStore {
 	) throws -> PreparedSourceAppList {
 		try Task.checkCancellation()
 		let contexts = contexts.filter { !removedSources.contains($0.sourceObjectURI) }
-		let key = listKey(contexts: contexts, sort: sort, ascending: ascending, unknownDate: unknownDate)
+		let sourceKeys = contexts.flatMap { [$0.sourceObjectURI, $0.sourceURL?.absoluteString ?? "", $0.revision] }
+		let key = Key(sources: sourceKeys, sort: sort, ascending: ascending,
+			locale: Locale.current.identifier, timeZone: TimeZone.current.identifier, unknownDate: unknownDate)
 		let base: PreparedSourceAppList
 		if let cached = prepared[key] {
 			base = cached
@@ -131,7 +123,8 @@ actor SourceAppListStore {
 			try Task.checkCancellation()
 			base = PreparedSourceAppList(
 				sections: order.sections.map { .init(title: $0.title, rows: $0.indices.map { rows[$0].id }, date: $0.date) },
-				rows: Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+				rows: Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) }),
+				catalogRevisions: sourceKeys
 			)
 			// Superseded catalog revisions must not accumulate large retained app graphs.
 			prepared = prepared.filter { old, _ in
@@ -164,7 +157,7 @@ actor SourceAppListStore {
 			}
 			if !ids.isEmpty { sections.append(.init(title: section.title, rows: ids, date: section.date)) }
 		}
-		return PreparedSourceAppList(sections: sections, rows: matches)
+		return PreparedSourceAppList(sections: sections, rows: matches, catalogRevisions: base.catalogRevisions)
 	}
 
 	func removeSource(_ source: String) {
@@ -183,6 +176,7 @@ actor SourceAppListStore {
 		var repository = context.repository
 		repository.apps = []
 		repository.news = nil
+		let sourceRevision = sourceFingerprint(context)
 		var occurrences: [String: Int] = [:]
 		var rows: [SourceAppRow] = []
 		rows.reserveCapacity(context.repository.apps.count)
@@ -195,8 +189,7 @@ actor SourceAppListStore {
 			let occurrence = occurrences[identity, default: 0]
 			occurrences[identity] = occurrence + 1
 			let id = SourceAppRowID(source: context.sourceObjectURI, identity: identity, occurrence: occurrence)
-			SourceAppBodyText.prepare(body: app.localizedDescription, subtitle: app.currentDescription)
-			let contentRevision = contentFingerprint(app, context: context)
+			let contentRevision = contentFingerprint(app, sourceRevision: sourceRevision)
 			let first = app.name?.trimmingCharacters(in: .whitespacesAndNewlines).first?.uppercased() ?? "#"
 			let letter = first.unicodeScalars.contains { (65...90).contains($0.value) } ? first : "#"
 			rows.append(SourceAppRow(id: id, sourceObjectURI: context.sourceObjectURI, sourceURL: context.sourceURL,
@@ -211,7 +204,14 @@ actor SourceAppListStore {
 		return rows
 	}
 
-	private func contentFingerprint(_ app: ASRepository.App, context: SourceAppCatalogContext) -> Int {
+	private func sourceFingerprint(_ context: SourceAppCatalogContext) -> Int {
+		var hash = Hasher()
+		hash.combine(context.sourceURL); hash.combine(context.repository.id)
+		hash.combine(context.repository.name); hash.combine(context.repository.currentIconURL)
+		return hash.finalize()
+	}
+
+	private func contentFingerprint(_ app: ASRepository.App, sourceRevision: Int) -> Int {
 		var hash = Hasher()
 		// Compare semantic dates, not their original JSON representation or decoder UUIDs.
 		// A timestamp restored from disk must match the same date received as an ISO string.
@@ -228,8 +228,7 @@ actor SourceAppListStore {
 			hash.combine(version.localizedDescription); hash.combine(version.downloadURL)
 			hash.combine(version.size); hash.combine(version.minOSVersion)
 		}
-		hash.combine(context.sourceURL); hash.combine(context.repository.id)
-		hash.combine(context.repository.name); hash.combine(context.repository.currentIconURL)
+		hash.combine(sourceRevision)
 		return hash.finalize()
 	}
 
@@ -298,26 +297,27 @@ actor SourceAppListStore {
 		      indices.allSatisfy({ (0..<count).contains($0) }) else { return nil }
 		return order
 	}
-	private func trimDiskIndexes() {
-		guard let cacheDirectory,
-		      let files = try? FileManager.default.contentsOfDirectory(at: cacheDirectory,
+	private nonisolated static func trimDiskIndexes(in directory: URL) {
+		guard let files = try? FileManager.default.contentsOfDirectory(at: directory,
 			includingPropertiesForKeys: [.contentModificationDateKey]), files.count > 64 else { return }
-		let oldest = files.sorted {
-			let left = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-			let right = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-			return left < right
-		}
-		for file in oldest.prefix(files.count - 64) { try? FileManager.default.removeItem(at: file) }
+		// Fetch each file's date once, rather than performing metadata reads inside sorting.
+		let dated = files.map { file in
+			(file, (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast)
+		}.sorted { $0.1 < $1.1 }
+		for (file, _) in dated.prefix(files.count - 64) { try? FileManager.default.removeItem(at: file) }
 	}
 
 	private func persist(_ order: Order) {
-		guard let cacheDirectory, let file = cacheFile(order.key) else { return }
-		do {
-			try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-			let encoder = PropertyListEncoder()
-			encoder.outputFormat = .binary
-			try encoder.encode(order).write(to: file, options: .atomic)
-			trimDiskIndexes()
-		} catch { /* Disk indexes are optional; in-memory preparation remains usable. */ }
+		guard let directory = cacheDirectory, let file = cacheFile(order.key) else { return }
+		// Optional index serialization and disk writes never delay returning the list.
+		diskWriter.async {
+			do {
+				try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+				let encoder = PropertyListEncoder()
+				encoder.outputFormat = .binary
+				try encoder.encode(order).write(to: file, options: .atomic)
+				Self.trimDiskIndexes(in: directory)
+			} catch { /* Disk indexes are optional; in-memory preparation remains usable. */ }
+		}
 	}
 }

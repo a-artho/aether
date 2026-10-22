@@ -43,11 +43,6 @@ enum SourceAppBodyText {
 		return value
 	}
 
-	/// Catalog projections call this on their actor, before rows reach the UI.
-	static func prepare(body: String?, subtitle: String?) {
-		if let body { _ = displayText(body) }
-		if let subtitle, subtitle != body { _ = displayText(subtitle) }
-	}
 
 	static func replacingEmoji(in text: String) -> String { displayText(text).cleaned }
 

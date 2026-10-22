@@ -24,7 +24,7 @@ private struct SourceAppsSkeletonRow: View {
 	var body: some View {
 		VStack {
 			HStack(spacing: 18) {
-				AppIconSkeleton(size: 50)
+				AppIconSkeleton(size: 50, isLoading: false)
 				VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
 					Text("Application name").nbRowTitle()
 					VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
@@ -48,7 +48,27 @@ private struct SourceAppsSkeletonRow: View {
 					.padding(.top, 2).redacted(reason: .placeholder).foregroundStyle(.tertiary)
 			}
 		}
+		.modifier(SourceAppsSkeletonPulse())
 		.accessibilityHidden(true)
+	}
+}
+
+/// A single pulse for the complete placeholder, active only while it is visible.
+private struct SourceAppsSkeletonPulse: ViewModifier {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@Environment(\.scenePhase) private var scenePhase
+	@State private var isVisible = false
+
+	func body(content: Content) -> some View {
+		Group {
+			if isVisible && scenePhase == .active && !reduceMotion {
+				content.phaseAnimator([false, true]) { view, dimmed in
+					view.opacity(dimmed ? 0.5 : 1)
+				} animation: { _ in .easeInOut(duration: 1) }
+			} else { content }
+		}
+		.onAppear { isVisible = true }
+		.onDisappear { isVisible = false }
 	}
 }
 
@@ -157,6 +177,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	private var _hasAppliedList = false
 	private var _loadingDeadline: ContinuousClock.Instant?
 	private static let loadingSection = "aether-loading"
+	private var _loadingSections: [PreparedSourceAppList.Section] = []
 	private var _newsHeaderController: UIHostingController<SourceNewsView>?
 	private var _newsHeaderSignature: String?
 	private var _newsHeaderWidth: CGFloat = 0
@@ -220,7 +241,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 			}
 			return cell
 		}
-		if isCatalogLoading && sourceContexts.isEmpty { showLoadingList() }
+		showLoadingList()
 		// Relative labels update on midnight/foreground without a repeating timer.
 		for name in [UIApplication.significantTimeChangeNotification, UIApplication.willEnterForegroundNotification,
 			NSLocale.currentLocaleDidChangeNotification] {
@@ -233,10 +254,15 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 
 	private func showLoadingList() {
 		guard !_hasAppliedList, _loadingDeadline == nil else { return }
-		_loadingDeadline = .now + .milliseconds(500)
+		_loadingDeadline = .now + .milliseconds(300)
 		var loading = NSDiffableDataSourceSnapshot<String, SourceAppRowID>()
-		loading.appendSections([Self.loadingSection])
-		loading.appendItems((0..<8).map { SourceAppRowID(source: Self.loadingSection, identity: "loading", occurrence: $0) })
+		_loadingSections = [.init(title: .localized("Today"), rows: (0..<8).map {
+			SourceAppRowID(source: Self.loadingSection, identity: "loading", occurrence: $0)
+		}, date: nil)]
+		for section in _loadingSections {
+			loading.appendSections([section.title])
+			loading.appendItems(section.rows, toSection: section.title)
+		}
 		_dataSource?.apply(loading, animatingDifferences: false)
 	}
 
@@ -281,16 +307,9 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		_prepareTask = Task { [weak self] in
 			do {
 				if debouncingSearch { try await Task.sleep(for: .milliseconds(120)) }
-				let cached = await store.cachedList(contexts: contexts, sort: sort, ascending: ascending,
+				let list = try await store.list(contexts: contexts, sort: sort, ascending: ascending,
 					query: query, unknownDate: .localized("Unknown Date"))
 				guard !Task.isCancelled, let self, self._generation == generation else { return }
-				if cached == nil { self.showLoadingList() }
-				let list: PreparedSourceAppList
-				if let cached { list = cached }
-				else {
-					list = try await store.list(contexts: contexts, sort: sort, ascending: ascending,
-						query: query, unknownDate: .localized("Unknown Date"))
-				}
 				let changed = await store.changedRows(in: list, comparedTo: previous)
 				if !self._hasAppliedList, let deadline = self._loadingDeadline {
 					try await Task.sleep(until: deadline, clock: .continuous)
@@ -308,6 +327,13 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	private func apply(_ list: PreparedSourceAppList, changed: [SourceAppRowID], preserveScroll: Bool, refreshVisibleRows: Bool, fadeSearchResults: Bool) {
 		guard let table = uiTableView, let dataSource = _dataSource else { return }
 		let isFirst = !_hasAppliedList
+		let loadingSnapshot = isFirst && !UIAccessibility.isReduceMotionEnabled
+			? table.snapshotView(afterScreenUpdates: false) : nil
+		if let loadingSnapshot {
+			loadingSnapshot.frame = table.bounds
+			loadingSnapshot.isUserInteractionEnabled = false
+			table.addSubview(loadingSnapshot)
+		}
 		let generation = _generation
 		let anchor: (SourceAppRowID, CGFloat)? = preserveScroll && !table.isDragging && !table.isDecelerating
 			? table.indexPathsForVisibleRows?.sorted().compactMap { indexPath in
@@ -334,7 +360,14 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		// Applying consistently on main keeps UIKit cell providers and model reads synchronized.
 		let update = {
 			dataSource.apply(snapshot, animatingDifferences: false) { [weak self, weak table] in
-				guard let self, let table else { return }
+				guard let self, let table else { loadingSnapshot?.removeFromSuperview(); return }
+				if let loadingSnapshot {
+					table.layoutIfNeeded()
+					table.bringSubviewToFront(loadingSnapshot)
+					UIView.animate(withDuration: 0.2, animations: { loadingSnapshot.alpha = 0 }) { _ in
+						loadingSnapshot.removeFromSuperview()
+					}
+				}
 				if self._generation == generation {
 					self._previousDisplay = nil
 					self.refreshVisibleHeaders()
@@ -452,10 +485,13 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 
 	private func configureHeader(_ header: UITableViewHeaderFooterView, section: Int) {
 		if !_hasAppliedList {
+			let title = _loadingSections.indices.contains(section)
+				? _loadingSections[section].displayTitle(today: .localized("Today"), yesterday: .localized("Yesterday")) : ""
 			header.backgroundConfiguration = .clear()
 			header.contentConfiguration = UIHostingConfiguration {
-				SourceAppDateChip(title: String.localized("Today"))
-					.redacted(reason: .placeholder).accessibilityHidden(true)
+				SourceAppDateChip(title: title)
+					.redacted(reason: .placeholder)
+					.modifier(SourceAppsSkeletonPulse()).accessibilityHidden(true)
 			}.margins(.vertical, 4)
 			return
 		}

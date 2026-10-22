@@ -72,14 +72,11 @@ struct SourceAppsView: View {
 
 	// MARK: Body
 	var body: some View {
-		// Seed the table from an already-loaded catalog before onAppear runs.
-		// Otherwise a cached opening briefly mounts the loading table first.
-		let displayedContexts = _sourceContexts ?? _catalogContexts()
-		return ZStack {
-			if isLoading || displayedContexts.contains(where: { !$0.repository.apps.isEmpty }) {
+		ZStack {
+			if isLoading || (_sourceContexts?.contains(where: { !$0.repository.apps.isEmpty }) == true) {
 				SourceAppsTableRepresentableView(
-					sourceContexts: displayedContexts,
-					isCatalogLoading: isLoading && displayedContexts.isEmpty,
+					sourceContexts: _sourceContexts ?? [],
+					isCatalogLoading: isLoading,
 					searchText: $_searchText,
 					sortOption: $_sortOption,
 					sortAscending: _sortOption == .name,
@@ -119,13 +116,13 @@ struct SourceAppsView: View {
 			}
 		}
 		.onAppear {
-			_sortOption = _sortOptionRawValue == "date"
-				? .latest
-				: SortOption(rawValue: _sortOptionRawValue) ?? .latest
 			if !hasLoadedOnce, viewModel.isFinished || object.contains(where: { viewModel.repository(for: $0) != nil }) {
 				_load()
 				hasLoadedOnce = true
 			}
+			_sortOption = _sortOptionRawValue == "date"
+				? .latest
+				: SortOption(rawValue: _sortOptionRawValue) ?? .latest
 		}
 		.task {
 			await viewModel.ensureSourcesLoaded(object)
@@ -175,14 +172,7 @@ struct SourceAppsView: View {
 		}
 		isLoading = true
 
-		_sourceContexts = _catalogContexts()
-		_loadedCatalogRevision = viewModel.catalogRevision
-		isLoading = false
-		_consumePendingAppRequestIfPossible()
-	}
-
-	private func _catalogContexts() -> [SourceRepositoryContext] {
-		object.compactMap { source -> SourceRepositoryContext? in
+		let loadedSources = object.compactMap { source -> SourceRepositoryContext? in
 			guard let repository = viewModel.repository(for: source) else { return nil }
 			return SourceRepositoryContext(
 				sourceObjectURI: source.objectID.uriRepresentation().absoluteString,
@@ -191,6 +181,10 @@ struct SourceAppsView: View {
 				revision: viewModel.revision(for: source)
 			)
 		}
+		_sourceContexts = loadedSources
+		_loadedCatalogRevision = viewModel.catalogRevision
+		isLoading = false
+		_consumePendingAppRequestIfPossible()
 	}
 
 	private func _consumePendingAppRequestIfPossible() {
