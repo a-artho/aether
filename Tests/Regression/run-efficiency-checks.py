@@ -25,7 +25,7 @@ final class FRIconCache { static let shared = FRIconCache(); var images: [String
  func image(for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) -> UIImage? {images[url.path]}
  func insert(_ image: UIImage, for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) {images[url.path]=image}
 }
-func iconTest(_ url: URL, _ scale: CGFloat, _ style: Int) -> UIImage? { Thread.sleep(forTimeInterval: 0.08); return UIImage(url.path) }
+func iconTest(_ url: URL, _ scale: CGFloat, _ style: Int) -> UIImage? { Thread.sleep(forTimeInterval: 0.08); return url.path == "/missing" ? nil : UIImage(url.path) }
 '''
 source += declaration('Aether/Views/Common/FRAppIconView.swift','private actor FRIconRenderGate')+'\n'
 source += '@MainActor\n'+declaration('Aether/Views/Common/FRAppIconView.swift','final class FRAppIconLoader')+'\n'
@@ -151,6 +151,15 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
   loader.load(bundleURL:fresh,appearance:.dark,tint:"",isTinted:false,dynamic:false)
   try await Task.sleep(nanoseconds:150_000_000)
   check(loader.image?.id == "fresh","Old renderer cannot overwrite newer cached icon")
+  check(!loader.isLoading,"Cached icon must not keep loading skeleton active")
+  let missing=FRAppIconLoader()
+  missing.load(bundleURL:URL(fileURLWithPath:"/missing"),appearance:.light,tint:"",isTinted:false,dynamic:false)
+  check(missing.isLoading,"Uncached icon should expose loading state")
+  try await Task.sleep(nanoseconds:150_000_000)
+  check(!missing.isLoading && missing.image == nil,"Failed render must stop loading animation")
+  missing.load(bundleURL:old,appearance:.light,tint:"new-key",isTinted:false,dynamic:false)
+  missing.cancel()
+  check(!missing.isLoading,"Offscreen cancellation must stop loading animation")
   print("Efficiency cache/search/icon checks passed")
  }
 }

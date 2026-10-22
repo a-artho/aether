@@ -88,6 +88,7 @@ final class FRIconCache: NSObject, @unchecked Sendable {
 @MainActor
 final class FRAppIconLoader: ObservableObject {
 	@Published var image: UIImage?
+	@Published private(set) var isLoading = false
 	private var task: Task<Void, Never>?
 	private var generation = UUID()
 
@@ -97,10 +98,12 @@ final class FRAppIconLoader: ObservableObject {
 		generation = UUID()
 		let generation = self.generation
 		if let cached = FRIconCache.shared.image(for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic, displayScale: displayScale) {
+			isLoading = false
 			self.image = cached
 			return
 		}
 
+		isLoading = true
 		task = Task.detached(priority: .userInitiated) { [weak self] in
 			await FRIconRenderGate.shared.acquire()
 			guard !Task.isCancelled else {
@@ -110,10 +113,12 @@ final class FRAppIconLoader: ObservableObject {
 
 			let generated = iconTest(bundleURL, displayScale, appearance == .dark ? 2 : 1)
 			await FRIconRenderGate.shared.release()
-			guard !Task.isCancelled, let generated else { return }
+			guard !Task.isCancelled else { return }
 
 			await MainActor.run { [weak self] in
 				guard !Task.isCancelled, self?.generation == generation else { return }
+				self?.isLoading = false
+				guard let generated else { return }
 				FRIconCache.shared.insert(generated, for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic, displayScale: displayScale)
 				self?.image = generated
 			}
@@ -121,6 +126,7 @@ final class FRAppIconLoader: ObservableObject {
 	}
 
 	func cancel() {
+		isLoading = false
 		generation = UUID()
 		task?.cancel()
 		task = nil
@@ -160,7 +166,7 @@ struct FRAppIconView: View {
 			} else if let remoteIconURL {
 				LazyImage(url: remoteIconURL) { state in
 					if let image = state.image { image.appIconStyle(size: size) }
-					else { skeleton }
+					else { AppIconSkeleton(size: size, isLoading: state.isLoading) }
 				}.processors([.resize(width: size * displayScale)])
 			} else {
 				skeleton
@@ -176,10 +182,7 @@ struct FRAppIconView: View {
 	}
 	
 	private var skeleton: some View {
-		RoundedRectangle(cornerRadius: size * 0.2677, style: .continuous)
-			.fill(Color(uiColor: .tertiarySystemFill))
-			.frame(width: size, height: size)
-			.accessibilityHidden(true)
+		AppIconSkeleton(size: size, isLoading: loader.isLoading)
 	}
 
 	private func _load() {

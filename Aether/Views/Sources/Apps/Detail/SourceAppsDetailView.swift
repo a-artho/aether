@@ -180,11 +180,11 @@ struct SourceAppsDetailView: View {
 				if let image = state.image {
 					image.appIconStyle(size: 26, isCircle: false)
 				} else {
-					Image("App_Unknown").appIconStyle(size: 26, isCircle: false)
+					AppIconSkeleton(size: 26, isLoading: state.isLoading)
 				}
 			}
 		} else {
-			Image("App_Unknown").appIconStyle(size: 26, isCircle: false)
+			AppIconSkeleton(size: 26, isLoading: false)
 		}
 	}
 

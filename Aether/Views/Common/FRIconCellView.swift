@@ -58,7 +58,7 @@ struct FRIconCellView<Subtitle: View>: View {
 					if let image = state.image {
 						image.appIconStyle(size: size, isCircle: isCircle)
 					} else {
-						standardIcon
+						AppIconSkeleton(size: size, isCircle: isCircle, isLoading: state.isLoading)
 					}
 				}
 			} else {
@@ -81,7 +81,35 @@ struct FRIconCellView<Subtitle: View>: View {
 	}
 	
 	var standardIcon: some View {
-		Image("App_Unknown")
-			.appIconStyle(size: size, isCircle: isCircle)
+		AppIconSkeleton(size: size, isCircle: isCircle, isLoading: false)
+	}
+}
+
+/// Loading feedback stays local to visible icons; no timers or row-wide animation.
+struct AppIconSkeleton: View {
+	let size: CGFloat
+	var isCircle = false
+	var isLoading = true
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@Environment(\.scenePhase) private var scenePhase
+	@State private var isVisible = false
+
+	private var shape: some View {
+		RoundedRectangle(cornerRadius: isCircle ? size / 2 : size * 0.2677, style: .continuous)
+			.fill(Color(uiColor: .tertiarySystemFill))
+			.frame(width: size, height: size)
+	}
+
+	var body: some View {
+		Group {
+			if isLoading && isVisible && scenePhase == .active && !reduceMotion {
+				shape.phaseAnimator([false, true]) { content, dimmed in
+					content.opacity(dimmed ? 0.5 : 1)
+				} animation: { _ in .easeInOut(duration: 1) }
+			} else { shape }
+		}
+		.accessibilityHidden(true)
+		.onAppear { isVisible = true }
+		.onDisappear { isVisible = false }
 	}
 }
