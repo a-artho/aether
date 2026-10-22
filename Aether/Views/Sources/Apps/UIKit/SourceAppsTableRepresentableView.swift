@@ -46,8 +46,6 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		tableView.allowsSelection = true
 		tableView.keyboardDismissMode = .onDrag
 
-		tableView.alpha = 0
-		
 		return tableView
 	}
 	
@@ -269,9 +267,6 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 					let maximum = max(minimum, table.contentSize.height - table.bounds.height + table.adjustedContentInset.bottom)
 					let y = min(maximum, max(minimum, table.rectForRow(at: indexPath).minY - distance))
 					table.setContentOffset(CGPoint(x: table.contentOffset.x, y: y), animated: false)
-				}
-				if isFirst {
-					UIView.transition(with: table, duration: 0.5, options: [.transitionCrossDissolve], animations: { table.alpha = 1 })
 				}
 			}
 		}
