@@ -29,7 +29,10 @@ extension SourceAppsView {
 struct SourceAppsView: View {
 	@AppStorage("Aether.sortOptionRawValue") private var _sortOptionRawValue: String = SortOption.latest.rawValue
 
-	@State private var _sortOption: SortOption = .latest
+	@State private var _sortOption: SortOption = {
+		let raw = UserDefaults.standard.string(forKey: "Aether.sortOptionRawValue") ?? "latest"
+		return raw == "date" ? .latest : SortOption(rawValue: raw) ?? .latest
+	}()
 	@State var isLoading = true
 	@State var hasLoadedOnce = false
 	@State private var _searchText = ""

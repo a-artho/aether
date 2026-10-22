@@ -7,16 +7,18 @@ import Foundation
 
 struct AppStoreDestination: Equatable {
 	let url: URL
-	let isDirectMatch: Bool
 
-	var buttonTitle: String {
-		isDirectMatch ? .localized("View on App Store") : .localized("Search App Store")
-	}
 }
 
 actor AppStoreLookup {
 	static let shared = AppStoreLookup()
-	private var cache: [LookupKey: AppStoreDestination] = [:]
+	private var cache: [LookupKey: (destination: AppStoreDestination, expires: Date)] = [:]
+	private struct Flight {
+        let id: UUID
+        let task: Task<AppStoreDestination?, Never>
+        var consumers: Set<UUID>
+    }
+    private var inFlight: [LookupKey: Flight] = [:]
 
 	/// Available before network resolution so the information row never appears late.
 	nonisolated static func fallbackDestination(appName: String) -> AppStoreDestination? {
@@ -45,33 +47,47 @@ actor AppStoreLookup {
 		guard !name.isEmpty else { return nil }
 		let key = LookupKey(bundleID: bundleID ?? "", appName: name)
 
-		if let cachedDestination = cache[key] {
-			return cachedDestination
-		}
+		if let cached = cache[key], cached.expires > Date() { return cached.destination }
+        guard !Task.isCancelled else { return nil }
+        let consumer = UUID()
+        let flight: Flight
+        if var existing = inFlight[key] {
+            existing.consumers.insert(consumer)
+            inFlight[key] = existing
+            flight = existing
+        } else {
+            flight = Flight(id: UUID(), task: Task { await self.resolve(bundleID: bundleID, name: name) }, consumers: [consumer])
+            inFlight[key] = flight
+        }
+        let result = await withTaskCancellationHandler { await flight.task.value } onCancel: {
+            Task { await self.release(key: key, flightID: flight.id, consumer: consumer) }
+        }
+        if let result, !flight.task.isCancelled {
+            if cache.count >= 256, let victim = cache.keys.first { cache.removeValue(forKey: victim) }
+            cache[key] = (result, Date().addingTimeInterval(300))
+        }
+        release(key: key, flightID: flight.id, consumer: consumer)
+        return Task.isCancelled ? nil : result
+    }
 
-		if let bundleID = bundleID?.trimmingCharacters(in: .whitespacesAndNewlines), !bundleID.isEmpty,
-		   let entry = await _lookup(bundleID: bundleID)
-		{
-			let destination = AppStoreDestination(url: entry, isDirectMatch: true)
-			cache[key] = destination
-			return destination
-		}
+    private func release(key: LookupKey, flightID: UUID, consumer: UUID) {
+        guard var flight = inFlight[key], flight.id == flightID else { return }
+        flight.consumers.remove(consumer)
+        if flight.consumers.isEmpty { inFlight[key] = nil; flight.task.cancel() }
+        else { inFlight[key] = flight }
+    }
 
-		for query in Self._searchQueries(for: name) {
-			guard let entries = await _search(query: query) else { continue }
-			if let entry = _bestNameMatch(in: entries, for: query) {
-				let destination = AppStoreDestination(url: entry, isDirectMatch: true)
-				cache[key] = destination
-				return destination
-			}
-		}
-
-		let destination = Self.fallbackDestination(appName: name)
-		if let destination {
-			cache[key] = destination
-		}
-		return destination
-	}
+    private func resolve(bundleID: String?, name: String) async -> AppStoreDestination? {
+        if let bundleID, !bundleID.isEmpty, let entry = await _lookup(bundleID: bundleID) {
+            return AppStoreDestination(url: entry)
+        }
+        for query in Self._searchQueries(for: name) {
+            guard !Task.isCancelled else { return nil }
+            guard let entries = await _search(query: query) else { continue }
+            if let entry = _bestNameMatch(in: entries, for: query) { return AppStoreDestination(url: entry) }
+        }
+        return Task.isCancelled ? nil : Self.fallbackDestination(appName: name)
+    }
 
 	private func _lookup(bundleID: String) async -> URL? {
 		guard var components = URLComponents(string: "https://itunes.apple.com/lookup") else { return nil }
@@ -132,7 +148,7 @@ actor AppStoreLookup {
 		guard var components = URLComponents(string: "itms-apps://itunes.apple.com/search") else { return nil }
 		components.queryItems = [URLQueryItem(name: "term", value: query)]
 		guard let url = components.url else { return nil }
-		return AppStoreDestination(url: url, isDirectMatch: false)
+		return AppStoreDestination(url: url)
 	}
 
 	private func _normalized(_ value: String) -> String {

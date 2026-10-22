@@ -43,6 +43,11 @@ final class AppInstallationManager: ObservableObject {
 	}
 
 	static let shared = AppInstallationManager()
+    @Published private var completedArtifacts = Set(UserDefaults.standard.stringArray(forKey: "Aether.completedInstallArtifacts") ?? [])
+    func installActionTitle(for app: AppInfoPresentable) -> String {
+        completedArtifacts.contains(InstallationRequest.appKey(for: app)) ? .localized("Reinstall") : .localized("Install")
+    }
+
 	@Published private(set) var currentRequest: InstallationRequest?
 	@Published private(set) var uninstallingBundleIdentifiers = Set<String>()
 	private var retiringBundleIdentifier: String?
@@ -611,6 +616,8 @@ final class AppInstallationManager: ObservableObject {
 			progressTask?.cancel()
 			progressTask = nil
 			if currentRequest?.installRequested == true {
+                completedArtifacts.insert(InstallationRequest.appKey(for: app))
+                UserDefaults.standard.set(Array(completedArtifacts), forKey: "Aether.completedInstallArtifacts")
 				if let id = app.identifier { InstallationAppProxy.invalidateAppIcon(for: id) }
 				NotificationCenter.default.post(name: Notification.Name("Aether.installedAppsRefresh"), object: nil)
 			}

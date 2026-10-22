@@ -42,6 +42,54 @@ private actor FRIconRenderGate {
 	}
 }
 
+/// Share identical renders; the permit covers actual work rather than each view.
+private actor FRIconRequests {
+    static let shared = FRIconRequests()
+    private struct Flight {
+        let id: UUID
+        let task: Task<UIImage?, Never>
+        var consumers: Set<UUID>
+    }
+    private var tasks: [String: Flight] = [:]
+    func image(url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, scale: CGFloat) async -> UIImage? {
+        guard !Task.isCancelled else { return nil }
+        let key = "\(url.path)|\(appearance.rawValue)|\(tint)|\(isTinted)|\(dynamic)|\(scale)"
+        let consumer = UUID()
+        let flight: Flight
+        if var existing = tasks[key] {
+            existing.consumers.insert(consumer)
+            tasks[key] = existing
+            flight = existing
+        } else {
+            let task = Task.detached(priority: .userInitiated) {
+                await FRIconRenderGate.shared.acquire()
+                guard !Task.isCancelled else { await FRIconRenderGate.shared.release(); return nil as UIImage? }
+                let image = iconTest(url, scale, appearance == .dark ? 2 : 1)
+                await FRIconRenderGate.shared.release()
+                guard !Task.isCancelled else { return nil }
+                if let image {
+                    FRIconCache.shared.insert(image, for: url, appearance: appearance, tint: tint,
+                        isTinted: isTinted, dynamic: dynamic, displayScale: scale)
+                }
+                return image
+            }
+            flight = Flight(id: UUID(), task: task, consumers: [consumer])
+            tasks[key] = flight
+        }
+        let result = await withTaskCancellationHandler { await flight.task.value } onCancel: {
+            Task { await self.release(key: key, flightID: flight.id, consumer: consumer) }
+        }
+        release(key: key, flightID: flight.id, consumer: consumer)
+        return Task.isCancelled ? nil : result
+    }
+    private func release(key: String, flightID: UUID, consumer: UUID) {
+        guard var flight = tasks[key], flight.id == flightID else { return }
+        flight.consumers.remove(consumer)
+        if flight.consumers.isEmpty { tasks[key] = nil; flight.task.cancel() }
+        else { tasks[key] = flight }
+    }
+}
+
 // NSCache serializes access; this owner has no other mutable state.
 final class FRIconCache: NSObject, @unchecked Sendable {
 	static let shared = FRIconCache()
@@ -103,23 +151,17 @@ final class FRAppIconLoader: ObservableObject {
 			return
 		}
 
+		image = nil
 		isLoading = true
 		task = Task.detached(priority: .userInitiated) { [weak self] in
-			await FRIconRenderGate.shared.acquire()
-			guard !Task.isCancelled else {
-				await FRIconRenderGate.shared.release()
-				return
-			}
-
-			let generated = iconTest(bundleURL, displayScale, appearance == .dark ? 2 : 1)
-			await FRIconRenderGate.shared.release()
+            let generated = await FRIconRequests.shared.image(url: bundleURL, appearance: appearance,
+                tint: tint, isTinted: isTinted, dynamic: dynamic, scale: displayScale)
 			guard !Task.isCancelled else { return }
 
 			await MainActor.run { [weak self] in
 				guard !Task.isCancelled, self?.generation == generation else { return }
 				self?.isLoading = false
 				guard let generated else { return }
-				FRIconCache.shared.insert(generated, for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic, displayScale: displayScale)
 				self?.image = generated
 			}
 		}
@@ -174,7 +216,7 @@ struct FRAppIconView: View {
 		}
 		.transaction { $0.animation = nil }
 		.task(id: "\(app?.uuid ?? "")|\(app?.isSigned ?? false)|\(appearance.rawValue)\(selectedColorHex)\(shouldTintIcons)\(shouldChangeIconsBasedOffStyle)\(displayScale)") {
-			_load()
+			await _load()
 		}
 		.onDisappear {
 			loader.cancel()
@@ -185,11 +227,13 @@ struct FRAppIconView: View {
 		AppIconSkeleton(size: size, isLoading: loader.isLoading)
 	}
 
-	private func _load() {
+	private func _load() async {
 		let bundleURL: URL
 
 		if let app {
-			guard let url = Storage.shared.getAppDirectory(for: app) else { return }
+			guard let directory = Storage.shared.getUuidDirectory(for: app) else { return }
+			let found = await Task.detached(priority: .userInitiated) { FileManager.default.getPath(in: directory, for: "app") }.value
+			guard !Task.isCancelled, let url = found else { return }
 			bundleURL = url
 		} else {
 			guard usesDefaultApp else { return }

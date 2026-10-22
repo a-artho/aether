@@ -310,6 +310,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			if apps.isEmpty { updateApplications(with: installedApps, profiles: []) }
 			prefetchFirstScreenIcons()
 			let profiles: [ProvisioningProfileInfo]
+			var profileFallbackFailed = false
 			if installedApps.contains(where: AppInstallationProvenanceClassifier.needsProvisioningProfile) {
 				do {
 					let profilesStarted = ProcessInfo.processInfo.systemUptime
@@ -325,7 +326,8 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 						category: "Device",
 						level: .error
 					)
-					throw error
+					profiles = []
+					profileFallbackFailed = true
 				}
 			} else {
 				profiles = []
@@ -335,7 +337,14 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 				)
 			}
 			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
+			let previous = apps
 			updateApplications(with: installedApps, profiles: profiles)
+			if profileFallbackFailed {
+				let unresolved = Set(installedApps.filter(AppInstallationProvenanceClassifier.needsProvisioningProfile).compactMap(\.CFBundleIdentifier))
+				let present = Set(apps.map(\.id))
+				apps.append(contentsOf: previous.filter { unresolved.contains($0.id) && !present.contains($0.id) })
+				apps.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+			}
 			prefetchFirstScreenIcons()
 			hasLoadedApps = true
 			lastLoadedAt = Date()

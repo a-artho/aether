@@ -28,6 +28,7 @@ final class FRIconCache { static let shared = FRIconCache(); var images: [String
 func iconTest(_ url: URL, _ scale: CGFloat, _ style: Int) -> UIImage? { Thread.sleep(forTimeInterval: 0.08); return url.path == "/missing" ? nil : UIImage(url.path) }
 '''
 source += declaration('Aether/Views/Common/FRAppIconView.swift','private actor FRIconRenderGate')+'\n'
+source += declaration('Aether/Views/Common/FRAppIconView.swift','private actor FRIconRequests')+'\n'
 source += '@MainActor\n'+declaration('Aether/Views/Common/FRAppIconView.swift','final class FRAppIconLoader')+'\n'
 source += r'''
 final class ImportFiles {
@@ -179,6 +180,15 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
   missing.load(bundleURL:old,appearance:.light,tint:"new-key",isTinted:false,dynamic:false)
   missing.cancel()
   check(!missing.isLoading,"Offscreen cancellation must stop loading animation")
+  let sharedURL=URL(fileURLWithPath:"/shared-render")
+  let one=FRAppIconLoader(), two=FRAppIconLoader()
+  one.load(bundleURL:sharedURL,appearance:.light,tint:"shared",isTinted:false,dynamic:false)
+  two.load(bundleURL:sharedURL,appearance:.light,tint:"shared",isTinted:false,dynamic:false)
+  try await Task.sleep(nanoseconds:20_000_000)
+  one.cancel()
+  try await Task.sleep(nanoseconds:250_000_000)
+  check(two.image?.id==sharedURL.path,"Cancelling one icon consumer preserves another consumer")
+  check(FRIconCache.shared.images[sharedURL.path] != nil,"Shared render caches its result")
   print("Efficiency cache/search/icon checks passed")
  }
 }

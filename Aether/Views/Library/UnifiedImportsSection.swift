@@ -30,6 +30,10 @@ struct UnifiedImportEntry: Identifiable {
 	var signature: String {
 		var components: [String] = [id]
 		components.append(app?.uuid ?? "")
+		components.append(app?.name ?? "")
+		components.append(app?.identifier ?? "")
+		components.append(app?.version ?? "")
+		components.append(String(date?.timeIntervalSinceReferenceDate ?? 0))
 		components.append(original?.uuid ?? "")
 		components.append(String(app?.isSigned ?? false))
 		components.append(app is AppSnapshot ? "snapshot" : "stored")
@@ -154,12 +158,37 @@ struct UnifiedImportsDataSource: ViewModifier {
 	@FetchRequest(sortDescriptors: [NSSortDescriptor(keyPath: \Imported.date, ascending: false)]) private var imported: FetchedResults<Imported>
 	@FetchRequest(sortDescriptors: [NSSortDescriptor(keyPath: \Signed.date, ascending: false)]) private var signed: FetchedResults<Signed>
 
-	func body(content: Content) -> some View {
-		let preparedRows = projectedRows
-		return content.onChange(of: preparedRows.map { $0.signature }, initial: true) { _, _ in
-			controller.updateRows(preparedRows)
-		}
-	}
+    private struct ArtifactInput: Equatable {
+        let uuid: String?
+        let signed: Bool
+        let name: String?
+        let identifier: String?
+        let version: String?
+        let date: Date?
+        init(_ app: AppInfoPresentable) {
+            uuid = app.uuid; signed = app.isSigned; name = app.name
+            identifier = app.identifier; version = app.version; date = app.date
+        }
+    }
+    private struct Inputs: Equatable {
+        let artifacts: [ArtifactInput]
+        let downloads: [String]
+        let operations: [String]
+        let exports: [UUID]
+        let lineage: LibraryArtifactLineage
+    }
+    private var inputs: Inputs {
+        let artifacts: [AppInfoPresentable] = Array(imported).map { $0 as AppInfoPresentable } + Array(signed).map { $0 as AppInfoPresentable }
+        return Inputs(artifacts: artifacts.map { ArtifactInput($0) },
+            downloads: downloads.downloads.map { $0.id },
+            operations: installations.installationCards.map { "\($0.id)|\($0.appKey)|\($0.app.name ?? "")|\($0.app.version ?? "")" },
+            exports: exports.exports.map(\.id), lineage: index.lineage)
+    }
+    func body(content: Content) -> some View {
+        content.onChange(of: inputs, initial: true) { _, _ in
+            controller.updateRows(projectedRows)
+        }
+    }
 
 	private var projectedRows: [UnifiedImportEntry] {
 		let originals: [String: Imported] = Dictionary(imported.compactMap { app in app.uuid.map { ($0, app) } }, uniquingKeysWith: { first, _ in first })
@@ -335,7 +364,15 @@ struct UnifiedImportActions: View {
 	private var protected: Bool { controller.isProtected(entry) }
 
 	var body: some View {
-		if forSwipe { removalAction(forSwipe: true) }
+		if forSwipe {
+            removalAction(forSwipe: true)
+            if entry.app?.isSigned == true, let original = entry.original, let uuid = original.uuid,
+                !LibraryArtifactIndex.shared.lineage.revealedOriginals.contains(uuid) {
+                Button(.localized("Unsign"), systemImage: "doc.on.doc") {
+                    LibraryArtifactIndex.shared.reveal(originalUUID: uuid)
+                }.tint(.orange).disabled(protected)
+            }
+        }
 		else { contextActions }
 	}
 
@@ -345,7 +382,7 @@ struct UnifiedImportActions: View {
 			if app.isSigned, let identifier = app.identifier {
 				Button(.localized("Open"), systemImage: "app.badge.checkmark") { UIApplication.openApp(with: identifier) }
 			}
-			Button(.localized("Install"), systemImage: "square.and.arrow.down") {
+			Button(installations.installActionTitle(for: app), systemImage: "square.and.arrow.down") {
 				if installations.startInstall(app: app) { HapticManager.shared.impact() }
 			}.disabled(protected)
 			Button(app.isSigned ? .localized("Re-sign") : .localized("Sign"), systemImage: "signature") {
@@ -562,7 +599,7 @@ private struct UnifiedImportAccessory: View {
 						if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
 					} else { controller.signingApp = AnyApp(base: app) }
 				} label: {
-				NBButton(app.isSigned ? .localized("Install") : .localized("Sign"), style: .text)
+				NBButton(app.isSigned ? AppInstallationManager.shared.installActionTitle(for: app) : .localized("Sign"), style: .text)
 					.foregroundStyle(Color.accentColor)
 			}
 				.buttonStyle(.borderless)

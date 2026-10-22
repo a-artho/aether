@@ -21,20 +21,26 @@ private final class SourceAppTableCell: UITableViewCell {
 private struct SourceAppsSkeletonRow: View {
 	@AppStorage("Aether.storeCellAppearance") private var appearance = 0
 	var showsDownloadButton: Bool
+	private func skeletonBar(width: CGFloat, height: CGFloat) -> some View {
+		RoundedRectangle(cornerRadius: 3).fill(Color(uiColor: .tertiarySystemFill))
+			.frame(maxWidth: width, alignment: .leading).frame(height: height)
+	}
 	var body: some View {
 		VStack {
 			HStack(spacing: 18) {
 				AppIconSkeleton(size: 50, isLoading: false)
 				VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
-					Text("Application name").nbRowTitle()
+					Text("Application name").nbRowTitle().hidden()
+						.overlay(alignment: .leading) { skeletonBar(width: 150, height: 12) }
 					VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
-						Text("1.0.0").nbRowSubtitle()
-						if appearance == 0 { Text("Application description").font(.footnote) }
+						Text("1.0.0").nbRowSubtitle().hidden()
+							.overlay(alignment: .leading) { skeletonBar(width: 45, height: 10) }
+						if appearance == 0 { Text("Application description").font(.footnote).hidden()
+							.overlay(alignment: .leading) { skeletonBar(width: 175, height: 10) } }
 					}
 				}
 				.padding(.vertical, 2)
 				.frame(maxWidth: .infinity, alignment: .leading)
-				.redacted(reason: .placeholder)
 				.foregroundStyle(.tertiary)
 				if showsDownloadButton {
 					RoundedRectangle(cornerRadius: 4)
@@ -45,7 +51,13 @@ private struct SourceAppsSkeletonRow: View {
 			if appearance != 0 {
 				Text("Application description\nAdditional application details")
 					.nbRowSubtitle().frame(maxWidth: .infinity, alignment: .leading)
-					.padding(.top, 2).redacted(reason: .placeholder).foregroundStyle(.tertiary)
+					.padding(.top, 2).hidden()
+					.overlay(alignment: .leading) {
+						VStack(alignment: .leading, spacing: 7) {
+							skeletonBar(width: 230, height: 10)
+							skeletonBar(width: 180, height: 10)
+						}
+					}
 			}
 		}
 		.modifier(SourceAppsSkeletonPulse())
@@ -75,6 +87,7 @@ private struct SourceAppsSkeletonPulse: ViewModifier {
 // MARK: - Representable
 struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	@AppStorage("Aether.showRepoDownloadButtons") private var showsDownloadButtons = true
+	@AppStorage("Aether.userTintColor") private var themeHex = "#848ef9"
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
 	var isCatalogLoading = false
 	@Binding var searchText: String
@@ -116,7 +129,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		let sortOptionChanged = context.coordinator.sortOption != sortOption
 		let sortDirectionChanged = context.coordinator.sortAscending != sortAscending
 		let badgeChanged = context.coordinator.showSourceBadge != showSourceBadge
-		let accessoryChanged = context.coordinator.showsDownloadButtons != showsDownloadButtons
+		let accessoryChanged = context.coordinator.showsDownloadButtons != showsDownloadButtons || context.coordinator.themeHex != themeHex
 		
 		context.coordinator.sourceContexts = sourceContexts
 		context.coordinator.isCatalogLoading = isCatalogLoading
@@ -125,6 +138,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		context.coordinator.sortAscending = sortAscending
 		context.coordinator.showSourceBadge = showSourceBadge
 		context.coordinator.showsDownloadButtons = showsDownloadButtons
+		context.coordinator.themeHex = themeHex
 		context.coordinator.updateNewsHeader(for: tableView)
 		if accessoryChanged { context.coordinator.refreshVisibleAccessories() }
 		
@@ -166,6 +180,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	var sortAscending: Bool
 	var showSourceBadge: Bool
 	var showsDownloadButtons: Bool
+	var themeHex = "#848ef9"
 	let listStore: SourceAppListStore
 	var onSelect: (SourceAppsView.SourceAppSelection) -> Void
 	
@@ -359,7 +374,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		// On iOS 15+, a nonanimated diff still inserts/deletes/reconfigures individual rows.
 		// Applying consistently on main keeps UIKit cell providers and model reads synchronized.
 		let update = {
-			dataSource.apply(snapshot, animatingDifferences: false) { [weak self, weak table] in
+			let completion: () -> Void = { [weak self, weak table] in
 				guard let self, let table else { loadingSnapshot?.removeFromSuperview(); return }
 				if let loadingSnapshot {
 					table.layoutIfNeeded()
@@ -379,6 +394,11 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 					let y = min(maximum, max(minimum, table.rectForRow(at: indexPath).minY - distance))
 					table.setContentOffset(CGPoint(x: table.contentOffset.x, y: y), animated: false)
 				}
+			}
+			if isFirst {
+				dataSource.applySnapshotUsingReloadData(snapshot, completion: completion)
+			} else {
+				dataSource.apply(snapshot, animatingDifferences: false, completion: completion)
 			}
 		}
 		if fadeSearchResults && !isFirst && !UIAccessibility.isReduceMotionEnabled {

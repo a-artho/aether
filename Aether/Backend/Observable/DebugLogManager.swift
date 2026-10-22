@@ -165,6 +165,8 @@ public final class DebugLogManager: ObservableObject {
 
 	private var _inMemoryEntries: [DebugLogItem] = []
 	private var _publishedEntryIDs = Set<UUID>()
+	private var pendingEntries: [DebugLogItem] = []
+	private var publicationScheduled = false
 	private let _maxPublishedCount = 5000
 	private var _historyGeneration = UUID()
 	private let _maxInMemoryCount: Int = 1000
@@ -207,10 +209,13 @@ public final class DebugLogManager: ObservableObject {
 		}
 		_lock.unlock()
 
-		DispatchQueue.main.async { [weak self] in
-			guard let self else { return }
-			self._publish(item)
-		}
+        pendingEntries.append(item)
+        if !publicationScheduled {
+            publicationScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.flushPendingEntries()
+            }
+        }
 
 		switch level {
 		case .debug:
@@ -231,18 +236,20 @@ public final class DebugLogManager: ObservableObject {
 	}
 
 	// Accessed only on the main queue, like the published entries array.
-	private func _publish(_ item: DebugLogItem) {
-		guard _publishedEntryIDs.insert(item.id).inserted else { return }
-		entries.insert(item, at: 0)
-		if entries.count > _maxPublishedCount {
-			for entry in entries.suffix(entries.count - _maxPublishedCount) {
-				_publishedEntryIDs.remove(entry.id)
-			}
-			entries.removeLast(entries.count - _maxPublishedCount)
-		}
-	}
+    private func flushPendingEntries() {
+        publicationScheduled = false
+        let batch = pendingEntries.reversed().filter { _publishedEntryIDs.insert($0.id).inserted }
+        pendingEntries.removeAll(keepingCapacity: true)
+        guard !batch.isEmpty else { return }
+        entries.insert(contentsOf: batch, at: 0)
+        if entries.count > _maxPublishedCount {
+            for item in entries.suffix(entries.count - _maxPublishedCount) { _publishedEntryIDs.remove(item.id) }
+            entries.removeLast(entries.count - _maxPublishedCount)
+        }
+    }
 
 	public func clearDiagnostics() {
+		pendingEntries.removeAll()
 		_historyGeneration = UUID()
 		_lock.lock()
 		_inMemoryEntries.removeAll()
@@ -396,6 +403,7 @@ public final class DebugLogManager: ObservableObject {
 	// MARK: - Export
 
 	public func exportAllText(filteredOnly: Bool = true) -> String {
+		flushPendingEntries()
 		let list = filteredOnly ? filteredEntries : entries
 		let header = "--- Aether Debug Logs Export (\(Date())) ---\nTotal: \(list.count) entries\n\n"
 		let lines = list.map { $0.exportText }.joined(separator: "\n")

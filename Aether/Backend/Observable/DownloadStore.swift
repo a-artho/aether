@@ -232,7 +232,7 @@ final class DownloadStore {
 	@MainActor
 	func removeStagingFile(for download: Download) {
 		if let stagingURL = stagingURL(for: download) {
-			try? fileManager.removeItem(at: stagingURL)
+			retireStagedFile(stagingURL)
 		}
 
 		guard let files = try? fileManager.contentsOfDirectory(
@@ -242,9 +242,23 @@ final class DownloadStore {
 
 		let prefix = storageKey(for: download.id) + "."
 		for file in files where file.lastPathComponent.hasPrefix(prefix) {
-			try? fileManager.removeItem(at: file)
+			retireStagedFile(file)
 		}
 	}
+
+    /// Rename before leaving main so a retry can safely reuse the staging name.
+    private func retireStagedFile(_ url: URL) {
+        let retired = url.deletingLastPathComponent().appendingPathComponent(".retired-" + UUID().uuidString)
+        do {
+            try fileManager.moveItem(at: url, to: retired)
+            Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: retired) }
+        } catch {
+            // A missing file was already retired by another cleanup path.
+            if fileManager.fileExists(atPath: url.path) {
+                DiagnosticLog.error("Could not retire download staging file: \(error)", category: "Download")
+            }
+        }
+    }
 
 	@MainActor
 	func cleanupArtifacts(for download: Download) {

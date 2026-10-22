@@ -9,7 +9,7 @@ def declaration(path, start):
         depth += (text[e] == '{') - (text[e] == '}'); e += 1
     return text[p:e]
 locator = declaration('Aether/Backend/Observable/SourcesRouter.swift', 'struct AppLocator:')
-publish = declaration('Aether/Backend/Observable/DebugLogManager.swift', 'private func _publish(').replace('private func', 'func', 1)
+publish = declaration('Aether/Backend/Observable/DebugLogManager.swift', 'private func flushPendingEntries(').replace('private func', 'func', 1)
 focus = declaration('Aether/Views/Library/LibraryView.swift', '.task(id: installationFocusState)').replace('.task(id: installationFocusState)', 'func focus()', 1)
 audio = declaration('Aether/Utilities/BackgroundAudioManager.swift', 'final class BackgroundAudioManager')
 fixture = r'''
@@ -24,6 +24,9 @@ struct ASRepository {
 struct DebugLogItem { let id: UUID }
 final class LogFixture {
  var entries = [DebugLogItem]()
+ var pendingEntries = [DebugLogItem]()
+ var publicationScheduled = false
+ func _publish(_ item: DebugLogItem) { pendingEntries.append(item); flushPendingEntries() }
  var _publishedEntryIDs = Set<UUID>()
  let _maxPublishedCount = 1000
  PUBLISH
@@ -132,6 +135,15 @@ final class AuditFixTests: XCTestCase {
   logs._publish(items.last!)
   XCTAssertEqual(logs.entries.count,1000)
   XCTAssertEqual(logs.entries.first?.id,items.last!.id)
+ }
+ func testBatchedLogPublicationDeduplicatesAndKeepsNewest() {
+  let logs = LogFixture()
+  let items = (0..<1500).map { _ in DebugLogItem(id:UUID()) }
+  logs.pendingEntries = items + [items.last!]
+  logs.flushPendingEntries()
+  XCTAssertEqual(logs.entries.count,1000)
+  XCTAssertEqual(logs.entries.first?.id,items.last!.id)
+  XCTAssertTrue(logs.pendingEntries.isEmpty)
  }
  func testFailedAudioStartupDetachesNodeAndDeactivatesSession() {
   AVAudioEngine.failStart = true

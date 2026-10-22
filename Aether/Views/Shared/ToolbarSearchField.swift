@@ -39,7 +39,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 
 	private var usesTitleSearch: Bool { searchPlacement == .pageTitle }
 	private var hidesTitle: Bool { isTabRoot && !usesTitleSearch }
-	private var usesLeadingTitle: Bool { isTabRoot && leadingPageTitles }
+	private var usesLeadingTitle: Bool { isTabRoot && usesTitleSearch && leadingPageTitles }
 	// Different navigation actions need distinct identities for the native handoff.
 	// Keep each identity stable while its button becomes the search-close control.
 	private var secondaryToolbarID: String { hasTitleSearchMenu ? "navigation-filter" : "navigation-add" }

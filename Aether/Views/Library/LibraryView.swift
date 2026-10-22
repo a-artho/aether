@@ -569,12 +569,13 @@ struct InstalledAppIconView: View {
 	let loadsIcon: Bool
 	var size: CGFloat = 50
 	@State private var image: UIImage?
+	@State private var loadedIdentity: String?
 	@State private var iconIsLoading = false
 	@State private var iconLoadGeneration = UUID()
 
 	var body: some View {
 		Group {
-			if let displayedImage = image ?? (loadsIcon ? InstallationAppProxy.appIconInMemory(for: bundleIdentifier, cacheVersion: cacheVersion) : nil) {
+			if let displayedImage = (loadedIdentity == bundleIdentifier + "|" + cacheVersion ? image : nil) ?? (loadsIcon ? InstallationAppProxy.appIconInMemory(for: bundleIdentifier, cacheVersion: cacheVersion) : nil) {
 				Image(uiImage: displayedImage).appIconStyle(size: size)
 			} else {
 				AppIconSkeleton(size: size, isLoading: iconIsLoading)
@@ -598,7 +599,7 @@ struct InstalledAppIconView: View {
 		guard !Task.isCancelled, iconLoadGeneration == generation else { return }
 		var transaction = Transaction()
 		transaction.disablesAnimations = true
-		withTransaction(transaction) { image = loaded }
+		withTransaction(transaction) { image = loaded; loadedIdentity = bundleIdentifier + "|" + cacheVersion }
 	}
 }
 
