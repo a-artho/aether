@@ -27,7 +27,6 @@ struct LibraryView: View {
 	@State private var updateCheckRevision = 0
 
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
-	@State private var importMenuSelection = Set<String>()
 	@State private var searchText = ""
 	@State private var searchFocused = false
 	@State private var toolbarWidth: CGFloat = 320
@@ -88,7 +87,7 @@ struct LibraryView: View {
 			imports: importRows.map(\.id), updates: appsWithUpdates.map(\.id))
 		NavigationStack(path: $appNavigationPath) {
 			ScrollViewReader { scrollProxy in
-				List(selection: $importMenuSelection) {
+				List {
 					ForEach(sections) { section in
 						switch section {
 						case .allApps:
@@ -115,14 +114,6 @@ struct LibraryView: View {
 
 						}
 					}
-				}
-				.contextMenu(forSelectionType: String.self) { identifiers in
-					if identifiers.count == 1, let identifier = identifiers.first,
-						let entry = importRows.first(where: { $0.id == identifier }) {
-						UnifiedImportActions(entry: entry, controller: imports)
-					}
-				} primaryAction: { _ in
-					// Rows keep their existing accessory actions; tapping must not select them.
 				}
 				.navigationBarTitleDisplayMode(.inline)
 				.navigationDestination(for: InstalledAppsRoute.self) { route in

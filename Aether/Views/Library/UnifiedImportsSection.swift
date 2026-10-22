@@ -237,7 +237,6 @@ struct UnifiedImportsRows: View {
 		ForEach(entries) { entry in
 			UnifiedImportRow(entry: entry, controller: controller)
 				.id(entry.id)
-				.tag(entry.id)
 				.onChange(of: entry.operation?.id, initial: true) { old, new in
 					if let old { visibleOperation(old, entry.id, false) }
 					if let new { visibleOperation(new, entry.id, true) }
@@ -296,6 +295,9 @@ private struct UnifiedImportRow: View {
 		.swipeActions {
 			UnifiedImportActions(entry: entry, controller: controller, forSwipe: true)
 		}
+		.contextMenu {
+			UnifiedImportActions(entry: entry, controller: controller)
+		}
 	}
 
 	private var serverPresentation: Binding<Bool> {
@@ -318,7 +320,7 @@ private struct UnifiedImportRow: View {
 
 }
 
-/// Shared actions for the list-owned context menu and each row's native swipe.
+/// Shared actions for each row's context menu and native swipe.
 struct UnifiedImportActions: View {
 	let snapshot: UnifiedImportEntry
 	@ObservedObject var controller: UnifiedImportsController
