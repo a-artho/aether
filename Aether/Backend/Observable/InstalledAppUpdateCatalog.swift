@@ -33,10 +33,19 @@ actor InstalledAppUpdateCatalog {
 			var matches: [String: [ASRepository.App]] = [:]
 			for app in context.repository.apps {
 				try Task.checkCancellation()
-				guard let identifier = app.id, let installed = installedVersions[identifier],
-					Self.isNewer(app.currentVersion, than: installed),
+				guard let identifier = app.id,
 					let url = app.currentDownloadUrl, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { continue }
-				matches[identifier, default: []].append(app)
+				// Repos may append tweak/version suffixes to the real bundle ID.
+				// Walk dot boundaries instead of scanning every installed app;
+				// retain the original entry and URL for each separate variant row.
+				var candidate = identifier
+				while !candidate.isEmpty {
+					if let installed = installedVersions[candidate], Self.isNewer(app.currentVersion, than: installed) {
+						matches[candidate, default: []].append(app)
+					}
+					guard let separator = candidate.lastIndex(of: ".") else { break }
+					candidate = String(candidate[..<separator])
+				}
 			}
 			for (identifier, apps) in matches {
 				var repository = context.repository

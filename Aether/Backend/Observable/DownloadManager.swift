@@ -90,6 +90,19 @@ class DownloadManager: NSObject, ObservableObject {
 		if let _foregroundObserver { NotificationCenter.default.removeObserver(_foregroundObserver) }
 	}
 
+	/// Called only by explicit reset, after the maintenance guard blocks new work.
+	func clearRecoveryArtifacts() async throws {
+		let hasSystemTasks = await withCheckedContinuation { continuation in
+			_session.getAllTasks { continuation.resume(returning: !$0.isEmpty) }
+		}
+		guard !hasSystemTasks, !hasActiveWork else {
+			throw NSError(domain: "Aether.DownloadRecovery", code: 1,
+				userInfo: [NSLocalizedDescriptionKey: "Download recovery cleanup deferred while downloads are active."])
+		}
+		_persistenceRevision &+= 1
+		try await _persistenceWriter.clearRecoveryArtifacts(records: downloads.map(StoredDownload.init), revision: _persistenceRevision)
+	}
+
 	func prepareForBackgroundEvents() {
 		// Accessing the singleton recreates the background session during launch.
 	}

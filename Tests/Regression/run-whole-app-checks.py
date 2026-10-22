@@ -103,7 +103,7 @@ func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
 '''
 s += declaration('Aether/Backend/Observable/DeviceConnectionManager.swift','private func _publishVerifiedTransport(').replace('private func','func',1)+'\n'
 connection=(repo/'Aether/Backend/Observable/DeviceConnectionManager.swift').read_text()
-callback=connection[connection.index('let publishReadiness: @Sendable'):connection.index('\n\t\tlet cancelled = HeartbeatManager.shared.rsdConnectionCancellationCheck()',connection.index('let publishReadiness: @Sendable'))]
+callback=connection[connection.index('let publishReadiness: @Sendable'):connection.index('\n\t\tlet verification = Task.detached',connection.index('let publishReadiness: @Sendable'))]
 s += 'func callback(includeApps:Bool,verificationID:UUID,reconciliationGeneration:UUID?,checkedRecord:PairingRecordIdentity?,cellularAssistTransaction:Bool,verificationStarted:Double)->@Sendable ()->Void {\n'+callback+'\nreturn publishReadiness\n}\n}\n'
 
 library = (repo/'Aether/Views/Library/LibraryView.swift').read_text()

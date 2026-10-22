@@ -14,7 +14,7 @@ struct Failure: Error {var localizedDescription:String {"failed"}}
 enum Status:Equatable {case idle,active,connecting,reconnecting,stopping,dropped(String);var isDropped:Bool{if case .dropped=self{return true};return false}}
 enum ApplicationState:Int {case active,background}
 @MainActor final class UIApplication {static let shared=UIApplication();var applicationState=ApplicationState.active}
-@MainActor enum LocationEngine {static func clear(pairingPath:String,deviceIP:String,verifyRemotely:Bool) async->Result<Void,Failure>{.failure(Failure())}}
+@MainActor enum LocationEngine {static var succeeds=false;static func clear(pairingPath:String,deviceIP:String,verifyRemotely:Bool) async->Result<Void,Failure>{succeeds ? .success(()) : .failure(Failure())}}
 enum HeartbeatManager {static let shared=Heart();static func activePairingFile()->String{"fixture"}}
 struct Heart{let ipAddress="fixture"}
 @MainActor final class DeviceConnectionManager {
@@ -78,6 +78,10 @@ struct RecoveryStore {var hasUnrestoredArtifacts=true}
   DeviceConnectionManager.shared.shouldFail=false
   let clearFailure=Session();await clearFailure.stop()
   check(clearFailure.status.isDropped && !clearFailure.audioRunning,"Failed remote clear retained audio")
+  LocationEngine.succeeds=true
+  let cleared=Session();await cleared.stop()
+  check(cleared.status == .idle && cleared.simulated == nil && !cleared.stopRequested,"Successful Stop retained retry intent")
+  LocationEngine.succeeds=false
   let cell=Cellular();UserDefaults.standard.set(true,forKey:Cellular.restoreKey);cell.failOff()
   check(UserDefaults.standard.bool(forKey:Cellular.restoreKey) && !cell.isEnabled && cell.restores==1,"Data-off failure lost restore debt or failed to restore")
   let onFailure=Cellular();onFailure.failOn();onFailure.handleApplicationDidBecomeActive()

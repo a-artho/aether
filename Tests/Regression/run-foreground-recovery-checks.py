@@ -148,11 +148,9 @@ struct AppInfo:Sendable {}
 enum DeviceConnectionError:Error {case pairingMissing,invalidPairing,tunnelUnavailable(String),serviceUnavailable(String)}
 struct DeviceConnectionCheck:Sendable {var isConnected=false;var apps:[AppInfo]?;var rejectsPairingRecord=false;var error:String?="fixture failure"}
 final class HeartbeatManager:@unchecked Sendable {
- func cancelPendingRSDConnections() {}
- func rsdConnectionCancellationCheck() -> @Sendable () -> Bool {{false}}
  static let shared=HeartbeatManager();var ipAddress="";let isRsd=true
  func checkSocketConnection(timeoutInSeconds:Double)->DeviceConnectionCheck {DeviceConnectionCheck()}
- func checkDeviceConnection(timeoutInSeconds:Double,includeApps:Bool=false,onVerified:@Sendable ()->Void = {},cancelled:@escaping @Sendable ()->Bool = {false})->DeviceConnectionCheck {DeviceConnectionCheck()}
+ func checkDeviceConnection(timeoutInSeconds:Double,includeApps:Bool=false,onVerified:@Sendable ()->Void = {})->DeviceConnectionCheck {DeviceConnectionCheck()}
 }
 @MainActor final class Gate {
  var pending:CheckedContinuation<Void,Never>?

@@ -170,6 +170,7 @@ final class SpoofSession: ObservableObject {
         isBusy = false
         switch result {
         case .success:
+            stopRequested = false
             UserDefaults.standard.set(false, forKey: Self.unresolvedSimulationKey)
             simulated = nil
             lastSuccessfulUpdateAt = nil

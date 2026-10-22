@@ -54,6 +54,12 @@ actor DownloadPersistenceWriter {
 		try store.save(records: records)
 	}
 
+	func clearRecoveryArtifacts(records: [StoredDownload], revision: UInt64) throws {
+		guard revision >= latestAcceptedRevision else { return }
+		try commit(records: records, revision: revision)
+		try store.clearRecoveryArtifacts(keeping: records)
+	}
+
 	private func flush(identifier: UUID) {
 		guard scheduledFlushID == identifier else { return }
 		scheduledFlush = nil

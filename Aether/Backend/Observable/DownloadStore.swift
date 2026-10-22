@@ -104,10 +104,9 @@ final class DownloadStore {
 	private let fileManager = FileManager.default
 	private let encoder = JSONEncoder()
 	private let decoder = JSONDecoder()
-    private var restorationFailed = false
     private var recoveryCheckpointNeeded = false
     private var recoveryMarker: URL { rootURL.appendingPathComponent("recovery-required") }
-    var hasUnrestoredArtifacts: Bool { restorationFailed || fileManager.fileExists(atPath: recoveryMarker.path) }
+    var hasUnrestoredArtifacts: Bool { recoveryCheckpointNeeded || fileManager.fileExists(atPath: recoveryMarker.path) }
 
 	private var rootURL: URL {
 		fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -269,8 +268,29 @@ final class DownloadStore {
 		prune(directory: stagingDirectoryURL, retaining: retainedStagingFiles)
 	}
 
+    /// Explicit Work Cache reset only. Keep every readable queue entry's artifacts.
+    func clearRecoveryArtifacts(keeping records: [StoredDownload]) throws {
+        let retainedResume = Set(records.map { resumeDataURL(for: $0.transferIdentifier).lastPathComponent })
+        let retainedStaging = Set(records.compactMap(\.stagedFileName))
+        for (directory, retained) in [(resumeDirectoryURL, retainedResume), (stagingDirectoryURL, retainedStaging)] {
+            guard fileManager.fileExists(atPath: directory.path) else { continue }
+            for file in try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+                where !retained.contains(file.lastPathComponent) {
+                try fileManager.removeItem(at: file)
+            }
+        }
+        if fileManager.fileExists(atPath: rootURL.path) {
+            for file in try fileManager.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil)
+                where file.lastPathComponent.hasPrefix("queue-unreadable-") && file.pathExtension == "json" {
+                try fileManager.removeItem(at: file)
+            }
+        }
+        // Remove protection last, so a partial cleanup remains recoverable.
+        if fileManager.fileExists(atPath: recoveryMarker.path) { try fileManager.removeItem(at: recoveryMarker) }
+        recoveryCheckpointNeeded = false
+    }
+
     private func preserveUnrestoredArtifacts(error: Error) {
-        restorationFailed = true
         recoveryCheckpointNeeded = true
         do { try checkpointUnrestoredArtifacts() }
         catch {

@@ -34,33 +34,6 @@ public final class HeartbeatManager: @unchecked Sendable {
     }
 	public let port_rsd: UInt16 = UInt16(49152)
 
-	private let attemptGenerationLock = NSLock()
-	private var attemptGeneration: UInt64 = 0
-
-	/// Interrupt establishment before waiting for the transport lock to retire handles.
-	public func cancelPendingRSDConnections() {
-		attemptGenerationLock.lock()
-		attemptGeneration &+= 1
-		attemptGenerationLock.unlock()
-	}
-
-	private func currentAttemptGeneration() -> UInt64 {
-		attemptGenerationLock.lock()
-		defer { attemptGenerationLock.unlock() }
-		return attemptGeneration
-	}
-
-	/// Capture before dispatching a worker so reset also rejects work not yet started.
-	public func rsdConnectionCancellationCheck() -> @Sendable () -> Bool {
-		let generation = currentAttemptGeneration()
-		return { [self] in currentAttemptGeneration() != generation }
-	}
-
-	func makeConnectionAttempt(timeout: TimeInterval, cancelled: @escaping @Sendable () -> Bool = { false }) -> RSDConnectionAttempt {
-		let superseded = rsdConnectionCancellationCheck()
-		return RSDConnectionAttempt(timeout: timeout) { superseded() || cancelled() }
-	}
-
 	let rsdConnectionLock = NSLock()
 	var rsdGeneration: UInt64 = 0
 	var serviceConnectionGeneration: UInt64 {

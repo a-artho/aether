@@ -21,6 +21,11 @@ struct SourceAppsDetailView: View {
 	let source: ASRepository
 	let app: ASRepository.App
 
+	private var _screenshotURLs: [URL] {
+		let modern = app.screenshots?.urls(forPad: UIDevice.current.userInterfaceIdiom == .pad) ?? []
+		return modern.isEmpty ? (app.screenshotURLs ?? []) : modern
+	}
+
 	var body: some View {
 		let appDescription = _cleanSourceText(app.localizedDescription)
 		let releaseNotes = _cleanSourceText(app.currentAppVersion?.localizedDescription)
@@ -29,8 +34,7 @@ struct SourceAppsDetailView: View {
 			VStack(alignment: .leading, spacing: 28) {
 				_metadataStrip()
 
-				let modernScreenshots = app.screenshots?.urls(forPad: UIDevice.current.userInterfaceIdiom == .pad) ?? []
-				let screenshotURLs = modernScreenshots.isEmpty ? (app.screenshotURLs ?? []) : modernScreenshots
+				let screenshotURLs = _screenshotURLs
 				if !screenshotURLs.isEmpty {
 					_detailSection(.localized("Screenshots")) {
 						_screenshots(screenshotURLs: screenshotURLs)
@@ -83,12 +87,7 @@ struct SourceAppsDetailView: View {
 				}
 
 				if let appDescription {
-					_detailSection(
-						.localized("Description"),
-						trailing: {
-							_appStoreLink()
-						}
-					) {
+					_detailSection(.localized("Description")) {
 						ExpandableText(
 							text: appDescription,
 							lineLimit: 4,
@@ -161,12 +160,10 @@ struct SourceAppsDetailView: View {
 			}
 		}
 		.fullScreenCover(isPresented: $_isScreenshotPreviewPresented) {
-			if let screenshotURLs = app.screenshotURLs {
-				ScreenshotPreviewView(
-					screenshotURLs: screenshotURLs,
-					initialIndex: _selectedScreenshotIndex
-				)
-			}
+			ScreenshotPreviewView(
+				screenshotURLs: _screenshotURLs,
+				initialIndex: _selectedScreenshotIndex
+			)
 		}
 		.task(id: "\(app.id ?? "")|\(app.currentName)") {
 			_appStoreDestination = await AppStoreLookup.shared.destination(
@@ -379,15 +376,21 @@ extension SourceAppsDetailView {
 			Button {
 				_openAppStore(destination.url)
 			} label: {
-				HStack(spacing: 4) {
+				HStack(spacing: 16) {
 					Text("App Store")
-						.foregroundStyle(.secondary)
-
-					Image(systemName: "arrow.up.right")
-						.font(.caption2.weight(.semibold))
-						.foregroundStyle(Color.accentColor)
+					Spacer(minLength: 12)
+					HStack(spacing: 4) {
+						Text(.localized("Open in App Store"))
+							.underline()
+						Image(systemName: "arrow.up.right")
+							.font(.caption2.weight(.semibold))
+					}
 				}
 				.font(.subheadline)
+				.foregroundStyle(.secondary)
+				.padding(.horizontal, 14)
+				.padding(.vertical, 11)
+				.contentShape(Rectangle())
 			}
 			.buttonStyle(.plain)
 		}
@@ -423,9 +426,10 @@ extension SourceAppsDetailView {
 				_infoRow(
 					title: row.title,
 					value: row.value,
-					isLast: index == rows.count - 1
+					isLast: index == rows.count - 1 && _appStoreDestination == nil
 				)
 			}
+			_appStoreLink()
 		}
 		.background {
 			RoundedRectangle(cornerRadius: 16, style: .continuous)

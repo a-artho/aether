@@ -89,6 +89,7 @@ extension ResetView {
 		Section {
 			Button {
 				Self.resetAlert(title: .localized("Reset Work Cache")) {
+					await Self.clearDownloadRecovery()
 					Self.clearWorkCache()
 				}
 			} label: {
@@ -217,6 +218,11 @@ extension ResetView {
 
 // MARK: - View extension: reset
 extension ResetView {
+	private static func clearDownloadRecovery() async {
+		do { try await DownloadManager.shared.clearRecoveryArtifacts() }
+		catch { DebugLogManager.shared.log("Download recovery cleanup failed: \(error.localizedDescription)", category: "Reset", level: .error) }
+	}
+
 	static func clearWorkCache() {
 		let fileManager = FileManager.default
 		let tmpDirectory = fileManager.temporaryDirectory
@@ -298,6 +304,7 @@ extension ResetView {
 	}
 	
 	static func resetAll() async {
+		await clearDownloadRecovery()
 		clearWorkCache()
 		await clearNetworkCache()
 		resetPairing()

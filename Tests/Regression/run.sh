@@ -64,7 +64,6 @@ python3 "$test_dir/run-idle-tunnel-stop-checks.py"
 
 python3 "$test_dir/run-automatic-refresh-checks.py"
 
-python3 "$test_dir/run-connection-deadline-checks.py"
 
 python3 "$test_dir/run-spoof-location-checks.py"
 

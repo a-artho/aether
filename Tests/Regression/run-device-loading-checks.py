@@ -3,19 +3,11 @@
 import pathlib, subprocess, tempfile
 repo=pathlib.Path(__file__).resolve().parents[2]
 def declaration(path,start):
- s=(repo/path).read_text(); begin=s.index(start); end=begin; parentheses=0
- while end<len(s):
-  c=s[end]
-  if c=='(': parentheses+=1
-  elif c==')': parentheses-=1
-  elif c=='{' and parentheses==0: break
-  end+=1
- end+=1; depth=1
+ s=(repo/path).read_text(); begin=s.index(start); end=s.index('{',begin)+1; depth=1
  while depth:
   depth+=(s[end]=='{')-(s[end]=='}'); end+=1
  return s[begin:end]
 header=r'''
-#include <stdbool.h>
 #include <stdlib.h>
 #include <stdint.h>
 typedef struct IdeviceFfiError {int32_t code; int32_t sub_code; const char *message;} IdeviceFfiError;
@@ -36,7 +28,6 @@ typedef struct AdapterHandle AdapterHandle; typedef struct RsdHandshakeHandle Rs
 IdeviceFfiError *tunnel_create_rppairing(const idevice_sockaddr*,socklen_t,const char*,RpPairingFileHandle*,const char*(*)(void*),void*,AdapterHandle**,RsdHandshakeHandle**);
 void rp_pairing_file_free(RpPairingFileHandle*);void rsd_handshake_free(RsdHandshakeHandle*);void adapter_free(AdapterHandle*);
 void mock_tunnel_port(uint16_t);void mock_tunnel_auth(int);int mock_tunnel_calls(void);
-void idevice_connection_attempt_begin(uint64_t,uint64_t,bool(*)(void*),void*);void idevice_connection_attempt_end(void);
 """
 c=r'''
 #include "Device.h"
@@ -64,7 +55,6 @@ void idevice_error_free(IdeviceFfiError*e){free((void*)e->message);free(e);}
 c += r"""
 #include <netinet/in.h>
 static uint16_t good_port=49152;static int tunnel_calls,tunnel_auth;
-void idevice_connection_attempt_begin(uint64_t a,uint64_t b,bool(*c)(void*),void*d){} void idevice_connection_attempt_end(void){}
 void mock_tunnel_port(uint16_t port){good_port=port;tunnel_calls=0;}
 void mock_tunnel_auth(int enabled){tunnel_auth=enabled;}
 int mock_tunnel_calls(void){return tunnel_calls;}
@@ -101,22 +91,21 @@ swift+='''public struct AppInfo: Codable, Sendable { let CFBundleIdentifier: Str
 class InstallationAppProxy {
 '''
 for start in ['static func readApps(','private static func decodeApps(']: swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/InstallationAppProxy.swift',start)+'\n'
-swift+='}\n'+declaration('IDeviceKitten/Sources/IDeviceSwift/Heartbeat/RSDConnectionAttempt.swift','final class RSDConnectionAttempt')+'\nclass HeartbeatManager {\n'+r'''
+swift+='}\nclass HeartbeatManager {\n'+r'''
  typealias AdapterHandle=OpaquePointer;typealias RsdHandshakeHandle=OpaquePointer
  let rsdConnectionLock=NSLock();var rsdAdapter:OpaquePointer?;var rsdHandshake:OpaquePointer?
  var rsdGeneration:UInt64=0;var lastSuccessfulRSDPort:UInt16?
  let ipAddress="10.7.0.1",port_rsd:UInt16=49152
- func makeConnectionAttempt(timeout:TimeInterval,cancelled:@escaping @Sendable ()->Bool = {false}) -> RSDConnectionAttempt {RSDConnectionAttempt(timeout:timeout,cancelled:cancelled)}
  func getPairingRsd() throws -> OpaquePointer {OpaquePointer(bitPattern:3)!}
- func ensure() throws {try _ensureRSDTunnelLocked(attempt:makeConnectionAttempt(timeout:6))}
+ func ensure() throws {try _ensureRSDTunnelLocked()}
 '''+declaration('IDeviceKitten/Sources/IDeviceSwift/Heartbeat/Heartbeat+checks.swift','private func verifiedClient(').replace('private func','func',1)+'\n'
 for start in ['static func shouldRetryRSDService(', 'private func connectRSDServiceOnce(', 'private func _ensureRSDTunnelLocked(', 'private func _invalidateRSDTunnelLocked(']:
  swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/Heartbeat/Heartbeat+start.swift',start)+'\n'
-swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/Heartbeat/Heartbeat+start.swift','func withRSDServiceConnection(\n\t\tconnectionTimeout:')+'\n}\n'
+swift+=declaration('IDeviceKitten/Sources/IDeviceSwift/Heartbeat/Heartbeat+start.swift','func withRSDServiceConnection(\n\t\tdiscoveryTimeout:')+'\n}\n'
 swift+=r'''
 enum RSDPortDiscovery {
  static var calls=0
- static func resolvePorts(timeout:TimeInterval,isCancelled:()->Bool = {false},stopWhen:([UInt16])->Bool)->[UInt16] {calls+=1;_=stopWhen([55000]);return [55000]}
+ static func resolvePorts(timeout:TimeInterval,stopWhen:([UInt16])->Bool)->[UInt16] {calls+=1;_=stopWhen([55000]);return [55000]}
 }
 '''
 
@@ -167,7 +156,7 @@ catch let e as IDeviceSwiftError {check(e.code==103 && e.subCode==5,"Discovery p
 mock_tunnel_auth(0);mock_tunnel_port(49152);mock_set_error(23,0)
 let locked=HeartbeatManager();try locked.ensure();let before=locked.rsdGeneration
 var attempts=0
-do {try locked.withRSDServiceConnection(connectionTimeout:1.5) {_,_ in
+do {try locked.withRSDServiceConnection(discoveryTimeout:1.5) {_,_ in
  attempts+=1;var out:UnsafeMutablePointer<UnsafeMutableRawPointer?>?;var count=0
  return installation_proxy_browse(client,nil,&out,&count)
 };preconditionFailure("Locked service accepted")} catch {}
@@ -177,7 +166,7 @@ final class Flag: @unchecked Sendable {let lock=NSLock();var value=false;func se
 let flag=Flag(), group=DispatchGroup();group.enter()
 DispatchQueue.global().asyncAfter(deadline:.now()+0.03){if locked.rsdConnectionLock.try(){flag.set();locked.rsdConnectionLock.unlock()};group.leave()}
 attempts=0
-try locked.withRSDServiceConnection(connectionTimeout:1.5) {_,_ in
+try locked.withRSDServiceConnection(discoveryTimeout:1.5) {_,_ in
  attempts+=1;if attempts==2{return nil}
  var out:UnsafeMutablePointer<UnsafeMutableRawPointer?>?;var count=0
  return installation_proxy_browse(client,nil,&out,&count)

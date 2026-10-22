@@ -225,6 +225,7 @@ struct UnifiedImportsRows: View {
 		ForEach(entries) { entry in
 			UnifiedImportRow(entry: entry, controller: controller)
 				.id(entry.id)
+				.tag(entry.id)
 				.onChange(of: entry.operation?.id, initial: true) { old, new in
 					if let old { visibleOperation(old, entry.id, false) }
 					if let new { visibleOperation(new, entry.id, true) }
@@ -241,7 +242,6 @@ private struct UnifiedImportRow: View {
 	@ObservedObject private var installations = AppInstallationManager.shared
 	@State private var retainedIconURL: URL?
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
-	private var protected: Bool { controller.isProtected(entry) }
 
 	var body: some View {
 		HStack(spacing: 18) {
@@ -277,9 +277,8 @@ private struct UnifiedImportRow: View {
 		}
 		.contentShape(Rectangle())
 		.swipeActions {
-			removalAction(forSwipe: true)
+			UnifiedImportActions(entry: entry, controller: controller, forSwipe: true)
 		}
-		.contextMenu { contextActions }
 	}
 
 	private var serverPresentation: Binding<Bool> {
@@ -297,6 +296,22 @@ private struct UnifiedImportRow: View {
 
 	private var activeModel: InstallerStatusViewModel? {
 		installations.currentRequest?.id == entry.operation?.id ? installations.viewModel : nil
+	}
+
+
+}
+
+/// Shared actions for the list-owned context menu and each row's native swipe.
+struct UnifiedImportActions: View {
+	let entry: UnifiedImportEntry
+	@ObservedObject var controller: UnifiedImportsController
+	var forSwipe = false
+	@ObservedObject private var installations = AppInstallationManager.shared
+	private var protected: Bool { controller.isProtected(entry) }
+
+	var body: some View {
+		if forSwipe { removalAction(forSwipe: true) }
+		else { contextActions }
 	}
 
 	@ViewBuilder private var contextActions: some View {
@@ -333,7 +348,7 @@ private struct UnifiedImportRow: View {
 	@ViewBuilder private func removalAction(forSwipe: Bool = false) -> some View {
 		if let request = entry.operation {
 			let isCurrent = installations.currentRequest?.id == request.id
-			let completed = isCurrent && activeModel?.isCompleted == true
+			let completed = isCurrent && installations.viewModel?.isCompleted == true
 			Button(completed ? .localized("Dismiss") : .localized("Cancel"), systemImage: "xmark", role: forSwipe && !entry.id.hasPrefix("operation:") ? nil : .destructive) {
 				if isCurrent { installations.cancel() }
 				else { installations.cancelQueuedInstall(id: request.id) }

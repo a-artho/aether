@@ -13,10 +13,9 @@ extension HeartbeatManager {
 	/// Verifies that Aether can reach the paired device's Installation Proxy service.
 	/// Unlike a raw TCP probe, this validates the active transport and pairing flow.
 	public func checkDeviceConnection(
-		timeoutInSeconds: Double = 2.0, includeApps: Bool = false, onVerified: (@Sendable () -> Void)? = nil,
-		cancelled: @escaping @Sendable () -> Bool = { false }
+		timeoutInSeconds: Double = 2.0, includeApps: Bool = false, onVerified: (@Sendable () -> Void)? = nil
 	) -> DeviceConnectionCheck {
-		return _checkRSDDeviceConnection(timeoutInSeconds: timeoutInSeconds, includeApps: includeApps, onVerified: onVerified, cancelled: cancelled)
+		return _checkRSDDeviceConnection(timeoutInSeconds: timeoutInSeconds, includeApps: includeApps, onVerified: onVerified)
 	}
 
 	private func verifiedClient(_ client: OpaquePointer?, includeApps: Bool, onVerified: (@Sendable () -> Void)? = nil) -> DeviceConnectionCheck {
@@ -34,12 +33,12 @@ extension HeartbeatManager {
 		} catch { return .init(isConnected: true) }
 	}
 
-	private func _checkRSDDeviceConnection(timeoutInSeconds: Double, includeApps: Bool, onVerified: (@Sendable () -> Void)?, cancelled: @escaping @Sendable () -> Bool) -> DeviceConnectionCheck {
+	private func _checkRSDDeviceConnection(timeoutInSeconds: Double, includeApps: Bool, onVerified: (@Sendable () -> Void)?) -> DeviceConnectionCheck {
 		var client: OpaquePointer?
 		defer { installation_proxy_client_free(client) }
 
 		do {
-			try withRSDServiceConnection(connectionTimeout: timeoutInSeconds, cancelled: cancelled) { adapter, handshake in
+			try withRSDServiceConnection(discoveryTimeout: timeoutInSeconds) { adapter, handshake in
 				installation_proxy_connect_rsd(adapter, handshake, &client)
 			}
 			return verifiedClient(client, includeApps: includeApps, onVerified: onVerified)

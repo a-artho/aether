@@ -7,6 +7,7 @@
 
 
 import SwiftUI
+import NimbleViews
 
 enum SourceAppBodyText {
 	private final class DisplayText: NSObject {
@@ -131,20 +132,20 @@ struct ExpandableText: View {
 		let displayText = SourceAppBodyText.replacingEmoji(in: text)
 		VStack(alignment: .leading, spacing: 4) {
 			Text(displayText)
-				.font(.system(textStyle))
+				.modifier(SourceAppBodyFont(textStyle: textStyle))
 				.foregroundStyle(mutedSectionHeaders ? Color.primary : Color.secondary)
 				.lineSpacing(3)
 				.lineLimit(expanded ? nil : lineLimit)
 				.background {
 					Text(displayText)
-						.font(.system(textStyle))
+						.modifier(SourceAppBodyFont(textStyle: textStyle))
 						.lineSpacing(3)
 						.lineLimit(lineLimit)
 						.fixedSize(horizontal: false, vertical: true)
 						.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { constrainedHeight = $0 }
 						.hidden()
 					Text(displayText)
-						.font(.system(textStyle))
+						.modifier(SourceAppBodyFont(textStyle: textStyle))
 						.lineSpacing(3)
 						.lineLimit(nil)
 						.fixedSize(horizontal: false, vertical: true)
@@ -169,5 +170,23 @@ struct ExpandableText: View {
 				}
 			}
 		}
+	}
+}
+
+/// Follow Appearance text sizing without applying list-row padding to prose.
+struct SourceAppBodyFont: ViewModifier {
+	@AppStorage("Aether.rowTextStyle") private var style: NBRowTextStyle = .standard
+	@ScaledMetric private var compactSize: CGFloat
+	@ScaledMetric private var balancedSize: CGFloat
+	let textStyle: Font.TextStyle
+
+	init(textStyle: Font.TextStyle) {
+		self.textStyle = textStyle
+		_compactSize = ScaledMetric(wrappedValue: 13, relativeTo: textStyle)
+		_balancedSize = ScaledMetric(wrappedValue: 14, relativeTo: textStyle)
+	}
+
+	func body(content: Content) -> some View {
+		content.font(style == .standard ? .system(textStyle) : .system(size: style == .compact ? compactSize : balancedSize))
 	}
 }

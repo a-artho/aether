@@ -607,9 +607,8 @@ public final class DeviceConnectionManager: ObservableObject {
 
 		let checkedRecord = _syncPairingRecord()
 		if let checkedRecord { pairingVerification.beginChecking(checkedRecord) }
-		let cancelled = HeartbeatManager.shared.rsdConnectionCancellationCheck()
 		let checkResult = await Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, cancelled: cancelled)
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5)
 		}.value
 
 		guard _reconciliationIsCurrent(epoch: epoch) else { throw CancellationError() }
@@ -758,19 +757,15 @@ public final class DeviceConnectionManager: ObservableObject {
 					cellularAssistTransaction: cellularAssistTransaction, startedAt: verificationStarted)
 			}
 		}
-		let cancelled = HeartbeatManager.shared.rsdConnectionCancellationCheck()
 		let verification = Task.detached(priority: .userInitiated) {
-			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, includeApps: includeApps, onVerified: publishReadiness, cancelled: cancelled)
+			HeartbeatManager.shared.checkDeviceConnection(timeoutInSeconds: 1.5, includeApps: includeApps, onVerified: publishReadiness)
 		}
 		if includeApps {
 			InstalledAppsStore.shared.stageInitialBrowse(Task { await verification.value.apps })
 		}
 		let checkResult = await withTaskCancellationHandler {
 			await verification.value
-		} onCancel: {
-			verification.cancel()
-			HeartbeatManager.shared.cancelPendingRSDConnections()
-		}
+		} onCancel: { verification.cancel() }
 
 		guard
 			_reconciliationIsCurrent(epoch: epoch),
@@ -884,9 +879,6 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _resetRSDTunnel() async {
-		// Signal without taking the native lock: an obsolete handshake must yield
-		// before the reset worker can acquire that lock and retire its handles.
-		HeartbeatManager.shared.cancelPendingRSDConnections()
 		lastVerifiedAt = 0
 		await Task.detached(priority: .utility) {
 			HeartbeatManager.shared.resetRSDTunnel()

@@ -33,7 +33,7 @@ struct AppVersionInfo: View {
 		VStack(alignment: .leading, spacing: 8) {
 			if isPlaceholder {
 				Text(SourceAppBodyText.replacingEmoji(in: description))
-					.font(.system(textStyle))
+					.modifier(SourceAppBodyFont(textStyle: textStyle))
 					.foregroundStyle(mutedSectionHeaders ? Color.primary : Color.secondary)
 					.fixedSize(horizontal: false, vertical: true)
 			} else {
