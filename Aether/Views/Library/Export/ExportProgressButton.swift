@@ -3,6 +3,8 @@ import SwiftUI
 struct ExportProgressButton: View {
 	@ObservedObject var export: AppExport
 
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
 	var body: some View {
 		Button(action: _performAction) {
 			ZStack {
@@ -14,7 +16,7 @@ struct ExportProgressButton: View {
 						.trim(from: 0, to: export.progress)
 						.stroke(_tint, style: StrokeStyle(lineWidth: 2.3, lineCap: .round))
 						.rotationEffect(.degrees(-90))
-						.animation(.smooth, value: export.progress)
+						.animation(reduceMotion ? nil : .smooth, value: export.progress)
 				}
 
 				Image(systemName: _systemImage)

@@ -13,7 +13,7 @@ update_rows = source[source.index('\tfunc updateRows('):source.index('\n\tfunc i
 fixture = r'''
 import Foundation
 import Combine
-@MainActor final class Download: ObservableObject { @Published var progress = 0.0 }
+@MainActor final class Download: ObservableObject { let id = UUID().uuidString; @Published var progress = 0.0 }
 @MainActor final class DownloadManager {
  static let shared = DownloadManager()
  var requests = 0

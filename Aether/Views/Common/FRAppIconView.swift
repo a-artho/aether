@@ -138,7 +138,7 @@ final class FRAppIconLoader: ObservableObject {
 	private var task: Task<Void, Never>?
 	private var generation = UUID()
 
-	func load(bundleURL: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) {
+	func load(bundleURL: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1, retainsPreviousImage: Bool = false) {
 		task?.cancel()
 		task = nil
 		generation = UUID()
@@ -149,7 +149,7 @@ final class FRAppIconLoader: ObservableObject {
 			return
 		}
 
-		image = nil
+		if !retainsPreviousImage { image = nil }
 		isLoading = true
 		task = Task.detached(priority: .userInitiated) { [weak self] in
             let generated = await FRIconRequests.shared.image(url: bundleURL, appearance: appearance,
@@ -159,7 +159,6 @@ final class FRAppIconLoader: ObservableObject {
 			await MainActor.run { [weak self] in
 				guard !Task.isCancelled, self?.generation == generation else { return }
 				self?.isLoading = false
-				guard let generated else { return }
 				self?.image = generated
 			}
 		}
@@ -183,6 +182,7 @@ struct FRAppIconView: View {
 	private let size: CGFloat
 	private let remoteIconURL: URL?
 	private let usesDefaultApp: Bool
+	private let retainsPreviousImage: Bool
 
 	@Environment(\.displayScale) private var displayScale
 	@Environment(\.colorScheme) private var colorScheme
@@ -192,11 +192,12 @@ struct FRAppIconView: View {
 	@AppStorage("Aether.shouldTintIcons") private var shouldTintIcons: Bool = false
 	@AppStorage("Aether.shouldChangeIconsBasedOffStyle") private var shouldChangeIconsBasedOffStyle: Bool = false
 	
-	init(app: AppInfoPresentable? = nil, size: CGFloat = 87, remoteIconURL: URL? = nil, usesDefaultApp: Bool = true) {
+	init(app: AppInfoPresentable? = nil, size: CGFloat = 87, remoteIconURL: URL? = nil, usesDefaultApp: Bool = true, retainsPreviousImage: Bool = false) {
 		self.app = app
 		self.size = size
 		self.remoteIconURL = remoteIconURL
 		self.usesDefaultApp = usesDefaultApp
+		self.retainsPreviousImage = retainsPreviousImage
 	}
 
 	private var appearance: FRIconAppearance {
@@ -250,7 +251,8 @@ struct FRAppIconView: View {
 			tint: selectedColorHex,
 			isTinted: shouldTintIcons,
 			dynamic: shouldChangeIconsBasedOffStyle,
-			displayScale: displayScale
+			displayScale: displayScale,
+			retainsPreviousImage: retainsPreviousImage
 		)
 	}
 

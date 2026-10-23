@@ -19,7 +19,8 @@ struct SearchHeaderOverlay: UIViewRepresentable {
 	}
 
 	func updateUIView(_ view: SearchOverlayAttachmentView, context: Context) {
-		view.surface = SearchOverlaySurface(text: $text, focus: focus, title: title,
+		view.surface = SearchOverlaySurface(text: $text, focus: Binding(get: { isScreenActive && focus.wrappedValue },
+			set: { focus.wrappedValue = $0 }), title: title,
 			transition: transition, layout: view.layout, sourceFrame: sourceFrame,
 			searchInTitle: searchInTitle, titleIsLeading: titleIsLeading,
 			rightToLeft: layoutDirection == .rightToLeft)

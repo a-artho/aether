@@ -54,7 +54,7 @@ struct FRIconCellView<Subtitle: View>: View {
 	
 	// MARK: Body
 	var body: some View {
-		HStack(spacing: 18) {
+		HStack(spacing: NBRowMetrics.contentSpacing) {
 			Group {
 			if let iconURL = iconUrl {
 				LazyImage(request: ImageRequest(url: iconURL, userInfo: [
@@ -92,7 +92,7 @@ struct FRIconCellView<Subtitle: View>: View {
 					.foregroundColor(.secondary)
 					.lineLimit(1)
 			}
-			.padding(.vertical, 2)
+			.padding(.vertical, NBRowMetrics.textVerticalPadding)
 			.frame(maxWidth: .infinity, alignment: .leading)
 		}
 	}

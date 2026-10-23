@@ -63,7 +63,7 @@ struct SettingsDeviceControls: View {
 				DeviceAccessoryTile(title: .localized("Pairing"), subtitle: pairingStatus,
 					systemImage: "key.fill", isActive: installationMethod == 1 && connection.isConnected && connection.pairingVerification.status == .verified,
 					isDisabled: installationMethod != 1, action: openPairing)
-			}
+			}.fixedSize(horizontal: false, vertical: true)
 			HStack(spacing: 12) {
 				DeviceAccessoryTile(title: .localized("Spoofing"), subtitle: spoofingStatus,
 					systemImage: "location.fill", isActive: isSpoofingActive,
@@ -76,7 +76,7 @@ struct SettingsDeviceControls: View {
 							.frame(width: 15, height: 15)
 					}
 				}
-			}
+			}.fixedSize(horizontal: false, vertical: true)
 		}
 	}
 }
@@ -122,6 +122,7 @@ private struct DeviceAccessoryTile<Icon: View>: View {
 			.padding(.horizontal, 10)
 			.padding(.vertical, 8)
 			.frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+			.frame(maxHeight: .infinity)
 			.background(controlsStyle == .standard ? Color(uiColor: .secondarySystemGroupedBackground) : Color.clear,
 				in: RoundedRectangle(cornerRadius: 15, style: .continuous))
 			.contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))

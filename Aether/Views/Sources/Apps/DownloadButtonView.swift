@@ -9,17 +9,6 @@ import SwiftUI
 import AltSourceKit
 import NimbleViews
 
-enum DownloadIconStyle: String, CaseIterable, Identifiable {
-    case current, safari
-    var id: Self { self }
-    var label: String {
-        switch self {
-        case .current: .localized("Current")
-        case .safari: .localized("Safari")
-        }
-    }
-}
-
 enum RepoDownloadIconSize: Int, CaseIterable, Identifiable {
     case small = 14, medium = 16, large = 18
     var id: Self { self }
@@ -43,8 +32,8 @@ struct DownloadButtonView: View {
 	let app: ASRepository.App
 	var style: Style = .compact
 	@AppStorage("Aether.repoDownloadIconSize") private var iconSize: RepoDownloadIconSize = .large
-	@AppStorage("Aether.downloadIconStyle") private var iconStyle: DownloadIconStyle = .current
 	@AppStorage("Aether.userTintColor") private var themeHex = "#848ef9"
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@ObservedObject private var downloadManager = DownloadManager.shared
 
 	private var currentDownload: Download? {
@@ -56,7 +45,7 @@ struct DownloadButtonView: View {
 		ZStack {
 			if let currentDownload {
 				DownloadProgressButton(download: currentDownload)
-					.transition(.blurReplace)
+					.transition(reduceMotion ? .identity : .opacity)
 			} else {
 				Button {
 					if let url = app.currentDownloadUrl {
@@ -71,31 +60,24 @@ struct DownloadButtonView: View {
 				} label: {
 					switch style {
 					case .compact:
-						Group {
-                            if iconStyle == .safari {
-                                Image(systemName: "arrow.down.circle.fill")
-                                    .symbolRenderingMode(.palette)
-                                    .foregroundStyle(Color(uiColor: .systemBackground), _themeColor)
-                            } else {
-                                Image(systemName: "icloud.and.arrow.down").foregroundStyle(_themeColor)
-                            }
-                        }
+						Image(systemName: "icloud.and.arrow.down")
+							.foregroundStyle(_themeColor)
                             .font(.system(size: CGFloat(iconSize.rawValue), weight: .semibold))
 							.frame(width: 44, height: 44)
 							.contentShape(Rectangle())
 					case .navigation:
-						Image(systemName: iconStyle == .safari ? "arrow.down" : "icloud.and.arrow.down")
+						Image(systemName: "icloud.and.arrow.down")
 							.fontWeight(.semibold)
-							.foregroundStyle(_themeColor)
+							.foregroundStyle(.primary)
 					}
 				}
 				.buttonStyle(.borderless)
 				.accessibilityLabel(String.localized("Download"))
-				.tint(_themeColor)
-				.transition(.blurReplace)
+				.tint(style == .navigation ? Color.primary : _themeColor)
+				.transition(reduceMotion ? .identity : .opacity)
 			}
 		}
-		.animation(.easeInOut(duration: 0.3), value: currentDownload != nil)
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: currentDownload != nil)
 	}
 
 	private var _themeColor: Color {

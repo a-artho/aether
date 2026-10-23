@@ -16,6 +16,7 @@ struct LogsView: View {
 	@State private var _selectedItemForDetail: DebugLogItem? = nil
 	@State private var _showClearConfirmation: Bool = false
 	@State private var _copiedToast: Bool = false
+	@State private var copyFeedbackGeneration = UUID()
 	@State private var searchPresented = !DebugLogManager.shared.searchText.isEmpty
 	@State private var searchFocused = false
 	@State private var searchWidth: CGFloat = 320
@@ -314,8 +315,11 @@ struct LogsView: View {
 	}
 
 	private func _showCopiedFeedback() {
+		let generation = UUID()
+		copyFeedbackGeneration = generation
 		withAnimation { _copiedToast = true }
 		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+			guard copyFeedbackGeneration == generation else { return }
 			withAnimation { _copiedToast = false }
 		}
 	}
@@ -364,6 +368,7 @@ struct DebugLogDetailView: View {
 	let item: DebugLogItem
 	@Environment(\.dismiss) private var dismiss
 	@State private var _copiedToast: Bool = false
+	@State private var copyFeedbackGeneration = UUID()
 
 	var body: some View {
 		NBNavigationView(.localized("Log Detail"), displayMode: .inline) {
@@ -464,8 +469,11 @@ struct DebugLogDetailView: View {
 	}
 
 	private func _showCopiedFeedback() {
+		let generation = UUID()
+		copyFeedbackGeneration = generation
 		withAnimation { _copiedToast = true }
 		DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+			guard copyFeedbackGeneration == generation else { return }
 			withAnimation { _copiedToast = false }
 		}
 	}

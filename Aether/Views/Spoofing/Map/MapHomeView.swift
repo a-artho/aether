@@ -13,6 +13,8 @@ struct MapHomeView: View {
     @State private var routeEnd: CLLocationCoordinate2D?
     @State private var routeCoords: [CLLocationCoordinate2D] = []
     @State private var isRouting = false
+    @State private var placeTask: Task<Void, Never>?
+    @State private var routeTask: Task<Void, Never>?
     @State private var showRouteSheet = false
     @State private var drawnPath: [CLLocationCoordinate2D] = []
     @State private var drawMode = false
@@ -115,6 +117,14 @@ struct MapHomeView: View {
 
             topChrome
         }
+        .onDisappear {
+            placeTask?.cancel(); routeTask?.cancel()
+            placeTask = nil; routeTask = nil; isRouting = false
+        }
+        .onChange(of: routeInputKey) { _, _ in
+            routeTask?.cancel(); routeTask = nil; isRouting = false
+            routeCoords = []
+        }
         .onChange(of: session.pin?.latitude) { _, newValue in
             if newValue == nil { pinSelected = false }
         }
@@ -138,6 +148,8 @@ struct MapHomeView: View {
     }
 
     private func placePin(at point: CGPoint, proxy: MapProxy) {
+        placeTask?.cancel()
+        placeTask = nil
         guard let coord = proxy.convert(point, from: .local) else { return }
         if drawMode {
             drawnPath.append(coord)
@@ -335,10 +347,11 @@ struct MapHomeView: View {
     }
 
     private func select(completion: MKLocalSearchCompletion) {
-        Task {
+        placeTask?.cancel()
+        placeTask = Task {
             let request = MKLocalSearch.Request(completion: completion)
             if let response = try? await MKLocalSearch(request: request).start(),
-               let item = response.mapItems.first {
+               let item = response.mapItems.first, !Task.isCancelled {
                 let coord = item.location.coordinate
                 let title = item.name ?? completion.title
                 await MainActor.run {
@@ -355,6 +368,11 @@ struct MapHomeView: View {
         }
     }
 
+    private var routeInputKey: String {
+        let start = routeStart
+        return "\(start?.latitude ?? 0)|\(start?.longitude ?? 0)|\(routeEnd?.latitude ?? 0)|\(routeEnd?.longitude ?? 0)|\(session.travelMode)"
+    }
+
     private func buildRoadRoute() {
         guard let start = routeStart ?? session.simulated ?? session.pin,
               let end = routeEnd else {
@@ -365,16 +383,19 @@ struct MapHomeView: View {
             session.lastError = "Route start and end are the same. Move the pin, then set the end."
             return
         }
+        routeTask?.cancel()
         isRouting = true
-        Task {
+        routeTask = Task {
             do {
                 let coords = try await RouteBuilder.roadRoute(from: start, to: end, mode: session.travelMode)
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
                     routeCoords = coords
                     isRouting = false
                 }
             } catch {
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
                     isRouting = false
                     session.lastError = error.localizedDescription
                 }

@@ -11,6 +11,7 @@ struct InstalledAppInformationView: View {
 
 	init(app: InstalledApp) { self.summary = app }
 	@State private var copiedItemText: String?
+	@State private var copyFeedbackGeneration = UUID()
 
 	var body: some View {
 		List {
@@ -168,21 +169,26 @@ struct InstalledAppInformationView: View {
 					Image(systemName: "doc.on.doc")
 						.font(.caption2)
 						.foregroundStyle(.secondary)
+						.frame(width: 44, height: 44)
+						.contentShape(Rectangle())
 				}
 				.buttonStyle(.plain)
+				.accessibilityLabel(Text("Copy \(label)"))
 			}
 		}
 		.padding(.vertical, 2)
 	}
 
 	private func _triggerCopyFeedback(label: String) {
+		let generation = UUID()
+		copyFeedbackGeneration = generation
 		HapticManager.shared.impact()
 		withAnimation(.easeInOut(duration: 0.2)) {
 			copiedItemText = label
 		}
 		DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
 			withAnimation(.easeInOut(duration: 0.2)) {
-				if copiedItemText == label {
+				if copyFeedbackGeneration == generation {
 					copiedItemText = nil
 				}
 			}

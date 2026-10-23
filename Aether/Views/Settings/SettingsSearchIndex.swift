@@ -52,7 +52,7 @@ enum SettingsSearchIndex {
 			("Search Placement", "page title right navigation"),
 			("Left-Aligned Page Titles", "leading left navigation main tabs title alignment"), ("Hide Search Icon", "page title magnifying glass"), ("Dynamic Icons", "app light dark"),
 			("Tinted Icons", "app color colour"), ("Show Download Buttons", "repo sources chevron"),
-			("Download Icon Size", "repo small medium large 14 16 18 sizing"), ("Download Icon", "safari circle cloud arrow downloads"), ("Store Cell Appearance", "sources rows description"), ("Standard", "sources description layout"),
+			("Download Icon Size", "repo small medium large 14 16 18 sizing"), ("Store Cell Appearance", "sources rows description"), ("Standard", "sources description layout"),
 			("Big Description", "sources rows layout"), ("Haptics", "click feedback strength")
 		])
 		add(.appIcon, "Appearance", [("App Icon", "aether dark alternate icon")])

@@ -20,7 +20,9 @@ struct SigningView: View {
 	@AppStorage("aether.selectedCertUUID") private var _selectedCertificateUUID = ""
 	@State private var _profileIdentifier: String?
 	@State private var _profileIdentityError: String?
-	private let _isAether: Bool
+	@State private var _isAether = false
+	@State private var photoTask: Task<Void, Never>?
+	@State private var photoGeneration = UUID()
 	@State private var _isAltPickerPresenting = false
 	@State private var _isFilePickerPresenting = false
 	@State private var _isImagePickerPresenting = false
@@ -48,12 +50,7 @@ struct SigningView: View {
 	
 	init(app: AppInfoPresentable) {
 		self.app = app
-		if let uuid = app.uuid,
-			let path = FileManager.default.getPath(
-				in: app.isSigned ? FileManager.default.signed(uuid) : FileManager.default.unsigned(uuid), for: "app"),
-			let info = NSDictionary(contentsOf: path.appendingPathComponent("Info.plist")) {
-			_isAether = AetherSigningIdentity.isAether(info)
-		} else { _isAether = false }
+
 		let storedCert = UserDefaults.standard.integer(forKey: "aether.selectedCert")
 		__temporaryCertificate = State(initialValue: storedCert)
 	}
@@ -85,6 +82,9 @@ struct SigningView: View {
 				) {
 					_temporaryOptions = OptionsManager.shared.options
 					_temporaryOptions.matchAetherIdentityToProfile = nil
+					photoTask?.cancel()
+					photoGeneration = UUID()
+					_selectedPhoto = nil
 					appIcon = nil
 				}
 			}
@@ -94,6 +94,8 @@ struct SigningView: View {
 					allowedContentTypes:  [.image],
 					onDocumentsPicked: { urls in
 						guard let selectedFileURL = urls.first else { return }
+						photoTask?.cancel()
+						photoGeneration = UUID()
 						self.appIcon = UIImage.fromFile(selectedFileURL)?.resizeToSquare()
 					}
 				)
@@ -101,16 +103,36 @@ struct SigningView: View {
 			}
 			.photosPicker(isPresented: $_isImagePickerPresenting, selection: $_selectedPhoto)
 			.onChange(of: _selectedPhoto) { _, newValue in
+				photoTask?.cancel()
+				let generation = UUID()
+				photoGeneration = generation
 				guard let newValue else { return }
-				
-				Task {
+				photoTask = Task {
 					if let data = try? await newValue.loadTransferable(type: Data.self),
 					   let image = UIImage(data: data)?.resizeToSquare() {
+						guard !Task.isCancelled, photoGeneration == generation else { return }
 						appIcon = image
 					}
 				}
 			}
 		}
+        .task(id: app.uuid) {
+            let uuid = app.uuid
+            let signed = app.isSigned
+            let result = await Task.detached(priority: .userInitiated) {
+                guard let uuid,
+                    let path = FileManager.default.getPath(in: signed ? FileManager.default.signed(uuid) : FileManager.default.unsigned(uuid), for: "app"),
+                    let info = NSDictionary(contentsOf: path.appendingPathComponent("Info.plist")) else { return false }
+                return AetherSigningIdentity.isAether(info)
+            }.value
+            guard !Task.isCancelled else { return }
+            _isAether = result
+            _refreshProfileIdentity()
+        }
+        .onDisappear { photoTask?.cancel(); photoGeneration = UUID() }
+        .onChange(of: _isAltPickerPresenting || _isFilePickerPresenting) { _, presented in
+            if presented { photoTask?.cancel(); photoGeneration = UUID() }
+        }
 		.onChange(of: _selectedCertificateUUID) { _, _ in _refreshProfileIdentity() }
 		.onChange(of: _temporaryCertificate) { _, _ in _refreshProfileIdentity() }
 		.onChange(of: _temporaryOptions.matchAetherIdentityToProfile) { _, _ in _refreshProfileIdentity() }

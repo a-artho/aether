@@ -96,6 +96,9 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 				}
 			}
 			.onAppear { transition.restore(isPresented: isPresented) }
+			.onChange(of: isScreenActive) { _, active in
+				if !active { focus.wrappedValue = false }
+			}
 			.onChange(of: searchPlacement) { _, _ in searchButtonFrame = .zero }
 			.onChange(of: leadingPageTitles) { _, _ in searchButtonFrame = .zero }
 			.onChange(of: hideTitleSearchIcon) { _, _ in searchButtonFrame = .zero }

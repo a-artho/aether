@@ -22,7 +22,7 @@ struct SourcesView: View {
 
 	private var _filteredSources: [AltSource] {
 		_sources.filter {
-			_searchText.isEmpty || ($0.name?.localizedCaseInsensitiveContains(_searchText) ?? false)
+			_searchText.isEmpty || (($0.name?.localizedCaseInsensitiveContains(_searchText) ?? false) || ($0.name?.repoDisplayName.localizedCaseInsensitiveContains(_searchText) ?? false))
 		}
 	}
 
@@ -52,17 +52,19 @@ struct SourcesView: View {
 	var body: some View {
 		NavigationStack(path: $router.path) {
 			NBListAdaptable {
-				if !_filteredSources.isEmpty {
+				if !_sources.isEmpty {
 					Section {
 						NavigationLink(value: SourcesRouter.Route.collection(.allRepos)) {
 							HStack(spacing: 18) {
-								Image(systemName: "globe.desk")
-									.font(.system(size: 30, weight: .regular))
-									.symbolRenderingMode(.hierarchical)
+								Image("AppStoreLogo")
+									.renderingMode(.template)
+									.resizable()
+									.scaledToFit()
+									.frame(width: 30, height: 30)
 									.foregroundStyle(.secondary)
 									.frame(width: 50, height: 50)
 								NBTitleWithSubtitleView(
-									title: .localized("All Repos"),
+									title: .localized("Store"),
 									subtitle: .localized("See all apps from your sources")
 								)
 							}
@@ -71,6 +73,10 @@ struct SourcesView: View {
 						.listRowSeparator(.hidden)
 					}
 
+					if !_searchText.isEmpty && _filteredSources.isEmpty {
+						Text(String.localized("No Results")).foregroundStyle(.secondary)
+					}
+					if !_filteredSources.isEmpty {
 					NBSection(.localized("Repos"), trailing: {
 						SourceRefreshStatusView(
 							lastUpdated: viewModel.lastUpdated,
@@ -90,11 +96,11 @@ struct SourcesView: View {
 						}
 					}
 				}
+				}
 			}
 			.modifier(SourcesRefreshModifier(isEnabled: !_sources.isEmpty) {
 				_reportRefreshFailures = true
 				viewModel.startRefresh(Array(_sources))
-				await Task.yield()
 			})
 			.scrollDismissesKeyboard(.immediately)
 			.overlay {
@@ -112,20 +118,13 @@ struct SourcesView: View {
 						.buttonStyle(.borderless)
 					}
 					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
-				} else if !_searchText.isEmpty && _filteredSources.isEmpty {
-					TabPlaceholderView(
-						title: .localized("No Results"),
-						description: .localized("Try another search."),
-						systemImage: "magnifyingglass"
-					)
-					.transition(.opacity.animation(.easeInOut(duration: 0.2)))
 				}
 			}
 			.navigationBarTitleDisplayMode(.inline)
 			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _toolbarWidth = $0 }
 			.modifier(SearchToolbarModifier(
 				text: $_searchText, isPresented: _rootSearchPresented,
-				focus: $_isSearchFocused, title: .localized("Sources"), width: _toolbarWidth, isScreenActive: router.path.isEmpty, isTabRoot: true, hasTitleMenu: false,
+				focus: $_isSearchFocused, title: .localized("Sources"), width: _toolbarWidth, isScreenActive: router.path.isEmpty && router.addSourceRequest == nil, isTabRoot: true, hasTitleMenu: false,
 				secondaryLabel: .localized("Add Source"),
 				secondaryAction: { router.presentAddSource() }
 			) { EmptyView() })

@@ -127,6 +127,8 @@ parts.append(r'''
 }
 final class LifecycleRegressionTests:XCTestCase {
  @MainActor func testStopMakesSuspendedSetStale() async {
+  DeviceConnectionManager.shared.isConnected=false
+  defer { DeviceConnectionManager.shared.isConnected=true }
   LocationEngine.events=[]; LocationEngine.clearReply=nil
   let session=Session(), oldSet=Task { await session.invoke() }
   while session.gate.count < 1 { await Task.yield() }
@@ -141,6 +143,8 @@ final class LifecycleRegressionTests:XCTestCase {
   UserDefaults.standard.removeObject(forKey:Session.unresolvedSimulationKey)
  }
  @MainActor func testNormalSetStillSucceedsAndPreflightFailureReleasesBusy() async {
+  DeviceConnectionManager.shared.isConnected=false
+  defer { DeviceConnectionManager.shared.isConnected=true }
   LocationEngine.events=[]
   let session=Session(), set=Task { await session.invoke() }
   while session.gate.count < 1 { await Task.yield() }
@@ -150,6 +154,16 @@ final class LifecycleRegressionTests:XCTestCase {
   while session.gate.count < 2 { await Task.yield() }
   session.gate.release(2,false); let failedResult=await failed.value
   XCTAssertFalse(failedResult); XCTAssertFalse(session.isBusy)
+  UserDefaults.standard.removeObject(forKey:Session.unresolvedSimulationKey)
+ }
+ @MainActor func testActiveConnectedLocationUpdateSkipsGeneralPreflight() async {
+  DeviceConnectionManager.shared.isConnected=true
+  LocationEngine.events=[]
+  let session=Session()
+  let applied=await session.invoke()
+  XCTAssertTrue(applied)
+  XCTAssertEqual(session.gate.count,0)
+  XCTAssertEqual(session.status,.active)
   UserDefaults.standard.removeObject(forKey:Session.unresolvedSimulationKey)
  }
  @MainActor func testClearDoesNotLetOldRefreshOverwriteNewResultOrLoading() async {

@@ -2,6 +2,13 @@ import SwiftUI
 
 public enum NBRowMetrics {
 	public static let lineSpacing: CGFloat = 3
+	public static let contentSpacing: CGFloat = 18
+	public static let textVerticalPadding: CGFloat = 2
+	public static let horizontalInset: CGFloat = 20
+	public static let verticalInset: CGFloat = 8
+	public static var listInsets: EdgeInsets {
+		EdgeInsets(top: verticalInset, leading: horizontalInset, bottom: verticalInset, trailing: horizontalInset)
+	}
 }
 
 /// Balanced typography with Dynamic Type scaling throughout the app.

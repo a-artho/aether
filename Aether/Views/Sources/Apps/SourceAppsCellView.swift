@@ -26,7 +26,7 @@ struct SourceAppsCellView: View {
 	
 	var body: some View {
 		VStack {
-			HStack(spacing: 18) {
+			HStack(spacing: NBRowMetrics.contentSpacing) {
 				_selectableContent {
 					_appDetails
 				}

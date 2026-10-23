@@ -1,6 +1,7 @@
 import SwiftUI
 import AltSourceKit
 import UIKit
+import NimbleViews
 
 /// Small, already-matched update lists render directly; icons load independently.
 struct InstalledAppUpdatesView: View {
@@ -114,6 +115,7 @@ struct InstalledAppUpdatesView: View {
 								selectedUpdate = SelectedUpdate(sourceURL: row.context.sourceURL,
 									repository: row.context.repository, app: row.app)
 							})
+						.listRowInsets(NBRowMetrics.listInsets)
 					}
 				} header: {
 					SourceAppDateChip(title: group.title)

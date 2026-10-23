@@ -270,16 +270,7 @@ final class SpoofSession: ObservableObject {
         // A failed Stop must retry clearing, never silently reapply the old location.
         if stopRequested { await stop(); return }
         guard let simulated else { return }
-		let generation = operationGeneration
-		guard await _ensureDeviceReady(generation: generation) else {
-			guard operationGeneration == generation else { return }
-            routeGeneration &+= 1
-            routeTask?.cancel()
-            routeTask = nil
-            markTunnelUnavailable()
-            return
-        }
-		guard operationGeneration == generation, !isBusy else { return }
+
         if routeTask != nil && stopStaleRouteIfNeeded() { return }
         guard routeTask == nil, !joystickActive else { return }
 		_ = await apply(simulated, markRecent: false)
@@ -317,7 +308,7 @@ final class SpoofSession: ObservableObject {
                         latitude: previous.latitude + (next.latitude - previous.latitude) * t,
                         longitude: previous.longitude + (next.longitude - previous.longitude) * t
                     )
-                    let delay = stepMeters / speed
+                    let delay = (distance / Double(steps)) / speed
                     do {
                         try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     } catch {
@@ -415,10 +406,14 @@ final class SpoofSession: ObservableObject {
         let generation = operationGeneration
         isBusy = true
         connectionDetail = nil
-		guard await _ensureDeviceReady(generation: generation) else {
-			if operationGeneration == generation { isBusy = false }
-			return false
-		}
+		// An established simulation service validates its own writes. Re-run the
+        // general preflight only for initial setup, a drop, or a disconnected transport.
+        if status != .active || !DeviceConnectionManager.shared.isConnected {
+            guard await _ensureDeviceReady(generation: generation) else {
+                if operationGeneration == generation { isBusy = false }
+                return false
+            }
+        }
 		guard operationGeneration == generation else { return false }
 		guard !Task.isCancelled else {
             isBusy = false

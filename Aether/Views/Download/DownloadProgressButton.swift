@@ -9,6 +9,8 @@ struct DownloadProgressButton: View {
 	@ObservedObject var download: Download
 	@ObservedObject private var downloadManager = DownloadManager.shared
 
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+
 	var body: some View {
 		Button(action: _performAction) {
 			ZStack {
@@ -23,7 +25,7 @@ struct DownloadProgressButton: View {
 							style: StrokeStyle(lineWidth: 2.3, lineCap: .round)
 						)
 						.rotationEffect(.degrees(-90))
-						.animation(.smooth, value: download.overallProgress)
+						.animation(reduceMotion ? nil : .smooth, value: download.overallProgress)
 				}
 
 				if download.isPreparingSource && !download.waitingForForeground {

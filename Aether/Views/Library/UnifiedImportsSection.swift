@@ -59,7 +59,7 @@ final class UnifiedImportsController: ObservableObject {
 	@Published private(set) var rows: [UnifiedImportEntry] = []
 
 	var visibleRows: [UnifiedImportEntry] {
-		rows.filter { !deletingRows.contains($0.id) && !cancellingRows.contains($0.id) }
+		rows.filter { !deletingRows.contains($0.id) }
 	}
 	var hasRows: Bool { !visibleRows.isEmpty }
 
@@ -72,6 +72,7 @@ final class UnifiedImportsController: ObservableObject {
 	}
 
 	func isProtected(_ row: UnifiedImportEntry) -> Bool {
+		if deletingRows.contains(row.id) || cancellingRows.contains(row.id) { return true }
 		if row.operation != nil { return true }
 		var artifacts: [AppInfoPresentable] = []
 		if let app = row.app { artifacts.append(app) }
@@ -87,7 +88,17 @@ final class UnifiedImportsController: ObservableObject {
 		guard !cancellingRows.contains(rowID) else { return }
 		cancellingRows.insert(rowID)
 		Task { @MainActor in
-			defer { cancellingRows.remove(rowID) }
+			defer {
+				// A retired transfer must not reappear when cleanup releases its lock.
+				updateRows(rows.compactMap { row in
+					guard row.id == rowID, row.download?.id == download.id else { return row }
+					guard row.app != nil else { return nil }
+					var retained = row
+					retained.download = nil
+					return retained
+				})
+				cancellingRows.remove(rowID)
+			}
 			await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
 				DownloadManager.shared.deleteDownload(download) { continuation.resume() }
 			}
@@ -95,7 +106,11 @@ final class UnifiedImportsController: ObservableObject {
 	}
 	func delete(_ targets: [UnifiedImportEntry]) {
 		let lineage = LibraryArtifactIndex.shared.lineage
-		let deletable = targets.filter { !deletingRows.contains($0.id) && !cancellingRows.contains($0.id) && !isProtected($0) }
+		// Menus can outlive the snapshot used to construct their actions.
+		let currentTargets = targets.compactMap { target in
+			rows.first(where: { $0.id == target.id })?.reconciled(with: AppInstallationManager.shared.installationCards)
+		}
+		let deletable = currentTargets.filter { !deletingRows.contains($0.id) && !cancellingRows.contains($0.id) && !isProtected($0) }
 		guard !deletable.isEmpty else { return }
 		let deletingSigned = Set(deletable.compactMap { $0.app?.isSigned == true ? $0.app?.uuid : nil })
 		let existingSigned = Set(visibleRows.compactMap { $0.app?.isSigned == true ? $0.app?.uuid : nil })
@@ -218,7 +233,7 @@ struct UnifiedImportsDataSource: ViewModifier {
 			rows.append(UnifiedImportEntry(id: "app:" + uuid, app: app, date: lineage.originalDates[uuid] ?? app.date))
 		}
 		for download in downloads.downloads {
-			rows.append(UnifiedImportEntry(id: "app:" + download.importIdentifier, download: download,
+			rows.append(UnifiedImportEntry(id: "app:" + download.importIdentifier, app: originals[download.importIdentifier], download: download,
 				date: lineage.originalDates[download.importIdentifier]))
 		}
 		for request in installations.installationCards {
@@ -249,7 +264,21 @@ struct UnifiedImportsDataSource: ViewModifier {
 				row.app?.uuid == export.snapshot.uuid && row.app?.isSigned == export.snapshot.isSigned
 			}) { rows[position].export = export }
 		}
-		return rows.sorted {
+		// Fetch results, lineage and operation snapshots publish independently.
+		// Keep exactly one owner for each stable list identity during a handoff.
+		var merged: [String: UnifiedImportEntry] = [:]
+		for row in rows {
+			if var existing = merged[row.id] {
+				if let app = row.app, existing.app == nil || app.isSigned { existing.app = app }
+				existing.original = row.original ?? existing.original
+				existing.download = row.download ?? existing.download
+				existing.operation = row.operation ?? existing.operation
+				existing.export = row.export ?? existing.export
+				existing.date = existing.date ?? row.date
+				merged[row.id] = existing
+			} else { merged[row.id] = row }
+		}
+		return merged.values.sorted {
 			let left = $0.date ?? .distantFuture, right = $1.date ?? .distantFuture
 			return left == right ? $0.id < $1.id : left > right
 		}
@@ -266,6 +295,7 @@ struct UnifiedImportsRows: View {
 		ForEach(entries) { entry in
 			UnifiedImportRow(entry: entry, controller: controller)
 				.id(entry.id)
+				.listRowInsets(NBRowMetrics.listInsets)
 				.onChange(of: entry.operation?.id, initial: true) { old, new in
 					if let old { visibleOperation(old, entry.id, false) }
 					if let new { visibleOperation(new, entry.id, true) }
@@ -289,8 +319,8 @@ private struct UnifiedImportRow: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
 	var body: some View {
-		HStack(spacing: 18) {
-			FRAppIconView(app: displayApp, size: 50, remoteIconURL: retainedIconURL ?? entry.download?.sourceProvenance?.sourceAppIconURL, usesDefaultApp: false)
+		HStack(spacing: NBRowMetrics.contentSpacing) {
+			FRAppIconView(app: displayApp, size: 50, remoteIconURL: retainedIconURL ?? entry.download?.sourceProvenance?.sourceAppIconURL, usesDefaultApp: false, retainsPreviousImage: true)
 				.overlay(alignment: .bottomTrailing) {
 					if displayApp?.isSigned == true {
 						Circle()
@@ -304,7 +334,6 @@ private struct UnifiedImportRow: View {
 				}
 			UnifiedImportMetadata(entry: entry, model: activeModel)
 			UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller)
-				.transition(.opacity)
 		}
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
@@ -405,26 +434,26 @@ struct UnifiedImportActions: View {
 		removalAction()
 	}
 
-	// A destructive swipe optimistically removes the cell. Canceling work on a
-	// stored artifact keeps that row, so only actual removals use that swipe role.
+	// The model owns row removal. Native destructive swipe roles would also
+	// optimistically remove the cell before asynchronous cleanup commits.
 	@ViewBuilder private func removalAction(forSwipe: Bool = false) -> some View {
 		if let request = entry.operation {
 			let isCurrent = installations.currentRequest?.id == request.id
 			let completed = isCurrent && installations.viewModel?.isCompleted == true
-			Button(completed ? .localized("Dismiss") : .localized("Cancel"), systemImage: "xmark", role: forSwipe && !entry.id.hasPrefix("operation:") ? nil : .destructive) {
+			Button(completed ? .localized("Dismiss") : .localized("Cancel"), systemImage: "xmark", role: forSwipe ? nil : .destructive) {
 				installations.cancelRequest(id: request.id)
 			}
 			.tint(.red)
 			.disabled(isCurrent && installations.isFinishingInstallation)
 		} else if let download = entry.download {
-			Button(.localized("Cancel"), systemImage: "xmark", role: .destructive) {
+			Button(.localized("Cancel"), systemImage: "xmark", role: forSwipe ? nil : .destructive) {
 				controller.cancelDownload(download, rowID: entry.id)
-			}
+			}.tint(.red).disabled(controller.cancellingRows.contains(entry.id))
 		} else if let export = entry.export {
-			Button(.localized("Cancel"), systemImage: "xmark", role: forSwipe && entry.app != nil ? nil : .destructive) { ExportManager.shared.cancel(export) }
+			Button(.localized("Cancel"), systemImage: "xmark", role: forSwipe ? nil : .destructive) { ExportManager.shared.cancel(export) }
 				.tint(.red)
 		} else {
-			Button(.localized("Delete"), systemImage: "trash", role: .destructive) { controller.delete([entry]) }.disabled(protected)
+			Button(.localized("Delete"), systemImage: "trash", role: forSwipe ? nil : .destructive) { controller.delete([entry]) }.tint(.red).disabled(protected)
 		}
 	}
 }
@@ -544,7 +573,8 @@ private struct UnifiedImportMetadata: View {
 			animatesStatus: true,
 			thirdLineStatus: showsTaskStatus ? status.text : nil,
 			thirdLineAnimationKey: numericProgressPhase ?? status.text,
-			showsNumericProgress: numericProgressPhase != nil
+			showsNumericProgress: numericProgressPhase != nil,
+			crossfadesStatus: true
 		)
 		.onTapGesture { if failureDetails != nil { showsErrorDetails = true } }
 		.alert(String.localized("Error Details"), isPresented: $showsErrorDetails) {
@@ -578,7 +608,7 @@ private struct UnifiedImportAccessory: View {
 
 	var body: some View {
 		ZStack(alignment: .trailing) {
-			Group {
+			VStack(spacing: 0) {
 			if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
 				if let model = model {
 					if case .broken = model.status {
@@ -605,9 +635,12 @@ private struct UnifiedImportAccessory: View {
 				.buttonStyle(.borderless)
 			}
 		}
-			.transition(.opacity)
+			.id(stage)
+			.transition(reduceMotion ? .identity : .opacity)
 		}
-		.animation(reduceMotion ? nil : .smooth(duration: 0.25), value: stage)
+		.tint(Color.accentColor)
+		.foregroundStyle(Color.accentColor)
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stage)
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
 		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
 	}

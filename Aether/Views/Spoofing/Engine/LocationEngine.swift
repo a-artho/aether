@@ -3,6 +3,8 @@ import IDevice
 import IDeviceSwift
 
 enum LocationEngineError: LocalizedError {
+    case cancelled
+    case cancelledAfterWrite
     case invalidIP
     case pairingRead(String?)
     case tunnelCreate(String?)
@@ -14,11 +16,14 @@ enum LocationEngineError: LocalizedError {
 
     var mayHaveChangedLocation: Bool {
         if case .locationSet = self { return true }
+        if case .cancelledAfterWrite = self { return true }
         return false
     }
 
     var errorDescription: String? {
         switch self {
+        case .cancelled: return "Location update cancelled."
+        case .cancelledAfterWrite: return "Location update cancelled; the simulated location could not be confirmed."
         case .invalidIP: return "The device tunnel address is invalid."
         case .pairingRead(let detail): return Self.describe("Could not read the RPPairing file.", detail)
         case .tunnelCreate(let detail): return Self.describe("Could not open the developer tunnel.", detail)
@@ -62,6 +67,13 @@ enum LocationEngine {
     }
 }
 
+private final class LocationCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
+}
+
 // Every native handle is accessed exclusively on this serial queue.
 private final class NativeLocationSession: @unchecked Sendable {
 	private let queue = DispatchQueue(label: "aether.spoofing.location", qos: .userInitiated)
@@ -70,6 +82,19 @@ private final class NativeLocationSession: @unchecked Sendable {
     private var handshake: OpaquePointer?
     private var remoteServer: OpaquePointer?
     private var locationSimulation: OpaquePointer?
+    private struct Identity: Equatable {
+        let pairingPath: String
+        let deviceIP: String
+        let modification: Date?
+        let size: UInt64?
+        init(path: String, ip: String) {
+            pairingPath = path; deviceIP = ip
+            let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+            modification = attributes?[.modificationDate] as? Date
+            size = attributes?[.size] as? UInt64
+        }
+    }
+    private var identity: Identity?
 
     func set(
         latitude: Double,
@@ -78,18 +103,18 @@ private final class NativeLocationSession: @unchecked Sendable {
         deviceIP: String,
         progress: @escaping @Sendable (LocationConnectionStage) -> Void = { _ in }
     ) async -> Result<Void, LocationEngineError> {
-        await withCheckedContinuation { continuation in
-            queue.async { [self] in
-                let result = setLocked(
-                    latitude: latitude,
-                    longitude: longitude,
-                    pairingPath: pairingPath,
-                    deviceIP: deviceIP,
-                    progress: progress
-                )
-                continuation.resume(returning: result)
+        let cancellation = LocationCancellation()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                queue.async { [self] in
+                    guard !cancellation.isCancelled else {
+                        continuation.resume(returning: .failure(.cancelled)); return
+                    }
+                    continuation.resume(returning: setLocked(latitude: latitude, longitude: longitude,
+                        pairingPath: pairingPath, deviceIP: deviceIP, progress: progress, cancellation: cancellation))
+                }
             }
-        }
+        } onCancel: { cancellation.cancel() }
     }
 
     func clear(
@@ -109,6 +134,7 @@ private final class NativeLocationSession: @unchecked Sendable {
     }
 
     private func cleanup() {
+        identity = nil
         if let locationSimulation {
             location_simulation_free(locationSimulation)
             self.locationSimulation = nil
@@ -132,11 +158,21 @@ private final class NativeLocationSession: @unchecked Sendable {
         longitude: Double,
         pairingPath: String,
         deviceIP: String,
-        progress: @Sendable (LocationConnectionStage) -> Void
+        progress: @Sendable (LocationConnectionStage) -> Void,
+        cancellation: LocationCancellation
     ) -> Result<Void, LocationEngineError> {
+        let nextIdentity = Identity(path: pairingPath, ip: deviceIP)
+        if identity != nextIdentity { cleanup() }
+        guard !cancellation.isCancelled else { return .failure(.cancelled) }
+        var attemptedWrite = false
         if let locationSimulation {
+            attemptedWrite = true
             progress(.settingLocation)
             if let err = location_simulation_set(locationSimulation, latitude, longitude) {
+                let detail = ffiErrorDetail(err)
+                Task { @MainActor in
+                    DebugLogManager.shared.log("Cached location session failed: \(detail)", category: "Spoofing", level: .warning)
+                }
                 idevice_error_free(err)
                 cleanup()
             } else {
@@ -144,11 +180,22 @@ private final class NativeLocationSession: @unchecked Sendable {
             }
         }
 
+        guard !cancellation.isCancelled else {
+            return .failure(attemptedWrite ? .cancelledAfterWrite : .cancelled)
+        }
         switch openSessionLocked(pairingPath: pairingPath, deviceIP: deviceIP, progress: progress) {
-        case .failure(let error): return .failure(error)
+        case .failure(let error):
+            // A failed earlier write may have taken effect despite losing its reply.
+            if attemptedWrite { return .failure(.locationSet(error.localizedDescription)) }
+            return .failure(error)
         case .success: break
         }
 
+        guard !cancellation.isCancelled else {
+            cleanup()
+            return .failure(attemptedWrite ? .cancelledAfterWrite : .cancelled)
+        }
+        identity = nextIdentity
         progress(.settingLocation)
         if let setError = location_simulation_set(locationSimulation, latitude, longitude) {
             let detail = ffiErrorDetail(setError)
@@ -162,7 +209,8 @@ private final class NativeLocationSession: @unchecked Sendable {
     private func openSessionLocked(
         pairingPath: String,
         deviceIP: String,
-        progress: @Sendable (LocationConnectionStage) -> Void
+        progress: @Sendable (LocationConnectionStage) -> Void,
+        fastDiscovery: Bool = true
     ) -> Result<Void, LocationEngineError> {
         var address = sockaddr_in()
         address.sin_family = sa_family_t(AF_INET)
@@ -179,7 +227,7 @@ private final class NativeLocationSession: @unchecked Sendable {
         defer { rp_pairing_file_free(pairingHandle) }
 
 		progress(.findingService)
-		var ports = RSDPortDiscovery.resolvePorts()
+		var ports = RSDPortDiscovery.resolvePorts(stopWhen: { fastDiscovery && !$0.isEmpty })
 		if !ports.contains(49152) { ports.append(49152) }
         var failures: [String] = []
         progress(.openingTunnel)
@@ -214,6 +262,10 @@ private final class NativeLocationSession: @unchecked Sendable {
         }
         guard adapter != nil, handshake != nil else {
             cleanup()
+            if fastDiscovery {
+                return openSessionLocked(pairingPath: pairingPath, deviceIP: deviceIP,
+                    progress: progress, fastDiscovery: false)
+            }
             let detail: String
             if let last = failures.last {
                 detail = "Tried ports \(ports.map { String($0) }.joined(separator: ", ")). Last error: \(last)"
@@ -244,6 +296,7 @@ private final class NativeLocationSession: @unchecked Sendable {
         deviceIP: String,
         verifyRemotely: Bool
     ) -> Result<Void, LocationEngineError> {
+        if identity != Identity(path: pairingPath, ip: deviceIP) { cleanup() }
         var firstFailure: String?
         if let locationSimulation {
             if let error = location_simulation_clear(locationSimulation) {

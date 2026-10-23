@@ -233,6 +233,11 @@ actor SourceAppListStore {
 	}
 
 	private func makeOrder(rows: [SourceAppRow], key: Key) -> Order {
+		if key.sort == "default" {
+			return Order(key: key, sections: rows.isEmpty ? [] : [
+				.init(title: "", indices: Array(rows.indices), date: nil)
+			])
+		}
 		let indices = rows.indices.sorted { left, right in
 			let l = rows[left], r = rows[right]
 			if key.sort == "latest" {

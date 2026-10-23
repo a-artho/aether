@@ -13,11 +13,13 @@ import UIKit
 // MARK: - Extension: View (Enil)
 extension SourceAppsView {
 	enum SortOption: String, CaseIterable {
+		case `default`
 		case name
 		case latest
 
 		var displayName: String {
 			switch self {
+			case .default: .localized("Default")
 			case .name: 	.localized("Name")
 			case .latest: 	.localized("Latest")
 			}
@@ -45,7 +47,7 @@ struct SourceAppsView: View {
 
 	private var _navigationTitle: String {
 		if object.count == 1 {
-			object[0].name ?? .localized("Unknown")
+			(object[0].name ?? .localized("Unknown")).repoDisplayName
 		} else {
 			.localized("%lld Sources", arguments: object.count)
 		}
@@ -147,25 +149,13 @@ struct SourceAppsView: View {
 
 	@ViewBuilder
 	private func _repoMenuActions() -> some View {
-			_sortActions()
-			if let _sourceContexts, _sourceContexts.count == 1 {
-				Section {
-					if let url = _sourceContexts[0].repository.website {
-						Button(.localized("Visit Website"), systemImage: "globe") { UIApplication.open(url) }
-					}
-					if let url = _sourceContexts[0].repository.patreonURL {
-						Button(.localized("Visit Patreon"), systemImage: "dollarsign.circle") { UIApplication.open(url) }
-					}
-					Button(.localized("Copy"), systemImage: "doc.on.doc") {
-						guard !object.isEmpty else {
-							UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("No sources to copy"))
-							return
-						}
-						UIPasteboard.general.string = object.compactMap { $0.sourceURL?.absoluteString }.joined(separator: "\n")
-						UIAlertController.showAlertWithOk(title: .localized("Success"), message: .localized("Sources copied to clipboard"))
-					}
-				}
+		_sortActions()
+		if let contexts = _sourceContexts, contexts.count == 1,
+			let url = contexts[0].repository.patreonURL {
+			Section {
+				Button(.localized("Visit Patreon"), systemImage: "dollarsign.circle") { UIApplication.open(url) }
 			}
+		}
 	}
 
 	private func _load() {

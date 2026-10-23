@@ -27,7 +27,7 @@ private struct SourceAppsSkeletonRow: View {
 	}
 	var body: some View {
 		VStack {
-			HStack(spacing: 18) {
+			HStack(spacing: NBRowMetrics.contentSpacing) {
 				AppIconSkeleton(size: 50, isLoading: false)
 				VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
 					Text("Application name").nbRowTitle().hidden()
@@ -39,7 +39,7 @@ private struct SourceAppsSkeletonRow: View {
 							.overlay(alignment: .leading) { skeletonBar(width: 175, height: 10) } }
 					}
 				}
-				.padding(.vertical, 2)
+				.padding(.vertical, NBRowMetrics.textVerticalPadding)
 				.frame(maxWidth: .infinity, alignment: .leading)
 				.foregroundStyle(.tertiary)
 				if showsDownloadButton {
@@ -250,6 +250,8 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 				cell.backgroundConfiguration = .listCell()
 				let showsDownload = self.showsDownloadButtons
 				cell.contentConfiguration = UIHostingConfiguration { SourceAppsSkeletonRow(showsDownloadButton: showsDownload) }
+					.margins(.horizontal, NBRowMetrics.horizontalInset)
+					.margins(.vertical, NBRowMetrics.verticalInset)
 				cell.isAccessibilityElement = false
 			} else if let row = self._displayed?.rows[id] ?? self._previousDisplay?.rows[id] {
 				self.configureVisibleCell(cell, row: row)
@@ -268,10 +270,12 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	}
 
 	private func showLoadingList() {
-		guard !_hasAppliedList, _loadingDeadline == nil else { return }
-		_loadingDeadline = .now + .milliseconds(300)
+		guard !_hasAppliedList else { return }
+		let title = sortOption == .default ? "" : String.localized("Today")
+		guard _loadingSections.first?.title != title else { return }
+		if _loadingDeadline == nil { _loadingDeadline = .now + .milliseconds(300) }
 		var loading = NSDiffableDataSourceSnapshot<String, SourceAppRowID>()
-		_loadingSections = [.init(title: .localized("Today"), rows: (0..<8).map {
+		_loadingSections = [.init(title: title, rows: (0..<8).map {
 			SourceAppRowID(source: Self.loadingSection, identity: "loading", occurrence: $0)
 		}, date: nil)]
 		for section in _loadingSections {
@@ -296,6 +300,8 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app, showSourceBadge: showBadge, showsDownloadButton: showDownload)
 				.tint(Color(hex: UserDefaults.standard.string(forKey: "Aether.userTintColor") ?? "#848ef9"))
 		}
+		.margins(.horizontal, NBRowMetrics.horizontalInset)
+		.margins(.vertical, NBRowMetrics.verticalInset)
 	}
 
 	// Update only visible controls; changing appearance must not rebuild the
@@ -313,6 +319,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		guard !isCatalogLoading || !sourceContexts.isEmpty else { return }
 		_generation += 1
 		let generation = _generation
+		if !_hasAppliedList { showLoadingList() }
 		let contexts = sourceContexts
 		let query = searchText
 		let sort = sortOption.rawValue
@@ -480,7 +487,17 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		)
 	}
 	
+	private func sectionTitle(at section: Int) -> String {
+		let sections = _hasAppliedList ? (_displayed?.sections ?? []) : _loadingSections
+		return sections.indices.contains(section) ? sections[section].title : ""
+	}
+
+	func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
+		sectionTitle(at: section).isEmpty ? .leastNormalMagnitude : UITableView.automaticDimension
+	}
+
 	func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+		guard !sectionTitle(at: section).isEmpty else { return nil }
 		guard let header = tableView.dequeueReusableHeaderFooterView(withIdentifier: "SectionHeader") else { return nil }
 		configureHeader(header, section: section)
 		return header

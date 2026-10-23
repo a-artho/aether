@@ -35,9 +35,11 @@ extension AppIconView {
 // MARK: - View
 struct AppIconView: View {
 	@Binding var currentIcon: String?
+	@State private var changingIcon = false
+	@State private var iconError: String?
 	
 	// dont translate
-	var sections: [String: [AltIcon]] = [
+	@MainActor private static let sections: [String: [AltIcon]] = [
 		"Main": [
 			AltIcon(displayName: "Aether", author: "Artho", key: nil),
 			AltIcon(displayName: "Aether Dark", author: "Artho", key: "AetherDark", previewImageName: "AetherDarkPreview"),
@@ -55,8 +57,8 @@ struct AppIconView: View {
 	// MARK: Body
 	var body: some View {
 		NBList(.localized("App Icon")) {
-			ForEach(sections.keys.sorted(), id: \.self) { section in
-				if let icons = sections[section] {
+			ForEach(Self.sections.keys.sorted(), id: \.self) { section in
+				if let icons = Self.sections[section] {
 					NBSection(section) {
 						ForEach(icons) { icon in
 							_icon(icon: icon)
@@ -65,6 +67,9 @@ struct AppIconView: View {
 				}
 			}
 		}
+		.alert(String.localized("Could Not Change Icon"), isPresented: Binding(get: { iconError != nil }, set: { if !$0 { iconError = nil } })) {
+			Button(String.localized("OK"), role: .cancel) {}
+		} message: { Text(iconError ?? "") }
 		.onAppear {
 			currentIcon = UIApplication.shared.alternateIconName
 		}
@@ -78,9 +83,16 @@ extension AppIconView {
 		icon: AppIconView.AltIcon
 	) -> some View {
 		Button {
+			guard !changingIcon else { return }
+			changingIcon = true
 			let selectedIcon = icon.key
 			UIApplication.shared.setAlternateIconName(selectedIcon) { error in
 				DispatchQueue.main.async {
+					changingIcon = false
+					if let error {
+						iconError = error.localizedDescription
+						DebugLogManager.shared.log("App icon change failed: \(error.localizedDescription)", category: "Appearance", level: .error)
+					}
 					// UIKit may not have refreshed alternateIconName when its completion
 					// runs. The successfully requested key is the source of truth here.
 					currentIcon = error == nil ? selectedIcon : UIApplication.shared.alternateIconName
@@ -101,6 +113,6 @@ extension AppIconView {
 					Image(systemName: "checkmark").bold()
 				}
 			}
-		}
+		}.disabled(changingIcon)
 	}
 }

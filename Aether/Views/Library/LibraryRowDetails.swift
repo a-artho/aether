@@ -13,6 +13,7 @@ struct LibraryRowDetails: View {
 	var thirdLineStatus: String? = nil
 	var thirdLineAnimationKey: String? = nil
 	var showsNumericProgress = false
+	var crossfadesStatus = false
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
@@ -28,20 +29,28 @@ struct LibraryRowDetails: View {
 				.foregroundStyle(isFailed ? Color.red : Color.secondary)
 				.lineLimit(isFailed ? 2 : 1)
 
-			if let text = thirdLineStatus ?? identifier, !text.isEmpty {
-				Text(text)
-					.font(.footnote)
-					.foregroundStyle(.secondary)
-					.lineLimit(thirdLineStatus != nil ? nil : 1)
-					.fixedSize(horizontal: false, vertical: thirdLineStatus != nil)
-					.allowsTightening(thirdLineStatus != nil)
-					.contentTransition(showsNumericProgress ? .identity : .interpolate)
-					.animation(animatesStatus && thirdLineStatus != nil && !reduceMotion ? .smooth(duration: 0.2) : nil,
-						value: thirdLineAnimationKey ?? thirdLineStatus)
+			ZStack(alignment: .leading) {
+				if let text = thirdLineStatus ?? identifier, !text.isEmpty {
+					Text(text)
+						.font(.footnote)
+						.foregroundStyle(.secondary)
+						.lineLimit(thirdLineStatus != nil ? nil : 1)
+						.fixedSize(horizontal: false, vertical: thirdLineStatus != nil)
+						.allowsTightening(thirdLineStatus != nil)
+						.contentTransition(showsNumericProgress || crossfadesStatus ? .identity : .interpolate)
+						.id(crossfadesStatus ? statusIdentity : "status")
+						.transition(crossfadesStatus && !reduceMotion ? .opacity : .identity)
+				}
 			}
+			.animation(animatesStatus && !reduceMotion ? .easeInOut(duration: 0.2) : nil,
+				value: statusIdentity)
 		}
-		.padding(.vertical, 2)
+		.padding(.vertical, NBRowMetrics.textVerticalPadding)
 		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	private var statusIdentity: String {
+		thirdLineAnimationKey ?? thirdLineStatus ?? identifier ?? ""
 	}
 
 	private var _secondLine: String {

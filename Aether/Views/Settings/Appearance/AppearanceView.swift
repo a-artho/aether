@@ -13,7 +13,6 @@ import UIKit
 // dear god help me
 struct AppearanceView: View {
 	@AppStorage("Aether.repoDownloadIconSize") private var _repoDownloadIconSize: RepoDownloadIconSize = .large
-	@AppStorage("Aether.downloadIconStyle") private var _downloadIconStyle: DownloadIconStyle = .current
 	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .sources
 	@AppStorage("Aether.settingsRowIconStyle") private var _settingsRowIconStyle: SettingsRowIconStyle = .colored
 	@AppStorage("Aether.deviceControlsStyle") private var _deviceControlsStyle: DeviceControlsStyle = .standard
@@ -172,13 +171,6 @@ struct AppearanceView: View {
 				Toggle(isOn: $_showRepoDownloadButtons) {
 					SettingsRowLabel(.localized("Show Download Buttons"), systemImage: "icloud.and.arrow.down", backgroundColor: .blue)
 				}
-                Picker(selection: $_downloadIconStyle) {
-                    ForEach(DownloadIconStyle.allCases) { style in Text(style.label).tag(style) }
-                } label: {
-                    SettingsRowLabel(.localized("Download Icon"), systemImage: "arrow.down.circle", backgroundColor: .blue)
-                }
-                .pickerStyle(.menu)
-                .tint(.secondary)
                 Picker(selection: $_repoDownloadIconSize) {
                     ForEach(RepoDownloadIconSize.allCases) { size in Text(size.label).tag(size) }
                 } label: {

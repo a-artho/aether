@@ -21,6 +21,7 @@ struct TunnelView: View {
 	@State private var draftAllowIntermediate: Bool = true
 	@State private var validationError: String? = nil
 	@State private var isSaving: Bool = false
+	@State private var networkConfigurationExpanded = false
 
 	var body: some View {
 		NBList(.localized("Tunneling"), displayMode: .inline) {
@@ -62,22 +63,11 @@ struct TunnelView: View {
 	@ViewBuilder
 	private var _inAppControls: some View {
 		Section {
-			HStack(spacing: 12) {
-				SettingsIconBadge(systemImage: _embeddedStatusIcon, backgroundColor: _embeddedStatusColor)
-				VStack(alignment: .leading, spacing: 2) {
-					Text(.localized("Aether Tunnel"))
-						.foregroundColor(.primary)
-					Text(_embeddedStatusText)
-						.font(.footnote)
-						.foregroundColor(.secondary)
-				}
-			}
+			DisclosureGroup(isExpanded: $networkConfigurationExpanded) {
+				Text(.localized("Network Configuration"))
+					.font(.subheadline.weight(.semibold))
+					.foregroundStyle(.secondary)
 
-		}
-
-		_automationControls
-
-		Section {
 			HStack {
 				SettingsRowLabel(.localized("Tunnel IP"), systemImage: "network", backgroundColor: .blue)
 				Spacer()
@@ -133,11 +123,24 @@ struct TunnelView: View {
 				}
 				.disabled(!_isValid || isSaving || connection.state != .disconnected || connection.isUpdating)
 			}
-		} header: {
-			Text(.localized("Network Configuration"))
-		} footer: {
-			Text(.localized("When enabled, non-base CIDR addresses (e.g. 10.7.0.1/24) are accepted and normalized to their network base route. Adjust these addresses if the default 10.7.0.1 subnet conflicts with your Wi-Fi network."))
+				Text(.localized("When enabled, non-base CIDR addresses (e.g. 10.7.0.1/24) are accepted and normalized to their network base route. Adjust these addresses if the default 10.7.0.1 subnet conflicts with your Wi-Fi network."))
+					.font(.footnote)
+					.foregroundStyle(.secondary)
+			} label: {
+			HStack(spacing: 12) {
+				SettingsIconBadge(systemImage: _embeddedStatusIcon, backgroundColor: _embeddedStatusColor)
+				VStack(alignment: .leading, spacing: 2) {
+					Text(.localized("Aether Tunnel"))
+						.foregroundColor(.primary)
+					Text(_embeddedStatusText)
+						.font(.footnote)
+						.foregroundColor(.secondary)
+				}
+			}
+			}
 		}
+
+		_automationControls
 	}
 
 	@ViewBuilder

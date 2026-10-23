@@ -22,7 +22,7 @@ struct SourcesCellView: View {
 		
 		HStack(spacing: 12) {
 		FRIconCellView(
-			title: source.name ?? .localized("Unknown"),
+			title: (source.name ?? .localized("Unknown")).repoDisplayName,
 			subtitle: source.sourceURL?.absoluteString ?? "",
 			iconUrl: source.iconURL
 		)
@@ -61,5 +61,18 @@ extension SourcesCellView {
 		Button(.localized("Copy"), systemImage: "doc.on.clipboard") {
 			UIPasteboard.general.string = source.sourceURL?.absoluteString
 		}
+	}
+}
+
+/// Presentation only: catalog identity and persisted names remain intact.
+extension String {
+	var repoDisplayName: String {
+		let cleaned = replacingOccurrences(of: #"(?i)\b(?:repos?|repositories|repository|sources?)\b"#,
+			with: "", options: .regularExpression)
+			.replacingOccurrences(of: #"\(\s*[/|:–—-]*\s*\)|\[\s*[/|:–—-]*\s*\]|\{\s*[/|:–—-]*\s*\}"#,
+				with: "", options: .regularExpression)
+			.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+			.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "-–—|:•/\\")))
+		return cleaned.isEmpty ? self : cleaned
 	}
 }

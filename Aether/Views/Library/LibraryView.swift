@@ -100,6 +100,7 @@ struct LibraryView: View {
 									}
 									.buttonStyle(.plain)
 									.id(app.id)
+									.listRowInsets(NBRowMetrics.listInsets)
 								}
 							}
 							.listSectionSeparator(.hidden)
@@ -183,7 +184,6 @@ struct LibraryView: View {
 				.refreshable {
 					guard loadsApps else { return }
 					startLibraryRefresh()
-					await Task.yield()
 				}
 			}
 			.task {
@@ -198,7 +198,9 @@ struct LibraryView: View {
 			.modifier(SearchToolbarModifier(
 				text: $searchText, isPresented: $tabManager.isLibrarySearchPresented,
 				focus: $searchFocused, title: libraryTitle, width: toolbarWidth,
-				isScreenActive: isRootListVisible && appNavigationPath.isEmpty,
+				isScreenActive: isRootListVisible && appNavigationPath.isEmpty
+					&& imports.infoApp == nil && imports.signingApp == nil
+					&& !imports.importing && !imports.importingURL,
 				isTabRoot: true, hasTitleMenu: false,
 				secondaryAction: { imports.importing = true },
 				secondaryURLAction: { imports.urlText = ""; imports.importingURL = true }
@@ -347,7 +349,7 @@ struct LibraryView: View {
 	}
 
 	private func allAppsSummary(subtitle: String) -> some View {
-		HStack(spacing: 18) {
+		HStack(spacing: NBRowMetrics.contentSpacing) {
 			Image(systemName: "square.stack.3d.up.fill")
 				.font(.system(size: 30, weight: .regular))
 				.symbolRenderingMode(.hierarchical)
@@ -361,7 +363,7 @@ struct LibraryView: View {
 					.nbRowSubtitle()
 					.foregroundStyle(.secondary)
 			}
-			.padding(.vertical, 2)
+			.padding(.vertical, NBRowMetrics.textVerticalPadding)
 			.frame(maxWidth: .infinity, alignment: .leading)
 		}
 	}
@@ -538,7 +540,7 @@ struct InstalledAppCellView: View {
 	let loadsIcon: Bool
 
 	var body: some View {
-		HStack(spacing: 18) {
+		HStack(spacing: NBRowMetrics.contentSpacing) {
 			InstalledAppIconView(
 				bundleIdentifier: app.bundleIdentifier,
 				cacheVersion: app.iconCacheVersion,
