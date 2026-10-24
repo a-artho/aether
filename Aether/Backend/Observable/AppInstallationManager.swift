@@ -267,7 +267,6 @@ final class AppInstallationManager: ObservableObject {
 				message: .localized("Wait for this app to finish uninstalling before installing it."))
 			return false
 		}
-		if request.signing == nil { AppTabManager.shared.showInstallQueue() }
 		if currentRequest?.appKey == request.appKey, !hasCompletedSuccessfully {
 			if case .broken = viewModel?.status {
 				if request.signing != nil {
@@ -407,7 +406,6 @@ final class AppInstallationManager: ObservableObject {
 					self.activeApp = signedRequest.app
 					if signing.options.post_installAppAfterSigned {
 						self._persistInstallQueue()
-						AppTabManager.shared.showInstallQueue()
 						statusVM.status = .none
 						self._startTransportInstallation(signedRequest, context: context, statusVM: statusVM, generation: generation)
 					} else {

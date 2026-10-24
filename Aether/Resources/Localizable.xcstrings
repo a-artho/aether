@@ -151,12 +151,6 @@
     "Horizontal Inset" : {
       "extractionState" : "manual"
     },
-    "Hide Tab Labels" : {
-      "extractionState" : "manual"
-    },
-    "Show only icons in the bottom tab bar." : {
-      "extractionState" : "manual"
-    },
     "Connect Automatically" : {
       "extractionState" : "manual"
     },
@@ -18108,7 +18102,7 @@
     "See all sideloaded apps" : {
       "extractionState" : "manual"
     },
-    "Choose where search appears and whether tab labels are shown." : {
+    "Choose where search appears." : {
       "extractionState" : "manual"
     }
   },

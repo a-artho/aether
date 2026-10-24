@@ -10,7 +10,6 @@ def declaration(path, start):
     return text[p:e]
 locator = declaration('Aether/Backend/Observable/SourcesRouter.swift', 'struct AppLocator:')
 publish = declaration('Aether/Backend/Observable/DebugLogManager.swift', 'private func flushPendingEntries(').replace('private func', 'func', 1)
-focus = declaration('Aether/Views/Library/LibraryView.swift', '.task(id: installationFocusState)').replace('.task(id: installationFocusState)', 'func focus()', 1)
 audio = declaration('Aether/Utilities/BackgroundAudioManager.swift', 'final class BackgroundAudioManager')
 fixture = r'''
 import Foundation
@@ -68,42 +67,6 @@ final class AVAudioEngine {
 }
 struct Transaction { var disablesAnimations = false }
 func withTransaction(_ transaction: Transaction, _ body: () -> Void) { body() }
-final class FocusTab {
- enum Tab { case library, sources }
- var selectedTab = Tab.library
- var installationFocusRequest: UUID? = UUID()
- func consumeInstallationFocusRequest(_ request: UUID) {
-  if installationFocusRequest == request { installationFocusRequest = nil }
- }
-}
-final class FocusProxy {
- enum Anchor { case top }
- var targets = [UUID]()
- var rowTargets = [String]()
- func scrollTo(_ target: UUID, anchor: Anchor) { targets.append(target) }
- func scrollTo(_ target: String, anchor: Anchor) { rowTargets.append(target) }
-}
-final class FocusFixture {
- struct Card { let id: UUID }
- final class Imports {
-  struct Row { let id:String; let operation:Card? }
-  var rows:[Row]=[]
-  var visibleRows:[Row] { rows }
-  var infoApp:String?
- }
- let imports=Imports()
- var visibleUnifiedInstallRows=[UUID:Set<String>]()
- let tabManager = FocusTab()
- let scrollProxy = FocusProxy()
- var cards = [Card(id:UUID())]
- var appNavigationPath: [InstalledAppsRoute] = []
- var isSpoofingPresented = false
- var isRootListVisible = false
- func operationIsVisible(_ id:UUID)->Bool {
-  visibleUnifiedInstallRows[id]?.isEmpty == false
- }
- FOCUS
-}
 final class AuditFixTests: XCTestCase {
  override func setUp() {
   BackgroundAudioManager.shared.stopAll()
@@ -176,72 +139,6 @@ final class AuditFixTests: XCTestCase {
   BackgroundAudioManager.shared.stopAll()
   XCTAssertFalse(AVAudioSession.instance.isActive)
  }
- func testInstallFocusWaitsForRootAndTargetAppearance() {
-  let view = FocusFixture()
-  view.imports.rows=[.init(id:"app:original",operation:view.cards.first!)]
-  view.appNavigationPath = [.allApps]
-  view.focus()
-  XCTAssertTrue(view.appNavigationPath.isEmpty)
-  XCTAssertTrue(view.scrollProxy.targets.isEmpty)
-  XCTAssertNotNil(view.tabManager.installationFocusRequest)
-  view.focus()
-  XCTAssertTrue(view.scrollProxy.targets.isEmpty)
-  view.isRootListVisible = true
-  view.focus()
-  XCTAssertEqual(view.scrollProxy.rowTargets.last,"app:original")
-  XCTAssertNotNil(view.tabManager.installationFocusRequest)
-  view.visibleUnifiedInstallRows[view.cards.first!.id]=["app:original"]
-  view.focus()
-  XCTAssertNil(view.tabManager.installationFocusRequest)
- }
-
-
- func testInstallFocusDismissesInfoBeforeScrolling() {
-  let view=FocusFixture()
-  view.isRootListVisible=true
-  view.imports.infoApp="app-info"
-  view.imports.rows=[.init(id:"app:original",operation:view.cards.first!)]
-  view.focus()
-  XCTAssertNil(view.imports.infoApp)
-  XCTAssertTrue(view.scrollProxy.rowTargets.isEmpty)
-  XCTAssertNotNil(view.tabManager.installationFocusRequest)
-  view.focus()
-  XCTAssertEqual(view.scrollProxy.rowTargets,["app:original"])
- }
- func testManualTabNavigationPreservesCollectionAndScroll() {
-  let view = FocusFixture()
-  view.tabManager.installationFocusRequest = nil
-  view.appNavigationPath = [.allApps]
-  view.isRootListVisible = true
-  view.focus()
-  XCTAssertEqual(view.appNavigationPath,[.allApps])
-  XCTAssertTrue(view.scrollProxy.targets.isEmpty)
- }
- func testLibraryFocusUsesStableArtifactRowAndWaitsForAppearance() {
-  let view=FocusFixture()
-  view.isRootListVisible=true
-  let card=view.cards.first!
-  view.imports.rows=[.init(id:"app:original",operation:card)]
-  view.focus()
-  XCTAssertEqual(view.scrollProxy.rowTargets,["app:original"])
-  XCTAssertTrue(view.scrollProxy.targets.isEmpty)
-  XCTAssertNotNil(view.tabManager.installationFocusRequest)
-  view.visibleUnifiedInstallRows[card.id]=["app:original"]
-  view.focus()
-  XCTAssertNil(view.tabManager.installationFocusRequest)
- }
- func testInstallFocusDoesNotActInAnotherTabOrWithoutJobs() {
-  let view = FocusFixture()
-  view.tabManager.selectedTab = .sources
-  view.appNavigationPath = [.allApps]
-  view.focus()
-  XCTAssertEqual(view.appNavigationPath,[.allApps])
-  view.tabManager.selectedTab = .library
-  view.cards = []
-  view.focus()
-  XCTAssertEqual(view.appNavigationPath,[.allApps])
-  XCTAssertNotNil(view.tabManager.installationFocusRequest)
- }
  func testAudioStaysActiveUntilLastRequesterStops() {
   BackgroundAudioManager.shared.start("first")
   BackgroundAudioManager.shared.start("second")
@@ -253,7 +150,7 @@ final class AuditFixTests: XCTestCase {
   XCTAssertEqual(AVAudioEngine.nodeCount,0)
  }
 }
-'''.replace(' PUBLISH',publish).replace(' FOCUS',focus)
+'''.replace(' PUBLISH',publish)
 route = declaration('Aether/Views/Installed/AllInstalledAppsView.swift', 'enum InstalledAppsRoute:')
 delete = declaration('Aether/Views/Installed/AllInstalledAppsView.swift', 'private func delete(').replace('private func', 'func', 1).replace('DebugLogManager', 'AuditDebugLogManager')
 delete_checks = r'''

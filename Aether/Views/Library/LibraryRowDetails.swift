@@ -3,66 +3,45 @@ import NimbleViews
 
 /// Shared metadata hierarchy for Library apps and in-flight transfers.
 struct LibraryRowDetails: View {
-	@Environment(\.dynamicTypeSize) private var dynamicTypeSize
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let name: String
 	let version: String?
 	let identifier: String?
 	var secondaryStatus: String? = nil
 	var isFailed = false
+	var animatesStatus = false
 	var thirdLineStatus: String? = nil
 	var thirdLineAnimationKey: String? = nil
-	var reservesStatusLine = false
+	var showsNumericProgress = false
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
 			Text(name)
-				.contentTransition(.identity)
-				.transaction { $0.animation = nil }
 				.nbRowTitle()
 				.foregroundStyle(.primary)
 				.lineLimit(1)
 
-			Text(reservesStatusLine && _secondLine.isEmpty ? " " : _secondLine)
+			Text(_secondLine)
 				.nbRowSubtitle()
-				.contentTransition(.identity)
-				.transaction { $0.animation = nil }
+				.contentTransition(.interpolate)
+				.animation(animatesStatus && !reduceMotion ? .smooth(duration: 0.2) : nil, value: secondaryStatus)
 				.foregroundStyle(isFailed ? Color.red : Color.secondary)
 				.lineLimit(isFailed ? 2 : 1)
 
-			if reservesStatusLine || !thirdLineText.isEmpty {
-				StatusTransitionText(thirdLineText, phase: statusIdentity) { text in
-					thirdLineContent(text.isEmpty ? " " : text)
-				}
+			if let text = thirdLineStatus ?? identifier, !text.isEmpty {
+				Text(text)
 					.font(.footnote)
 					.foregroundStyle(.secondary)
-					.accessibilityHidden(thirdLineText.isEmpty)
+					.lineLimit(thirdLineStatus != nil ? nil : 1)
+					.fixedSize(horizontal: false, vertical: thirdLineStatus != nil)
+					.allowsTightening(thirdLineStatus != nil)
+					.contentTransition(showsNumericProgress ? .identity : .interpolate)
+					.animation(animatesStatus && thirdLineStatus != nil && !reduceMotion ? .smooth(duration: 0.2) : nil,
+						value: thirdLineAnimationKey ?? thirdLineStatus)
 			}
 		}
 		.padding(.vertical, NBRowMetrics.textVerticalPadding)
 		.frame(maxWidth: .infinity, alignment: .leading)
-	}
-
-	@ViewBuilder private func thirdLineContent(_ text: String) -> some View {
-		if reservesStatusLine && !dynamicTypeSize.isAccessibilitySize {
-			// Prefer one natural-size line; if it cannot fit, preserve the full
-			// message instead of truncating it or shrinking it to unreadable text.
-			ViewThatFits(in: .horizontal) {
-				Text(text).lineLimit(1).fixedSize(horizontal: true, vertical: true)
-				Text(text)
-					.lineLimit(thirdLineStatus == nil ? 1 : nil)
-					.fixedSize(horizontal: false, vertical: true)
-			}
-		} else {
-			Text(text)
-				.lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-				.fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
-		}
-	}
-
-	private var thirdLineText: String { thirdLineStatus ?? identifier ?? "" }
-
-	private var statusIdentity: String {
-		thirdLineAnimationKey ?? thirdLineStatus ?? identifier ?? ""
 	}
 
 	private var _secondLine: String {

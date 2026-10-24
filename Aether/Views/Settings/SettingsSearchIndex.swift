@@ -52,7 +52,7 @@ enum SettingsSearchIndex {
 			("All Repos Icon", "app store globe books collection symbol"),
 			("Row Icon Size", "apps repos artwork default medium large 50 54 58"),
 			("Horizontal Inset", "repo app rows details all apps margins padding default medium large"),
-			("Section Header Size", "heading font text size"), ("Muted Section Headers", "headings gray grey"), ("Hide Tab Labels", "tab bar icons hide labels"),
+			("Section Header Size", "heading font text size"), ("Muted Section Headers", "headings gray grey"),
 			("Launch Tab", "startup cold launch start sources library default tab"),
 			("Search Placement", "page title right navigation"),
 			("Left-Aligned Page Titles", "leading left navigation main tabs title alignment"), ("Hide Search Icon", "page title magnifying glass"), ("Dynamic Icons", "app light dark"),

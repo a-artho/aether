@@ -30,9 +30,6 @@ struct AppearanceView: View {
 	@AppStorage("Aether.shouldTintIcons")
 	private var _shouldTintIcons: Bool = false
 
-	@AppStorage("Aether.hideTabBarLabels")
-	private var _hideTabBarLabels: Bool = false
-
 	@AppStorage("Aether.searchPlacement")
 	private var _searchPlacement: SearchPlacement = .right
 	@AppStorage("Aether.leadingPageTitles") private var _leadingPageTitles = false
@@ -148,7 +145,9 @@ struct AppearanceView: View {
 				.tint(.secondary)
 				Picker(selection: $_allReposIcon) {
 					ForEach(AllReposIcon.allCases) { icon in
-						Label(icon.title, systemImage: icon.systemImage).tag(icon)
+						Image(systemName: icon.systemImage)
+							.accessibilityLabel(icon.title)
+							.tag(icon)
 					}
 				} label: {
 					SettingsRowLabel(.localized("All Repos Icon"), systemImage: "appstore", backgroundColor: .gray)
@@ -187,9 +186,6 @@ struct AppearanceView: View {
 				.pickerStyle(.menu)
 				.tint(.secondary)
 
-				Toggle(isOn: $_hideTabBarLabels) {
-					SettingsRowLabel(.localized("Hide Tab Labels"), systemImage: "rectangle.bottomthird.inset.filled", backgroundColor: .blue)
-				}
 				Picker(selection: $_searchPlacement) {
 					ForEach(SearchPlacement.allCases) { placement in
 						Text(placement.label).tag(placement)
@@ -208,7 +204,7 @@ struct AppearanceView: View {
 					}
 				}
 			} footer: {
-				Text(.localized("Choose where search appears and whether tab labels are shown."))
+				Text(.localized("Choose where search appears."))
 			}
 
 			NBSection(.localized("Library")) {
@@ -226,7 +222,9 @@ struct AppearanceView: View {
 				}
 				Picker(selection: $_downloadIconStyle) {
 					ForEach(DownloadIconStyle.allCases) { style in
-						Label(style.title, systemImage: style.systemImage).tag(style)
+						Image(systemName: style.systemImage)
+							.accessibilityLabel(style.title)
+							.tag(style)
 					}
 				} label: {
 					SettingsRowLabel(.localized("Download Icon"), systemImage: "arrow.down.circle", backgroundColor: .blue)

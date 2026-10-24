@@ -543,7 +543,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 				SourceAppDateChip(title: title)
 					.redacted(reason: .placeholder)
 					.modifier(SourceAppsSkeletonPulse()).accessibilityHidden(true)
-			}.margins(.vertical, 4)
+			}.margins(.vertical, 0)
 			return
 		}
 		guard let sections = _displayed?.sections, sections.indices.contains(section) else { return }
@@ -552,7 +552,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		header.contentConfiguration = UIHostingConfiguration {
 			SourceAppDateChip(title: title)
 		}
-		.margins(.vertical, 4)
+		.margins(.vertical, 0)
 	}
 
 	func tableView(_ tableView: UITableView, heightForFooterInSection section: Int) -> CGFloat {

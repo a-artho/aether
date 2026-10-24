@@ -17,7 +17,6 @@ final class SourcesViewModel: ObservableObject {
 	
 	private let _repositoryService: SourceRepositoryService
 	private let _defaults: UserDefaults
-	private var _hasStartedGlobalRefresh = false
 	private var _lastGlobalAttempt: Date?
 	private static let _lastUpdatedKey = "Aether.sourcesLastUpdated"
 	@Published private(set) var lastUpdated: Date?
@@ -44,7 +43,11 @@ final class SourcesViewModel: ObservableObject {
 			defer { requestedRefreshTask = nil; isRefreshRequested = false }
 			if !isFinished {
 				let previousAttempt = _lastGlobalAttempt
-				for await finished in $isFinished.values {
+				let (changes, continuation) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
+				let observation = $isFinished.sink { continuation.yield($0) }
+				defer { observation.cancel(); continuation.finish() }
+				for await finished in changes {
+					if Task.isCancelled { return }
 					if finished { break }
 				}
 				// Join an already-running global refresh instead of fetching it twice.
@@ -79,7 +82,6 @@ final class SourcesViewModel: ObservableObject {
 		sources.removeAll()
 		refreshErrors.removeAll()
 		_lastGlobalAttempt = nil
-		_hasStartedGlobalRefresh = false
 		lastUpdated = nil
 		_defaults.removeObject(forKey: Self._lastUpdatedKey)
 		catalogRevision += 1
@@ -158,7 +160,6 @@ final class SourcesViewModel: ObservableObject {
 		defer { isFinished = true }
 		await _fetchRequests(requests, refresh: refresh, batchSize: batchSize)
 		if refresh, !Task.isCancelled, generation == cacheResetGeneration {
-			_hasStartedGlobalRefresh = true
 			_lastGlobalAttempt = Date()
 			if requests.allSatisfy({ refreshErrors[$0.key] == nil }) {
 				lastUpdated = Date()
@@ -167,15 +168,15 @@ final class SourcesViewModel: ObservableObject {
 		}
 	}
 
-	/// Check globally once per session, then on foreground after fifteen minutes.
+	/// Automatic refreshes share a two-minute freshness window, including relaunches.
 	func refreshIfNeeded(_ sources: [AltSource], now: Date = .now) async {
 		guard !Task.isCancelled, isFinished, !isRefreshRequested, !sources.isEmpty else { return }
-		if !_hasStartedGlobalRefresh || now.timeIntervalSince(_lastGlobalAttempt ?? .distantPast) >= 15 * 60 {
+		if now.timeIntervalSince(_lastGlobalAttempt ?? lastUpdated ?? .distantPast) >= 2 * 60 {
 			// The page may disappear or become inactive while the request is in
 			// flight. Shared ownership keeps catalog and timestamp commits together.
 			await startRefresh(sources).value
 		} else {
-			await fetchSources(sources)
+			await ensureSourcesLoaded(sources)
 		}
 	}
 

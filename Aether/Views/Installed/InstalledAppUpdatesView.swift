@@ -120,7 +120,6 @@ struct InstalledAppUpdatesView: View {
 					}
 				} header: {
 					SourceAppDateChip(title: group.title)
-						.padding(.vertical, 4)
 						.textCase(nil)
 				}
 				.listSectionSeparator(.hidden)

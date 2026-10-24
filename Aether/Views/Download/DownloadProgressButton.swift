@@ -7,10 +7,7 @@ import SwiftUI
 
 struct DownloadProgressButton: View {
 	@ObservedObject var download: Download
-	var showsContent = true
 	@ObservedObject private var downloadManager = DownloadManager.shared
-
-	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	var body: some View {
 		Button(action: _performAction) {
@@ -26,7 +23,7 @@ struct DownloadProgressButton: View {
 							style: StrokeStyle(lineWidth: 2.3, lineCap: .round)
 						)
 						.rotationEffect(.degrees(-90))
-						.animation(reduceMotion ? nil : .smooth, value: download.overallProgress)
+						.animation(.smooth, value: download.overallProgress)
 				}
 
 				if download.isPreparingSource && !download.waitingForForeground {
@@ -35,13 +32,8 @@ struct DownloadProgressButton: View {
 					Image(systemName: _systemImage)
 						.foregroundStyle(.tint)
 						.font(.footnote.bold())
-						.contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-						.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: _systemImage)
 				}
 			}
-			.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: _showsProgress)
-			.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: download.isPreparingSource && !download.waitingForForeground)
-			.opacity(showsContent ? 1 : 0)
 			.frame(width: 31, height: 31)
 			.frame(width: 44, height: 44)
 			.contentShape(Rectangle())

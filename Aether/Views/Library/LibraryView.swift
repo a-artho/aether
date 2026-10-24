@@ -27,7 +27,6 @@ struct LibraryView: View {
 	@State private var appNavigationPath: [InstalledAppsRoute] = []
 	@State private var isRootListVisible = false
 	@State private var hasLoadedInitialContent = false
-	@State private var visibleUnifiedInstallRows: [UUID: Set<String>] = [:]
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
 
@@ -59,7 +58,6 @@ struct LibraryView: View {
 	}
 
 	var body: some View {
-		let cards = installationManager.installationCards.filter { matchesSearch($0.app.name, $0.app.identifier, $0.app.version) }
 		let sideloadedApps = store.apps.filter { matchesSearch($0.name, $0.bundleIdentifier, $0.version, $0.build) }
 		let showAllApps = installationMethod == 0
 			? matchesSearch(String.localized("All Apps"), String.localized("Requires Local mode"))
@@ -107,7 +105,7 @@ struct LibraryView: View {
 							compactDeviceStatus
 						case .imports:
 							NBSection(.localized("Imports")) {
-								UnifiedImportsRows(entries: importRows, controller: imports, visibleOperation: recordVisibleImportOperation)
+								UnifiedImportsRows(entries: importRows, controller: imports)
 							}
 							.listSectionSeparator(.hidden)
 							.id("libraryImports")
@@ -130,7 +128,7 @@ struct LibraryView: View {
 				.onDisappear { isRootListVisible = false }
 				.task(id: libraryFocusState) {
 					guard !Task.isCancelled, let request = tabManager.libraryFocusRequest,
-						tabManager.selectedTab == .library, tabManager.installationFocusRequest == nil else { return }
+						tabManager.selectedTab == .library else { return }
 					var transaction = Transaction()
 					transaction.disablesAnimations = true
 					if !appNavigationPath.isEmpty || imports.infoApp != nil {
@@ -145,30 +143,6 @@ struct LibraryView: View {
 						scrollProxy.scrollTo("libraryImports", anchor: .top)
 					}
 					tabManager.consumeLibraryFocusRequest(request)
-				}
-				.task(id: installationFocusState) {
-					guard !Task.isCancelled, let request = tabManager.installationFocusRequest,
-						tabManager.selectedTab == .library, let firstCard = cards.first else { return }
-					var transaction = Transaction()
-					transaction.disablesAnimations = true
-					if !appNavigationPath.isEmpty || imports.infoApp != nil {
-						withTransaction(transaction) {
-							appNavigationPath.removeAll()
-							imports.infoApp = nil
-						}
-						return
-					}
-					guard isRootListVisible else { return }
-					withTransaction(transaction) {
-						if let row = imports.visibleRows.first(where: { $0.operation?.id == firstCard.id }) {
-							scrollProxy.scrollTo(row.id, anchor: .top)
-						}
-					}
-					// Appearance confirms the lazy list has materialized the target.
-					// Keep the request pending while navigation/layout catches up.
-					if operationIsVisible(firstCard.id) {
-						tabManager.consumeInstallationFocusRequest(request)
-					}
 				}
 				.overlay {
 					if !searchText.isEmpty && sections.isEmpty {
@@ -203,9 +177,7 @@ struct LibraryView: View {
 			.onChange(of: appNavigationPath) { _, path in
 				if !path.isEmpty { searchFocused = false }
 			}
-			.onChange(of: tabManager.installationFocusRequest) { _, request in
-				if request != nil { resetSearch() }
-			}
+
 			.onChange(of: tabManager.libraryFocusRequest) { _, request in
 				if request != nil { resetSearch() }
 			}
@@ -233,17 +205,17 @@ struct LibraryView: View {
 	}
 
 	private var allAppsIsBusy: Bool {
-		isConnectingTunnel || cellularAssist.isBusy || isLoadingInstalledApps || updates.showsAppRefresh
+		isConnectingTunnel || cellularAssist.isBusy || isLoadingInstalledApps || updates.phase == .checking
 	}
 
 	private var allAppsSubtitle: String {
 		if isConnectingTunnel || cellularAssist.isBusy {
 			return .localized("Connecting Tunnel")
 		}
-		if isLoadingInstalledApps { return .localized("Loading Installed Apps") }
+		if isLoadingInstalledApps { return .localized("Checking for Updates") }
 		if !connection.isConnected { return .localized("Tunnel Unavailable") }
 		if store.errorMessage != nil { return .localized("Unable to Load Apps") }
-		if updates.showsAppRefresh { return .localized("Loading Installed Apps") }
+		if updates.phase == .checking { return .localized("Checking for Updates") }
 		if updates.noUpdatesUntil != nil { return .localized("No Updates Available") }
 		return .localized("See all sideloaded apps")
 	}
@@ -274,13 +246,10 @@ struct LibraryView: View {
 								.hidden().accessibilityHidden(true)
 							Text(store.apps.count, format: .number)
 								.foregroundStyle(.secondary)
-								.contentTransition(reduceMotion ? .identity : .opacity)
-								.animation(reduceMotion || allAppsIsBusy ? nil : .easeInOut(duration: 0.2), value: store.apps.count)
 								.opacity(allAppsIsBusy ? 0 : 1)
 								.accessibilityHidden(allAppsIsBusy)
 							if allAppsIsBusy {
 								ProgressView()
-									.transition(reduceMotion ? .identity : .opacity)
 							}
 						}
 						.font(.footnote)
@@ -296,11 +265,6 @@ struct LibraryView: View {
 		}
 	}
 
-	private var allAppsStatusSubtitles: [String] {
-		[.localized("Connecting Tunnel"), .localized("Loading Installed Apps"), .localized("No Updates Available"),
-		 .localized("See all sideloaded apps"), .localized("Tunnel Unavailable"), .localized("Unable to Load Apps")]
-	}
-
 	private func allAppsSummary(subtitle: String) -> some View {
 		HStack(spacing: NBRowMetrics.contentSpacing) {
 			OverviewRowIcon(kind: .apps)
@@ -308,21 +272,9 @@ struct LibraryView: View {
 				Text(String.localized("All Apps"))
 					.nbRowTitle()
 					.foregroundStyle(.primary)
-				ZStack(alignment: .topLeading) {
-					// Measure every local status using the actual width and font.
-					// Longer translations and accessibility text remain untruncated,
-					// while changing phases keeps the title and subtitle anchored.
-					if installationMethod != 0 {
-						ForEach(Array(allAppsStatusSubtitles.enumerated()), id: \.offset) { _, text in
-							Text(text).hidden().accessibilityHidden(true)
-						}
-					}
-					StatusTransitionText(subtitle, phase: subtitle, duration: 0.45) { Text($0) }
-				}
-				.nbRowSubtitle()
-				.foregroundStyle(.secondary)
-				.fixedSize(horizontal: false, vertical: true)
-				.frame(maxWidth: .infinity, alignment: .leading)
+				Text(subtitle)
+					.nbRowSubtitle()
+					.foregroundStyle(.secondary)
 			}
 			.padding(.vertical, NBRowMetrics.textVerticalPadding)
 			.frame(maxWidth: .infinity, alignment: .leading)
@@ -340,30 +292,10 @@ struct LibraryView: View {
 		tabManager.isLibrarySearchPresented = false
 	}
 
-	private var installationFocusState: [String] {
-		[searchText, String(tabManager.isLibrarySearchPresented), tabManager.installationFocusRequest?.uuidString ?? "",
-		 tabManager.selectedTab.rawValue,
-		 installationManager.installationCards.first?.id.uuidString ?? "",
-		 String(describing: appNavigationPath),
-		 imports.infoApp?.id ?? "", String(isRootListVisible), String(imports.revision),
-		 String(installationManager.installationCards.first.map { operationIsVisible($0.id) } ?? false)]
-	}
-
 	private var libraryFocusState: [String] {
 		[searchText, String(tabManager.isLibrarySearchPresented), tabManager.libraryFocusRequest?.uuidString ?? "", tabManager.selectedTab.rawValue,
 		 String(describing: appNavigationPath), String(isRootListVisible), imports.infoApp?.id ?? "", String(imports.revision)]
 	}
-
-	private func recordVisibleImportOperation(_ id: UUID, _ rowID: String, _ visible: Bool) {
-		if visible { visibleUnifiedInstallRows[id, default: []].insert(rowID) }
-		else { visibleUnifiedInstallRows[id]?.remove(rowID) }
-		if visibleUnifiedInstallRows[id]?.isEmpty == true { visibleUnifiedInstallRows.removeValue(forKey: id) }
-	}
-
-	private func operationIsVisible(_ id: UUID) -> Bool {
-		visibleUnifiedInstallRows[id]?.isEmpty == false
-	}
-
 
 	private var libraryTitle: String {
 		.localized("Library")

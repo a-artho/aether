@@ -210,7 +210,6 @@ struct FRAppIconView: View {
 			if let image = loader.image {
 				Image(uiImage: image)
 					.appIconStyle(size: size)
-					.id(ObjectIdentifier(image))
 					.transition(.opacity)
 			} else if let remoteIconURL {
 				LazyImage(url: remoteIconURL) { state in
@@ -228,7 +227,9 @@ struct FRAppIconView: View {
 			}
 		}
 		.frame(width: size, height: size)
-		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: loader.image.map { ObjectIdentifier($0) })
+		// Fade the initial placeholder handoff, not each new render of an
+		// already-visible icon when signing changes the artifact's identity.
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: loader.image != nil)
 		.task(id: "\(app?.uuid ?? "")|\(app?.isSigned ?? false)|\(appearance.rawValue)\(selectedColorHex)\(shouldTintIcons)\(shouldChangeIconsBasedOffStyle)\(displayScale)") {
 			await _load()
 		}

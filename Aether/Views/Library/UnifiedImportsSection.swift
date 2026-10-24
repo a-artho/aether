@@ -302,18 +302,11 @@ struct UnifiedImportsDataSource: ViewModifier {
 struct UnifiedImportsRows: View {
 	let entries: [UnifiedImportEntry]
 	let controller: UnifiedImportsController
-	var visibleOperation: (UUID, String, Bool) -> Void
 
 	var body: some View {
 		ForEach(entries) { entry in
 			UnifiedImportRow(entry: entry, controller: controller)
 				.id(entry.id)
-				.onChange(of: entry.operation?.id, initial: true) { old, new in
-					if let old { visibleOperation(old, entry.id, false) }
-					if let new { visibleOperation(new, entry.id, true) }
-				}
-				.onAppear { if let operation = entry.operation { visibleOperation(operation.id, entry.id, true) } }
-				.onDisappear { if let operation = entry.operation { visibleOperation(operation.id, entry.id, false) } }
 		}
 	}
 }
@@ -329,28 +322,31 @@ private struct UnifiedImportRow: View {
 	@ObservedObject private var installations = AppInstallationManager.shared
 	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
 	@State private var retainedIconURL: URL?
-	@StateObject private var accessoryPresentation = ImportAccessoryPresentation()
-	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
 	var body: some View {
 		HStack(spacing: NBRowMetrics.contentSpacing) {
 			FRAppIconView(app: displayApp, size: rowIconSize.points, remoteIconURL: retainedIconURL ?? entry.download?.sourceProvenance?.sourceAppIconURL, usesDefaultApp: false, retainsPreviousImage: true)
 				.overlay(alignment: .bottomTrailing) {
-					if displayApp?.isSigned == true {
-						Circle()
-							.fill(.green)
-							.frame(width: 9, height: 9)
-							.padding(2)
-							.background(Color(uiColor: .systemBackground), in: .circle)
-							.offset(x: 3, y: 3)
-							.accessibilityLabel(String.localized("Signed"))
-							.transition(reduceMotion ? .identity : .opacity)
+					if let app = displayApp, app.isSigned || entry.download == nil {
+						if let signed = signedArtifact {
+							SignedImportBadge(app: signed)
+						} else {
+							ImportIconBadge(color: app.isSigned ? .green : .orange,
+								label: app.isSigned ? .localized("Signed") : .localized("Unsigned"))
+						}
 					}
 				}
-				.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: displayApp?.isSigned == true)
-			UnifiedImportMetadata(entry: entry, model: activeModel, presentation: accessoryPresentation)
-			UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller, presentation: accessoryPresentation)
+				.transition(.identity)
+				.transaction { transaction in
+					// Artifact handoffs and certificate updates change the visible
+					// content in place, never fade the icon or its status badge.
+					transaction.animation = nil
+					transaction.disablesAnimations = true
+				}
+			UnifiedImportMetadata(entry: entry, model: activeModel)
+			UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller)
+				.transition(.opacity)
 		}
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
@@ -384,6 +380,11 @@ private struct UnifiedImportRow: View {
 		})
 	}
 
+	private var signedArtifact: Signed? {
+		guard let app = displayApp, app.isSigned else { return nil }
+		return (app as? Signed) ?? app.uuid.flatMap { Storage.shared.signedApp(uuid: $0) }
+	}
+
 	private var displayApp: AppInfoPresentable? {
 		entry.app ?? entry.operation?.app ?? entry.export?.app
 	}
@@ -393,6 +394,49 @@ private struct UnifiedImportRow: View {
 	}
 
 
+}
+
+/// Observe the relationship and the certificate separately so revocation updates
+/// repaint only the badge, without rebuilding the row or reloading its icon.
+private struct SignedImportBadge: View {
+	@ObservedObject var app: Signed
+
+	var body: some View {
+		if let certificate = app.certificate {
+			SignedCertificateBadge(certificate: certificate)
+		} else {
+			ImportIconBadge(color: .green, label: .localized("Signed"))
+		}
+	}
+}
+
+private struct SignedCertificateBadge: View {
+	@ObservedObject var certificate: CertificatePair
+
+	var body: some View {
+		// Redraw at expiration rather than polling every visible signed row.
+		TimelineView(.explicit(([Date.now] + (certificate.expiration.map { [$0] } ?? [])).sorted())) { context in
+			let expired = certificate.expiration.map { $0 <= context.date } ?? false
+			let revoked = certificate.revoked
+			ImportIconBadge(color: expired || revoked ? .red : .green,
+				label: revoked ? .localized("Revoked") : expired ? .localized("Expired") : .localized("Signed"))
+		}
+	}
+}
+
+private struct ImportIconBadge: View {
+	let color: Color
+	let label: String
+
+	var body: some View {
+		Circle()
+			.fill(color)
+			.frame(width: 9, height: 9)
+			.padding(2)
+			.background(Color(uiColor: .systemBackground), in: .circle)
+			.offset(x: 3, y: 3)
+			.accessibilityLabel(label)
+	}
 }
 
 /// Shared actions for each row's context menu and native swipe.
@@ -475,29 +519,6 @@ struct UnifiedImportActions: View {
 	}
 }
 
-/// Presentation-only lifetime shared by the status and accessory. Actual work,
-/// queue advancement and cancellation never wait for the visual minimum.
-@MainActor
-private final class ImportAccessoryPresentation: ObservableObject {
-    @Published private(set) var holdingCompletion = false
-    private var started: ContinuousClock.Instant?
-
-    func begin() {
-        guard !holdingCompletion else { return }
-        started = .now
-        holdingCompletion = true
-    }
-
-    func finish() async {
-        guard let started else { return }
-        do { try await Task.sleep(until: started.advanced(by: .milliseconds(600)), clock: .continuous) }
-        catch { return }
-        guard !Task.isCancelled else { return }
-        self.started = nil
-        holdingCompletion = false
-    }
-}
-
 /// Only metadata and controls observe frequent progress changes. The row and icon
 /// keep their SwiftUI identity while the backing artifact changes lifecycle stage.
 @MainActor
@@ -531,16 +552,12 @@ private extension UnifiedImportEntry {
 private struct UnifiedImportMetadata: View {
 	let entry: UnifiedImportEntry
 	let model: InstallerStatusViewModel?
-	@ObservedObject var presentation: ImportAccessoryPresentation
-	@State private var retainedStatus: String?
-	@State private var retainedPhase: String?
 	@StateObject private var activity: UnifiedImportActivity
 	@State private var showsErrorDetails = false
 
-	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?, presentation: ImportAccessoryPresentation) {
+	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?) {
 		self.entry = entry
 		self.model = model
-		self.presentation = presentation
 		_activity = StateObject(wrappedValue: UnifiedImportActivity(entry: entry, model: model))
 	}
 
@@ -595,7 +612,7 @@ private struct UnifiedImportMetadata: View {
 			switch download.state {
 			case .downloading: return "downloading"
 			case .processing where !download.waitingForForeground:
-					return download.isPreparingSource ? "download-preparing" : "download-processing"
+				return download.isPreparingSource ? "download-preparing" : "download-processing"
 			default: return nil
 			}
 		}
@@ -609,25 +626,18 @@ private struct UnifiedImportMetadata: View {
 
 	var body: some View {
 		let status = status
-        let holdsStatus = !showsTaskStatus && presentation.holdingCompletion
-        let taskStatus = showsTaskStatus || holdsStatus
-        LibraryRowDetails(
+		LibraryRowDetails(
 			name: entry.displayName,
 			version: app?.version ?? entry.download?.sourceProvenance?.sourceAppVersion,
 			identifier: app?.identifier ?? entry.download?.sourceProvenance?.sourceAppIdentifier,
-			secondaryStatus: taskStatus ? nil : status.text,
-			isFailed: !taskStatus && status.failed,
-			thirdLineStatus: holdsStatus ? retainedStatus : (showsTaskStatus ? status.text : nil),
-			thirdLineAnimationKey: holdsStatus ? retainedPhase : (numericProgressPhase ?? status.text),
-			reservesStatusLine: true
+			secondaryStatus: showsTaskStatus ? nil : status.text,
+			isFailed: !showsTaskStatus && status.failed,
+			animatesStatus: true,
+			thirdLineStatus: showsTaskStatus ? status.text : nil,
+			thirdLineAnimationKey: numericProgressPhase ?? status.text,
+			showsNumericProgress: numericProgressPhase != nil
 		)
-        .onChange(of: status.text, initial: true) { _, text in
-            if showsTaskStatus { retainedStatus = text; retainedPhase = numericProgressPhase ?? text }
-        }
-        .onChange(of: numericProgressPhase) { _, phase in
-            if showsTaskStatus { retainedPhase = phase ?? status.text }
-        }
-        .onTapGesture { if failureDetails != nil { showsErrorDetails = true } }
+		.onTapGesture { if failureDetails != nil { showsErrorDetails = true } }
 		.alert(String.localized("Error Details"), isPresented: $showsErrorDetails) {
 			Button(String.localized("OK"), role: .cancel) {}
 		} message: { Text(failureDetails ?? "") }
@@ -636,289 +646,61 @@ private struct UnifiedImportMetadata: View {
 	}
 }
 
-/// Reserve enough room for every ready action, including localized labels.
-/// Only the first subview is visible; the others supply intrinsic measurements.
-private struct ImportAccessoryLayout: Layout {
-	func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-		let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
-		return CGSize(width: max(44, sizes.map(\.width).max() ?? 44),
-			height: max(44, sizes.map(\.height).max() ?? 44))
-	}
-
-	func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-		for view in subviews {
-			let size = view.sizeThatFits(.unspecified)
-			view.place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing,
-				proposal: ProposedViewSize(width: size.width, height: size.height))
-		}
-	}
-}
-
-/// A single shape owns the progress track and the pill throughout the morph.
-private struct ImportAccessorySurface: Shape {
- var expansion: CGFloat
- var animatableData: CGFloat { get { expansion } set { expansion = newValue } }
- func path(in rect: CGRect) -> Path {
-  let width = 35 + (rect.width - 35) * expansion
-  let height: CGFloat = 35
-  let right = rect.maxX - 4.5 * (1 - expansion)
-  let left = right - width
-  let radius = height / 2
-  let top = rect.midY - radius
-  let bottom = rect.midY + radius
-  var path = Path()
-  path.move(to: CGPoint(x: (left + right) / 2, y: top))
-  path.addLine(to: CGPoint(x: right - radius, y: top))
-  path.addArc(center: CGPoint(x: right - radius, y: rect.midY), radius: radius,
-              startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: false)
-  path.addLine(to: CGPoint(x: left + radius, y: bottom))
-  path.addArc(center: CGPoint(x: left + radius, y: rect.midY), radius: radius,
-              startAngle: .degrees(90), endAngle: .degrees(270), clockwise: false)
-  path.closeSubpath()
-  return path
- }
-}
-
-
-/// A value snapshot keeps the departing progress visual alive without retaining
-/// a completed download, export or installation model.
-private struct ImportAccessoryProgress: Equatable {
-	var amount: Double?
-	var symbol: String
-	/// A new operation starts with its own icon; symbol replacement is reserved
-	/// for phase changes within that same operation.
-	var animationGroup: String
-	var failed = false
-	var preparing = false
-}
-
-/// Geometry and content derive from the same spring sample, not separate fades.
-private struct ImportAccessoryMorph: AnimatableModifier {
- var expansion: CGFloat
- let progress: ImportAccessoryProgress?
- let reduceMotion: Bool
- let symbolAnimationGroup: String?
- var animatableData: CGFloat { get { expansion } set { expansion = newValue } }
- private func ramp(_ start: CGFloat, _ end: CGFloat) -> Double {
-  let t = min(1, max(0, (expansion - start) / (end - start)))
-  return Double(t * t * (3 - 2 * t))
- }
- func body(content: Content) -> some View {
-  let geometry = min(1, max(0, expansion))
-  let tint: Color = progress?.failed == true ? .red : .accentColor
-  content
-   // The surface is anchored on the right. Keep its label centered on the
-   // current surface, not the destination capsule, throughout the reveal.
-   .visualEffect { effect, bounds in
-    effect.offset(x: (1 - geometry) * (bounds.size.width / 2 - 22))
-   }
-   .opacity(ramp(0.62, 1))
-   .background {
-    ImportAccessorySurface(expansion: geometry).fill(Color(uiColor: .quaternarySystemFill).opacity(ramp(0.15, 0.9)))
-   }
-   .overlay {
-    GeometryReader { bounds in
-     if let progress {
-      ZStack {
-       Circle().inset(by: 1).stroke(tint.opacity(0.12), lineWidth: 2)
-       if let amount = progress.amount {
-        Circle().inset(by: 1).trim(from: 0, to: min(1, max(0, amount)))
-         .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-         .rotationEffect(.degrees(-90))
-         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: amount)
-       }
-       if progress.preparing {
-        ProgressView().controlSize(.mini).tint(tint)
-         .frame(width: 35, height: 35, alignment: .center)
-       } else {
-        Image(systemName: progress.symbol)
-         .font(.system(size: 14, weight: .bold)).foregroundStyle(tint)
-         .frame(width: 35, height: 35, alignment: .center)
-         .contentTransition(reduceMotion || symbolAnimationGroup != progress.animationGroup
-            ? .identity : .symbolEffect(.replace))
-         .animation(reduceMotion || symbolAnimationGroup != progress.animationGroup
-            ? nil : .easeInOut(duration: 0.2), value: progress.symbol)
-       }
-      }
-      .frame(width: 35, height: 35)
-      .position(x: bounds.size.width - 4.5 * (1 - geometry)
-                - (35 + (bounds.size.width - 35) * geometry) / 2, y: bounds.size.height / 2)
-      .opacity(1 - ramp(0.12, 0.64))
-     }
-    }.allowsHitTesting(false).accessibilityHidden(true)
-   }
- }
-}
-
-
 private struct UnifiedImportAccessory: View {
 	let entry: UnifiedImportEntry
 	let model: InstallerStatusViewModel?
 	@ObservedObject var controller: UnifiedImportsController
 	@StateObject private var activity: UnifiedImportActivity
-	@State private var retainedProgress: ImportAccessoryProgress?
-	@State private var retainedReadyTitle: String?
-	@State private var symbolAnimationGroup: String?
-	@ObservedObject var presentation: ImportAccessoryPresentation
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?, controller: UnifiedImportsController, presentation: ImportAccessoryPresentation) {
+	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?, controller: UnifiedImportsController) {
 		self.entry = entry
 		self.model = model
 		self.controller = controller
-		self.presentation = presentation
 		_activity = StateObject(wrappedValue: UnifiedImportActivity(entry: entry, model: model))
-	}
-
-	private var actionTitle: String {
-		guard let app = entry.app, app.isSigned else { return .localized("Sign") }
-		return AppInstallationManager.shared.installActionTitle(for: app)
 	}
 
 	private var stage: String {
 		if let operation = entry.operation, !entry.signOnlyCompleted(model: model) { return operation.id.uuidString }
 		if let export = entry.export { return "export:" + export.id.uuidString }
 		if let download = entry.download { return "download:" + download.id }
-		return "ready"
-	}
-
-	private var isBusy: Bool { stage != "ready" }
-
-	private var showsProgress: Bool { isBusy || presentation.holdingCompletion }
-
-	private var morphAnimation: Animation? {
-		reduceMotion ? nil : .spring(duration: 0.7, bounce: 0)
+		return entry.app?.isSigned == true ? "signed" : "imported"
 	}
 
 	var body: some View {
-		ImportAccessoryLayout {
-			Button {
-				guard !showsProgress, let app = entry.app, !controller.isProtected(entry) else { return }
-				if app.isSigned {
-					if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
-				} else { controller.signingApp = AnyApp(base: app) }
-			} label: {
-				NBButton(showsProgress ? (retainedReadyTitle ?? actionTitle) : actionTitle, style: .text, showsBackground: false)
+		ZStack(alignment: .trailing) {
+			Group {
+			if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
+				if let model = model {
+					if case .broken = model.status {
+						Button { AppInstallationManager.shared.retryActiveInstall() } label: {
+							InstallationProgressRing(progress: nil, systemImage: "arrow.clockwise")
+						}.buttonStyle(.borderless).accessibilityLabel(String.localized("Retry"))
+					} else {
+						InstallationProgressRing(progress: progress(model), systemImage: model.statusImage)
+							.accessibilityLabel(model.statusLabel)
+							.accessibilityValue(Text(progress(model), format: .percent.precision(.fractionLength(0))))
+					}
+				} else { InstallationProgressRing(progress: nil, systemImage: "clock") }
+			} else if let export = entry.export { ExportProgressButton(export: export) }
+			else if let download = entry.download { DownloadProgressButton(download: download) }
+			else if let app = entry.app {
+				Button {
+					if app.isSigned {
+						if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
+					} else { controller.signingApp = AnyApp(base: app) }
+				} label: {
+				NBButton(app.isSigned ? AppInstallationManager.shared.installActionTitle(for: app) : .localized("Sign"), style: .text)
 					.foregroundStyle(Color.accentColor)
-					.fixedSize(horizontal: true, vertical: false)
-					.transaction { $0.animation = nil }
 			}
-			.buttonStyle(.borderless)
-			.disabled(showsProgress || controller.isProtected(entry))
-			.accessibilityHidden(showsProgress)
-			.modifier(ImportAccessoryMorph(expansion: showsProgress ? 0 : 1,
-				progress: progressPresentation ?? retainedProgress, reduceMotion: reduceMotion,
-				symbolAnimationGroup: symbolAnimationGroup))
-			.animation(morphAnimation, value: showsProgress)
-			ForEach(Array([String.localized("Sign"), String.localized("Install"), String.localized("Reinstall")].enumerated()), id: \.offset) { _, title in
-				NBButton(title, style: .text).hidden().accessibilityHidden(true)
+				.buttonStyle(.borderless)
 			}
 		}
-		.overlay(alignment: .trailing) {
-			ZStack {
-				// Existing controls retain their native actions and accessibility;
-				// the shared morph above owns all visible drawing.
-				progressControl
-			}
-				.allowsHitTesting(isBusy)
-				.accessibilityHidden(!isBusy)
+			.transition(.opacity)
 		}
-		.tint(Color.accentColor)
-		.foregroundStyle(Color.accentColor)
-        .onChange(of: isBusy, initial: true) { _, busy in
-            if busy { presentation.begin() }
-        }
-        .task(id: isBusy) {
-            guard !isBusy else { return }
-            await presentation.finish()
-        }
-        .onChange(of: showsProgress, initial: true) { _, busy in
-            if !busy { retainedReadyTitle = actionTitle }
-        }
-        .onChange(of: actionTitle) { _, title in
-            if !showsProgress { retainedReadyTitle = title }
-        }
-		.onChange(of: progressPresentation, initial: true) { _, presentation in
-			guard let presentation else { return }
-			// Do not animate a previous row phase out when a new operation begins.
-			// Keep the native symbol replacement for real phase changes inside the
-			// same install/download/export lifecycle.
-			if let previous = retainedProgress {
-				if previous.animationGroup != presentation.animationGroup {
-					symbolAnimationGroup = nil
-				} else if previous.symbol != presentation.symbol {
-					symbolAnimationGroup = presentation.animationGroup
-				}
-			} else {
-				symbolAnimationGroup = nil
-			}
-			retainedProgress = presentation
-		}
+		.animation(reduceMotion ? nil : .smooth(duration: 0.25), value: stage)
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
 		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
-	}
-
-	@ViewBuilder private var progressControl: some View {
-		if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
-			ZStack {
-				Color.clear.frame(width: 44, height: 44)
-					.accessibilityLabel(model?.statusLabel ?? String.localized("Queued"))
-					.accessibilityValue(model.map { Text(progress($0), format: .percent.precision(.fractionLength(0))) } ?? Text(""))
-					.accessibilityHidden(canRetry)
-				if canRetry {
-					Button { AppInstallationManager.shared.retryActiveInstall() } label: {
-						Color.clear.frame(width: 44, height: 44).contentShape(Rectangle())
-					}
-					.buttonStyle(.borderless)
-					.accessibilityLabel(String.localized("Retry"))
-				}
-			}
-		} else if let export = entry.export { ExportProgressButton(export: export, showsContent: false) }
-		else if let download = entry.download { DownloadProgressButton(download: download, showsContent: false) }
-	}
-
-	private var progressPresentation: ImportAccessoryProgress? {
-		guard isBusy else { return nil }
-		if let operation = entry.operation {
-			return ImportAccessoryProgress(amount: operationRingProgress, symbol: operationRingSymbol,
-				animationGroup: "operation:\(operation.id.uuidString)")
-		}
-		if let export = entry.export {
-			if case .failed = export.state { return .init(amount: nil, symbol: "arrow.clockwise", animationGroup: "export:\(export.id.uuidString)", failed: true) }
-			return .init(amount: export.progress, symbol: "xmark", animationGroup: "export:\(export.id.uuidString)")
-		}
-		if let download = entry.download {
-			let symbol: String
-			let amount: Double?
-			switch download.state {
-			case .downloading: symbol = "pause.fill"; amount = download.overallProgress
-			case .pausing, .resuming: symbol = "hourglass"; amount = download.overallProgress
-			case .paused: symbol = "play.fill"; amount = nil
-			case .processing:
-				symbol = download.waitingForForeground ? "hourglass" : "archivebox"
-				amount = download.overallProgress
-			case .failed: symbol = "arrow.clockwise"; amount = nil
-			}
-			return .init(amount: amount, symbol: symbol, animationGroup: "download:\(download.id)",
-				preparing: download.isPreparingSource && !download.waitingForForeground)
-		}
-		return nil
-	}
-
-	private var canRetry: Bool {
-		if case .broken = model?.status { return true }
-		return false
-	}
-
-	private var operationRingProgress: Double? {
-		guard let model, !canRetry else { return nil }
-		return progress(model)
-	}
-
-	private var operationRingSymbol: String {
-		if canRetry { return "arrow.clockwise" }
-		if let model { return model.statusImage }
-		return entry.operation?.signing == nil ? "archivebox.fill" : "signature"
 	}
 
 	private func progress(_ model: InstallerStatusViewModel) -> Double { model.operationProgress }

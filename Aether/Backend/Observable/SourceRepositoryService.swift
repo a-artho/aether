@@ -46,7 +46,7 @@ actor SourceRepositoryService {
 		session: URLSession? = nil,
 		cacheDirectory: URL? = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
 			.first?.appendingPathComponent("SourceCatalogs", isDirectory: true),
-		recheckInterval: TimeInterval = 60,
+		recheckInterval: TimeInterval = 2 * 60,
 		fullFetchInterval: TimeInterval = 24 * 60 * 60
 	) {
 		if let session {

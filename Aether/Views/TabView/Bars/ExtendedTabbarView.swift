@@ -16,7 +16,6 @@ struct ExtendedTabbarView: View {
 	@AppStorage("Aether.spoofing.simulationMayBeActive") private var isSpoofingActive = false
 	@AppStorage("Aether.userTintColor") private var tintHex = "#848ef9"
 	@AppStorage("Aether.tabCustomization") var customization = TabViewCustomization()
-	@AppStorage("Aether.hideTabBarLabels") private var hideTabBarLabels = false
 	
 	@ObservedObject private var tabManager = AppTabManager.shared
 	
@@ -59,16 +58,7 @@ struct ExtendedTabbarView: View {
 		.tabViewCustomization($customization)
 	}
 
-	@ViewBuilder
 	private func tabLabel(for tab: TabEnum) -> some View {
-		if hideTabBarLabels && horizontalSizeClass == .compact {
-			tabLabelContent(for: tab).labelStyle(.iconOnly)
-		} else {
-			tabLabelContent(for: tab)
-		}
-	}
-
-	private func tabLabelContent(for tab: TabEnum) -> some View {
 		Label {
 			Text(tab.title)
 		} icon: {
@@ -80,6 +70,7 @@ struct ExtendedTabbarView: View {
 				Image(systemName: tab == .library ? tab.icon + ".fill" : tab.icon)
 			}
 		}
+		.labelStyle(.iconOnly)
 	}
 }
 

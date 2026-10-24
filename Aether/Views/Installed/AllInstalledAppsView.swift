@@ -82,7 +82,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 				TabPlaceholderView(title: .localized("No Results"), description: .localized("Try another search."), systemImage: "magnifyingglass")
 			}
 		}
-		.refreshable { await store.refresh(force: true) }
+		.refreshable { LibraryUpdatesStore.shared.startRefresh() }
 		.onAppear { isVisible = true }
 		.onDisappear { isVisible = false; searchFocused = false }
 		.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }

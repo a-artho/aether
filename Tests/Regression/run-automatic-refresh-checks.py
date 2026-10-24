@@ -17,7 +17,7 @@ final class Defaults {var date:Date?;func set(_ date:Date?,forKey:String){self.d
 @MainActor final class Driver {
  @Published var isFinished=true
  var isRefreshRequested=false;var requestedRefreshTask:Task<Void,Never>?
- var _hasStartedGlobalRefresh=false;var _lastGlobalAttempt:Date?;var lastUpdated:Date?
+ var _lastGlobalAttempt:Date?;var lastUpdated:Date?
  static let _lastUpdatedKey="test"
  let _defaults=Defaults();var cacheResetGeneration=UUID()
  var sources:[String:Int]=[:];var _revisions:[String:String]=[:];var refreshErrors:[String:String]=[:];var catalogRevision=0
@@ -32,6 +32,7 @@ final class Defaults {var date:Date?;func set(_ date:Date?,forKey:String){self.d
    else {sources[request.key]=1;refreshErrors[request.key]=nil}
   }
  }
+ func ensureSourcesLoaded(_ sources:[AltSource]) async {}
  func finish(){pending?.resume();pending=nil}
 '''
 for start in ['func startRefresh(', 'func refreshIfNeeded(', 'func fetchSources(_ sources: [AltSource],']:
@@ -53,10 +54,19 @@ s+=r'''
   let checked=driver.lastUpdated
   await driver.refreshIfNeeded([AltSource()])
   precondition(driver.fetches==1 && driver.lastUpdated==checked,"Fresh cache reads do not claim a new refresh")
-  let failing=Task {await driver.refreshIfNeeded([AltSource()],now:Date(timeIntervalSinceNow:1000))}
+  await driver.refreshIfNeeded([AltSource()],now:driver._lastGlobalAttempt!.addingTimeInterval(119))
+  precondition(driver.fetches==1,"Automatic refresh must wait two full minutes")
+  let failing=Task {await driver.refreshIfNeeded([AltSource()],now:driver._lastGlobalAttempt!.addingTimeInterval(120))}
   while driver.pending == nil {await Task.yield()}
   driver.shouldFail=true;driver.finish();await failing.value
   precondition(driver.lastUpdated==checked && !driver.refreshErrors.isEmpty,"Incomplete refresh retains last successful timestamp")
+  let restored=Driver();restored.lastUpdated=Date()
+  await restored.refreshIfNeeded([AltSource()])
+  precondition(restored.fetches==0,"A recent persisted refresh survives cold launch")
+  let forced=Task {await restored.startRefresh([AltSource()]).value}
+  while restored.pending == nil {await Task.yield()}
+  precondition(restored.fetches==1,"Manual refresh ignores the two-minute gate")
+  restored.finish();await forced.value
   let joined=Driver()
   let automatic=Task {await joined.refreshIfNeeded([AltSource()])}
   while joined.pending == nil {await Task.yield()}

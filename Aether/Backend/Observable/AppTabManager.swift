@@ -46,7 +46,6 @@ final class AppTabManager: ObservableObject {
 	@Published var requestedSettingsPage: SettingsPage? = nil
 	@Published var isLibrarySearchPresented = false
 	@Published var isSettingsSearchPresented = false
-	@Published private(set) var installationFocusRequest: UUID?
 	@Published private(set) var libraryFocusRequest: UUID?
 
 	private init() {
@@ -68,16 +67,6 @@ final class AppTabManager: ObservableObject {
 		}
 	}
 
-	func showInstallQueue() {
-		libraryFocusRequest = nil
-		installationFocusRequest = UUID()
-		switchTo(.library, focusImports: false)
-	}
-
-	func consumeInstallationFocusRequest(_ request: UUID) {
-		guard installationFocusRequest == request else { return }
-		installationFocusRequest = nil
-	}
 
 	func consumeLibraryFocusRequest(_ request: UUID) {
 		guard libraryFocusRequest == request else { return }

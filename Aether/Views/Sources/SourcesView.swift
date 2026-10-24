@@ -93,7 +93,7 @@ struct SourcesView: View {
 			}
 			.modifier(SourcesRefreshModifier(isEnabled: !_sources.isEmpty) {
 				_reportRefreshFailures = true
-				viewModel.startRefresh(Array(_sources))
+				LibraryUpdatesStore.shared.startRefresh()
 			})
 			.scrollDismissesKeyboard(.immediately)
 			.overlay {
@@ -268,12 +268,12 @@ struct SourcesView: View {
 /// Attach the native refresh gesture only when there are sources to refresh.
 private struct SourcesRefreshModifier: ViewModifier {
 	let isEnabled: Bool
-	let action: @Sendable () async -> Void
+	let action: @MainActor @Sendable () -> Void
 
 	@ViewBuilder
 	func body(content: Content) -> some View {
 		if isEnabled {
-			content.refreshable(action: action)
+			content.refreshable { action() }
 		} else {
 			content
 		}

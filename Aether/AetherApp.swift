@@ -15,7 +15,6 @@ import UserNotifications
 @main
 struct AetherApp: App {
 	@UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-	@StateObject private var installedApps = InstalledAppsStore.shared
 	@ObservedObject private var deviceConnection = DeviceConnectionManager.shared
 
 	let heartbeat = HeartbeatManager.shared
@@ -30,12 +29,6 @@ struct AetherApp: App {
 				.onOpenURL(perform: _handleURL)
 				.onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
 					DebugLogManager.shared.log("Aether became active; awaiting any system file handoff.", category: "Import", level: .debug)
-				}
-				.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.installedAppsRefresh"))) { _ in
-					Task {
-						guard deviceConnection.isConnected else { return }
-						await installedApps.refresh(force: true)
-					}
 				}
 				.onReceive(NotificationCenter.default.publisher(for: .heartbeat)) { _ in
 					Task { await deviceConnection.reconcile() }
