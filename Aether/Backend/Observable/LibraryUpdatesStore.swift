@@ -27,9 +27,13 @@ final class LibraryUpdatesStore: ObservableObject {
 		// suspended, including an idle stop after a background install finishes.
 		connectionObservation = DeviceConnectionManager.shared.$state.dropFirst().sink { [weak self] state in
 			MainActor.assumeIsolated {
-				guard state != .connected else { return }
-				self?.invalidateVerification()
-				InstalledAppsStore.shared.invalidateConnection()
+				guard let self else { return }
+				if state == .connected {
+					self.beginConnectedRefreshPresentation()
+				} else {
+					self.invalidateVerification()
+					InstalledAppsStore.shared.invalidateConnection()
+				}
 			}
 		}
 	}
@@ -43,6 +47,15 @@ final class LibraryUpdatesStore: ObservableObject {
 		awaitingMatch = true
 		let keys = Set(sources.map { $0.objectID.uriRepresentation().absoluteString })
 		updateContexts = updateContexts.mapValues { $0.filter { keys.contains($0.sourceObjectURI) } }
+	}
+
+	/// Begin the visible installed-app/update refresh as soon as the tunnel is
+	/// ready. This prevents a cached empty update result from skipping the loading
+	/// state while the foreground device snapshot is being revalidated.
+	private func beginConnectedRefreshPresentation() {
+		guard !showsAppRefresh else { return }
+		updateIndicatorStarted = .now
+		showsAppRefresh = true
 	}
 
 	/// Keep the cache for reuse, but never present it as verified after disconnecting.

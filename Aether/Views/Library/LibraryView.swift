@@ -317,7 +317,7 @@ struct LibraryView: View {
 							Text(text).hidden().accessibilityHidden(true)
 						}
 					}
-					StatusTransitionText(subtitle, phase: subtitle) { Text($0) }
+					StatusTransitionText(subtitle, phase: subtitle, duration: 0.45) { Text($0) }
 				}
 				.nbRowSubtitle()
 				.foregroundStyle(.secondary)

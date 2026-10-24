@@ -352,8 +352,6 @@ private struct UnifiedImportRow: View {
 			UnifiedImportMetadata(entry: entry, model: activeModel, presentation: accessoryPresentation)
 			UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller, presentation: accessoryPresentation)
 		}
-		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: entry.signature)
-		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: entry.signOnlyCompleted(model: activeModel))
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
 			if horizontalSizeClass != .compact {
@@ -619,10 +617,9 @@ private struct UnifiedImportMetadata: View {
 			identifier: app?.identifier ?? entry.download?.sourceProvenance?.sourceAppIdentifier,
 			secondaryStatus: taskStatus ? nil : status.text,
 			isFailed: !taskStatus && status.failed,
-			animatesStatus: true,
 			thirdLineStatus: holdsStatus ? retainedStatus : (showsTaskStatus ? status.text : nil),
 			thirdLineAnimationKey: holdsStatus ? retainedPhase : (numericProgressPhase ?? status.text),
-			crossfadesStatus: true
+			reservesStatusLine: true
 		)
         .onChange(of: status.text, initial: true) { _, text in
             if showsTaskStatus { retainedStatus = text; retainedPhase = numericProgressPhase ?? text }
@@ -688,6 +685,9 @@ private struct ImportAccessorySurface: Shape {
 private struct ImportAccessoryProgress: Equatable {
 	var amount: Double?
 	var symbol: String
+	/// A new operation starts with its own icon; symbol replacement is reserved
+	/// for phase changes within that same operation.
+	var animationGroup: String
 	var failed = false
 	var preparing = false
 }
@@ -697,6 +697,7 @@ private struct ImportAccessoryMorph: AnimatableModifier {
  var expansion: CGFloat
  let progress: ImportAccessoryProgress?
  let reduceMotion: Bool
+ let symbolAnimationGroup: String?
  var animatableData: CGFloat { get { expansion } set { expansion = newValue } }
  private func ramp(_ start: CGFloat, _ end: CGFloat) -> Double {
   let t = min(1, max(0, (expansion - start) / (end - start)))
@@ -719,23 +720,27 @@ private struct ImportAccessoryMorph: AnimatableModifier {
     GeometryReader { bounds in
      if let progress {
       ZStack {
-       Circle().stroke(tint.opacity(0.12), lineWidth: 1.7)
+       Circle().inset(by: 1).stroke(tint.opacity(0.12), lineWidth: 2)
        if let amount = progress.amount {
-        Circle().trim(from: 0, to: min(1, max(0, amount)))
-         .stroke(tint, style: StrokeStyle(lineWidth: 1.7, lineCap: .round))
+        Circle().inset(by: 1).trim(from: 0, to: min(1, max(0, amount)))
+         .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
          .rotationEffect(.degrees(-90))
          .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: amount)
        }
        if progress.preparing {
         ProgressView().controlSize(.mini).tint(tint)
+         .frame(width: 35, height: 35, alignment: .center)
        } else {
         Image(systemName: progress.symbol)
-         .font(.system(size: 12, weight: .bold)).foregroundStyle(tint)
-         .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: progress.symbol)
+         .font(.system(size: 14, weight: .bold)).foregroundStyle(tint)
+         .frame(width: 35, height: 35, alignment: .center)
+         .contentTransition(reduceMotion || symbolAnimationGroup != progress.animationGroup
+            ? .identity : .symbolEffect(.replace))
+         .animation(reduceMotion || symbolAnimationGroup != progress.animationGroup
+            ? nil : .easeInOut(duration: 0.2), value: progress.symbol)
        }
       }
-      .frame(width: 26, height: 26)
+      .frame(width: 35, height: 35)
       .position(x: bounds.size.width - 4.5 * (1 - geometry)
                 - (35 + (bounds.size.width - 35) * geometry) / 2, y: bounds.size.height / 2)
       .opacity(1 - ramp(0.12, 0.64))
@@ -753,6 +758,7 @@ private struct UnifiedImportAccessory: View {
 	@StateObject private var activity: UnifiedImportActivity
 	@State private var retainedProgress: ImportAccessoryProgress?
 	@State private var retainedReadyTitle: String?
+	@State private var symbolAnimationGroup: String?
 	@ObservedObject var presentation: ImportAccessoryPresentation
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -801,7 +807,8 @@ private struct UnifiedImportAccessory: View {
 			.disabled(showsProgress || controller.isProtected(entry))
 			.accessibilityHidden(showsProgress)
 			.modifier(ImportAccessoryMorph(expansion: showsProgress ? 0 : 1,
-				progress: progressPresentation ?? retainedProgress, reduceMotion: reduceMotion))
+				progress: progressPresentation ?? retainedProgress, reduceMotion: reduceMotion,
+				symbolAnimationGroup: symbolAnimationGroup))
 			.animation(morphAnimation, value: showsProgress)
 			ForEach(Array([String.localized("Sign"), String.localized("Install"), String.localized("Reinstall")].enumerated()), id: \.offset) { _, title in
 				NBButton(title, style: .text).hidden().accessibilityHidden(true)
@@ -832,7 +839,20 @@ private struct UnifiedImportAccessory: View {
             if !showsProgress { retainedReadyTitle = title }
         }
 		.onChange(of: progressPresentation, initial: true) { _, presentation in
-			if let presentation { retainedProgress = presentation }
+			guard let presentation else { return }
+			// Do not animate a previous row phase out when a new operation begins.
+			// Keep the native symbol replacement for real phase changes inside the
+			// same install/download/export lifecycle.
+			if let previous = retainedProgress {
+				if previous.animationGroup != presentation.animationGroup {
+					symbolAnimationGroup = nil
+				} else if previous.symbol != presentation.symbol {
+					symbolAnimationGroup = presentation.animationGroup
+				}
+			} else {
+				symbolAnimationGroup = nil
+			}
+			retainedProgress = presentation
 		}
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
 		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
@@ -859,12 +879,13 @@ private struct UnifiedImportAccessory: View {
 
 	private var progressPresentation: ImportAccessoryProgress? {
 		guard isBusy else { return nil }
-		if entry.operation != nil {
-			return ImportAccessoryProgress(amount: operationRingProgress, symbol: operationRingSymbol)
+		if let operation = entry.operation {
+			return ImportAccessoryProgress(amount: operationRingProgress, symbol: operationRingSymbol,
+				animationGroup: "operation:\(operation.id.uuidString)")
 		}
 		if let export = entry.export {
-			if case .failed = export.state { return .init(amount: nil, symbol: "arrow.clockwise", failed: true) }
-			return .init(amount: export.progress, symbol: "xmark")
+			if case .failed = export.state { return .init(amount: nil, symbol: "arrow.clockwise", animationGroup: "export:\(export.id.uuidString)", failed: true) }
+			return .init(amount: export.progress, symbol: "xmark", animationGroup: "export:\(export.id.uuidString)")
 		}
 		if let download = entry.download {
 			let symbol: String
@@ -878,7 +899,7 @@ private struct UnifiedImportAccessory: View {
 				amount = download.overallProgress
 			case .failed: symbol = "arrow.clockwise"; amount = nil
 			}
-			return .init(amount: amount, symbol: symbol,
+			return .init(amount: amount, symbol: symbol, animationGroup: "download:\(download.id)",
 				preparing: download.isPreparingSource && !download.waitingForForeground)
 		}
 		return nil
@@ -895,7 +916,9 @@ private struct UnifiedImportAccessory: View {
 	}
 
 	private var operationRingSymbol: String {
-		canRetry ? "arrow.clockwise" : (model?.statusImage ?? "clock")
+		if canRetry { return "arrow.clockwise" }
+		if let model { return model.statusImage }
+		return entry.operation?.signing == nil ? "archivebox.fill" : "signature"
 	}
 
 	private func progress(_ model: InstallerStatusViewModel) -> Double { model.operationProgress }
