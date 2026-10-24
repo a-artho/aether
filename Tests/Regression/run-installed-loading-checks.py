@@ -74,6 +74,10 @@ func check(_ value:@autoclosure ()->Bool,_ label:String){precondition(value(),la
   store.lastLoadedAt=Date(timeIntervalSinceNow:-61)
   await store.refreshOnForeground()
   check(InstallationAppProxy.fetches==2,"Stale foreground list refreshed")
+  DeviceConnectionManager.shared.isConnected=false
+  await store.refresh()
+  check(store.apps.map(\.id)==["known"] && !store.hasLoadedApps && !store.isLoading,"Idle disconnect retains the last verified apps without pretending they are fresh")
+  DeviceConnectionManager.shared.isConnected=true
   InstallationAppProxy.result=[known,unknown]
   let stale=Task {await store.refresh()}
   while InstallationAppProxy.profileWaiter == nil {await Task.yield()}
@@ -81,6 +85,10 @@ func check(_ value:@autoclosure ()->Bool,_ label:String){precondition(value(),la
   InstallationAppProxy.profileWaiter?.resume(returning:[ProvisioningProfileInfo()]);InstallationAppProxy.profileWaiter=nil
   await stale.value
   check(store.apps.isEmpty && !store.isLoading,"Disconnect prevents stale fallback publication")
+  DeviceConnectionManager.shared.isConnected=true
+  InstallationAppProxy.result=[]
+  await store.refresh(force:true)
+  check(store.apps.isEmpty && store.hasLoadedApps,"A successful empty browse is authoritative")
   print("Installed loading/foreground checks passed")
  }
 }

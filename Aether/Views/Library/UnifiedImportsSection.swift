@@ -592,7 +592,6 @@ private struct UnifiedImportMetadata: View {
 			animatesStatus: true,
 			thirdLineStatus: showsTaskStatus ? status.text : nil,
 			thirdLineAnimationKey: numericProgressPhase ?? status.text,
-			showsNumericProgress: numericProgressPhase != nil,
 			crossfadesStatus: true
 		)
 		.onTapGesture { if failureDetails != nil { showsErrorDetails = true } }
@@ -639,11 +638,83 @@ private struct ImportAccessorySurface: Shape {
 	}
 }
 
+/// A value snapshot keeps the departing progress visual alive without retaining
+/// a completed download, export or installation model.
+private struct ImportAccessoryProgress: Equatable {
+	var amount: Double?
+	var symbol: String
+	var failed = false
+	var preparing = false
+}
+
+/// Geometry and content derive from the same spring sample, not separate fades.
+private struct ImportAccessoryMorph: AnimatableModifier {
+	var expansion: CGFloat
+	let progress: ImportAccessoryProgress?
+	let reduceMotion: Bool
+
+	var animatableData: CGFloat {
+		get { expansion }
+		set { expansion = newValue }
+	}
+
+	private func ramp(_ start: CGFloat, _ end: CGFloat) -> Double {
+		let t = min(1, max(0, (expansion - start) / (end - start)))
+		return Double(t * t * (3 - 2 * t))
+	}
+
+	func body(content: Content) -> some View {
+		let geometry = min(1.08, max(0, expansion))
+		let tint: Color = progress?.failed == true ? .red : .accentColor
+		content
+			.opacity(ramp(0.45, 0.95))
+			.background {
+				ImportAccessorySurface(expansion: geometry)
+					.fill(Color(uiColor: .quaternarySystemFill).opacity(ramp(0.05, 0.9)))
+					.overlay {
+						ImportAccessorySurface(expansion: geometry)
+							.stroke(tint.opacity(0.2 * (1 - ramp(0.3, 1))), lineWidth: 2.3)
+					}
+			}
+			.overlay {
+				GeometryReader { bounds in
+					if let progress {
+						ZStack {
+							if let amount = progress.amount {
+								Circle().trim(from: 0, to: min(1, max(0, amount)))
+									.stroke(tint, style: StrokeStyle(lineWidth: 2.3, lineCap: .round))
+									.rotationEffect(.degrees(-90))
+									.animation(reduceMotion ? nil : .smooth, value: amount)
+							}
+							if progress.preparing {
+								ProgressView().controlSize(.small).tint(tint)
+							} else {
+								Image(systemName: progress.symbol)
+									.font(.footnote.bold()).foregroundStyle(tint)
+									.contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+									.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: progress.symbol)
+							}
+						}
+						.frame(width: 31, height: 31)
+						// Follow the center of the widening surface rather than leaving
+						// the old symbol stranded at the circle's original position.
+						.position(x: bounds.size.width - 6.5 * (1 - geometry)
+							- (31 + (bounds.size.width - 31) * geometry) / 2,
+							y: bounds.size.height / 2)
+						.opacity(1 - ramp(0.2, 0.7))
+					}
+				}
+				.allowsHitTesting(false).accessibilityHidden(true)
+			}
+	}
+}
+
 private struct UnifiedImportAccessory: View {
 	let entry: UnifiedImportEntry
 	let model: InstallerStatusViewModel?
 	@ObservedObject var controller: UnifiedImportsController
 	@StateObject private var activity: UnifiedImportActivity
+	@State private var retainedProgress: ImportAccessoryProgress?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
 	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?, controller: UnifiedImportsController) {
@@ -668,7 +739,7 @@ private struct UnifiedImportAccessory: View {
 	private var isBusy: Bool { stage != "ready" }
 
 	private var morphAnimation: Animation? {
-		reduceMotion ? nil : .spring(duration: 0.3, bounce: 0)
+		reduceMotion ? nil : .spring(duration: 0.5, bounce: 0.12)
 	}
 
 	var body: some View {
@@ -682,39 +753,32 @@ private struct UnifiedImportAccessory: View {
 				NBButton(actionTitle, style: .text, showsBackground: false)
 					.foregroundStyle(Color.accentColor)
 					.contentTransition(reduceMotion ? .identity : .opacity)
-					.opacity(isBusy ? 0 : 1)
 			}
 			.buttonStyle(.borderless)
 			.disabled(isBusy || controller.isProtected(entry))
 			.accessibilityHidden(isBusy)
-			// The surface is outside disabled styling; its track and the progress
-			// arc therefore retain the same color while work is active.
-			.background {
-				ImportAccessorySurface(expansion: isBusy ? 0 : 1)
-					.fill(Color(uiColor: .quaternarySystemFill))
-					.animation(morphAnimation, value: isBusy)
-					.opacity(isBusy ? 0 : 1)
-					.overlay {
-						ImportAccessorySurface(expansion: isBusy ? 0 : 1)
-							.stroke(surfaceTint.opacity(0.2), lineWidth: 2.3)
-							.animation(morphAnimation, value: isBusy)
-							.opacity(isBusy ? 1 : 0)
-					}
-			}
+			.modifier(ImportAccessoryMorph(expansion: isBusy ? 0 : 1,
+				progress: progressPresentation ?? retainedProgress, reduceMotion: reduceMotion))
+			.animation(morphAnimation, value: isBusy)
 			ForEach(Array([String.localized("Sign"), String.localized("Install"), String.localized("Reinstall")].enumerated()), id: \.offset) { _, title in
 				NBButton(title, style: .text).hidden().accessibilityHidden(true)
 			}
 		}
 		.overlay(alignment: .trailing) {
-			ZStack { progressControl.transition(.opacity) }
+			ZStack {
+				// Existing controls retain their native actions and accessibility;
+				// the shared morph above owns all visible drawing.
+				progressControl
+			}
 				.allowsHitTesting(isBusy)
 				.accessibilityHidden(!isBusy)
 		}
 		.tint(Color.accentColor)
 		.foregroundStyle(Color.accentColor)
-		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stage)
 		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: actionTitle)
-		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: surfaceTint)
+		.onChange(of: progressPresentation, initial: true) { _, presentation in
+			if let presentation { retainedProgress = presentation }
+		}
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
 		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
 	}
@@ -722,7 +786,7 @@ private struct UnifiedImportAccessory: View {
 	@ViewBuilder private var progressControl: some View {
 		if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
 			ZStack {
-				InstallationProgressRing(progress: operationRingProgress, systemImage: operationRingSymbol, showsTrack: false)
+				Color.clear.frame(width: 44, height: 44)
 					.accessibilityLabel(model?.statusLabel ?? String.localized("Queued"))
 					.accessibilityValue(model.map { Text(progress($0), format: .percent.precision(.fractionLength(0))) } ?? Text(""))
 					.accessibilityHidden(canRetry)
@@ -734,13 +798,35 @@ private struct UnifiedImportAccessory: View {
 					.accessibilityLabel(String.localized("Retry"))
 				}
 			}
-		} else if let export = entry.export { ExportProgressButton(export: export, showsTrack: false) }
-		else if let download = entry.download { DownloadProgressButton(download: download, showsTrack: false) }
+		} else if let export = entry.export { ExportProgressButton(export: export, showsContent: false) }
+		else if let download = entry.download { DownloadProgressButton(download: download, showsContent: false) }
 	}
 
-	private var surfaceTint: Color {
-		if let export = entry.export, case .failed = export.state { return .red }
-		return .accentColor
+	private var progressPresentation: ImportAccessoryProgress? {
+		guard isBusy else { return nil }
+		if entry.operation != nil {
+			return ImportAccessoryProgress(amount: operationRingProgress, symbol: operationRingSymbol)
+		}
+		if let export = entry.export {
+			if case .failed = export.state { return .init(amount: nil, symbol: "arrow.clockwise", failed: true) }
+			return .init(amount: export.progress, symbol: "xmark")
+		}
+		if let download = entry.download {
+			let symbol: String
+			let amount: Double?
+			switch download.state {
+			case .downloading: symbol = "pause.fill"; amount = download.overallProgress
+			case .pausing, .resuming: symbol = "hourglass"; amount = download.overallProgress
+			case .paused: symbol = "play.fill"; amount = nil
+			case .processing:
+				symbol = download.waitingForForeground ? "hourglass" : "archivebox"
+				amount = download.overallProgress
+			case .failed: symbol = "arrow.clockwise"; amount = nil
+			}
+			return .init(amount: amount, symbol: symbol,
+				preparing: download.isPreparingSource && !download.waitingForForeground)
+		}
+		return nil
 	}
 
 	private var canRetry: Bool {

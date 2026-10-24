@@ -7,7 +7,7 @@ import SwiftUI
 
 struct DownloadProgressButton: View {
 	@ObservedObject var download: Download
-	var showsTrack = true
+	var showsContent = true
 	@ObservedObject private var downloadManager = DownloadManager.shared
 
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -17,7 +17,6 @@ struct DownloadProgressButton: View {
 			ZStack {
 				Circle()
 					.stroke(Color.accentColor.opacity(0.2), lineWidth: 2.3)
-					.opacity(showsTrack ? 1 : 0)
 
 				if _showsProgress {
 					Circle()
@@ -42,6 +41,7 @@ struct DownloadProgressButton: View {
 			}
 			.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: _showsProgress)
 			.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: download.isPreparingSource && !download.waitingForForeground)
+			.opacity(showsContent ? 1 : 0)
 			.frame(width: 31, height: 31)
 			.frame(width: 44, height: 44)
 			.contentShape(Rectangle())

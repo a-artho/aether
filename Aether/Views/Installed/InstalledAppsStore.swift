@@ -258,12 +258,8 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			refreshGeneration = UUID()
 			needsTrailingRefresh = false
 			isLoading = false
-			#if DEBUG
-			if !self.apps.isEmpty {
-				return
-			}
-			#endif
-			self.apps = []
+			// Idle disconnects invalidate freshness, not the last verified list.
+			// A failed reconnect must not erase usable apps or update results.
 			self.errorMessage = nil
 			return
 		}

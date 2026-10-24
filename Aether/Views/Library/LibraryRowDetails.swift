@@ -13,7 +13,6 @@ struct LibraryRowDetails: View {
 	var animatesStatus = false
 	var thirdLineStatus: String? = nil
 	var thirdLineAnimationKey: String? = nil
-	var showsNumericProgress = false
 	var crossfadesStatus = false
 
 	var body: some View {
@@ -33,11 +32,11 @@ struct LibraryRowDetails: View {
 				.lineLimit(isFailed ? 2 : 1)
 
 			if crossfadesStatus || !thirdLineText.isEmpty {
-				thirdLineContent
+				SoftStatusText(thirdLineText, phase: statusIdentity) { text in
+					thirdLineContent(text.isEmpty ? " " : text)
+				}
 					.font(.footnote)
 					.foregroundStyle(.secondary)
-					.contentTransition(reduceMotion ? .identity : (crossfadesStatus ? .opacity : (showsNumericProgress ? .identity : .interpolate)))
-					.animation(textAnimation, value: statusIdentity)
 					.accessibilityHidden(thirdLineText.isEmpty)
 			}
 		}
@@ -45,8 +44,7 @@ struct LibraryRowDetails: View {
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
 
-	@ViewBuilder private var thirdLineContent: some View {
-		let text = thirdLineText.isEmpty ? " " : thirdLineText
+	@ViewBuilder private func thirdLineContent(_ text: String) -> some View {
 		if thirdLineStatus != nil && !dynamicTypeSize.isAccessibilitySize {
 			// Prefer one natural-size line; if it cannot fit, preserve the full
 			// message instead of truncating it or shrinking it to unreadable text.

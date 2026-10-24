@@ -24,6 +24,8 @@ struct LibraryView: View {
 	@State private var libraryRefreshTask: Task<Void, Never>?
 	@State private var libraryRefreshInProgress = false
 	@State private var updateCheckID: UUID?
+	@State private var showsUpdateCheck = false
+	@State private var updateIndicatorStarted: ContinuousClock.Instant?
 	@State private var noUpdatesUntil: Date?
 	@State private var updateCheckRevision = 0
 
@@ -230,16 +232,20 @@ struct LibraryView: View {
 		}
 		.task(id: updateRequest) {
 			let checkID = UUID()
-			updateCheckID = checkID
-			noUpdatesUntil = nil
-			defer { if updateCheckID == checkID { updateCheckID = nil } }
-			guard loadsApps, installationMethod == 1, !store.apps.isEmpty else {
-				updateContexts = [:]
-				_ = try? await InstalledAppUpdateCatalog.shared.updates(installedVersions: [:], contexts: [])
+			let validSources = Set(sources.map { $0.objectID.uriRepresentation().absoluteString })
+			updateContexts = updateContexts.mapValues { $0.filter { validSources.contains($0.sourceObjectURI) } }
+			guard loadsApps, installationMethod == 1 else { return }
+			guard !store.apps.isEmpty else {
+				if store.hasLoadedApps, !store.isLoading, store.errorMessage == nil {
+					updateContexts = [:]
+				}
 				return
 			}
 			guard !libraryRefreshInProgress, !isLoadingInstalledApps,
 				sourcesViewModel.isFinished, !sourcesViewModel.isRefreshRequested else { return }
+			updateCheckID = checkID
+			noUpdatesUntil = nil
+			defer { if updateCheckID == checkID { updateCheckID = nil } }
 			await sourcesViewModel.ensureSourcesLoaded(Array(sources))
 			guard !Task.isCancelled else { return }
 			let versions = store.apps.reduce(into: [String: String]()) { values, app in
@@ -253,13 +259,18 @@ struct LibraryView: View {
 			do {
 				let matches = try await InstalledAppUpdateCatalog.shared.updates(installedVersions: versions, contexts: contexts, ignoredIdentifiers: ignoredUpdates.identifiers)
 				try Task.checkCancellation()
-				updateContexts = matches
+				publishUpdateMatches(matches, complete: sourcesViewModel.refreshErrors.isEmpty
+					&& contexts.count == sources.count && store.errorMessage == nil)
 				if matches.values.allSatisfy({ $0.isEmpty }), sourcesViewModel.refreshErrors.isEmpty,
 					store.errorMessage == nil, contexts.count == sources.count {
 					noUpdatesUntil = Date().addingTimeInterval(2)
 				}
-			} catch is CancellationError {} catch { updateContexts = [:] }
+			} catch is CancellationError {} catch {
+				DebugLogManager.shared.log("Update check failed; retaining known updates: \(error.localizedDescription)", category: "Library", level: .error)
+			}
 		}
+		.task(id: updateIndicatorRequest) { await updateCheckIndicator() }
+
 		.task(id: noUpdatesUntil) {
 			guard let deadline = noUpdatesUntil else { return }
 			do {
@@ -267,6 +278,34 @@ struct LibraryView: View {
 				if noUpdatesUntil == deadline { noUpdatesUntil = nil }
 			} catch {}
 		}
+	}
+
+	private func publishUpdateMatches(_ matches: [String: [SourceAppCatalogContext]], complete: Bool) {
+		if complete {
+			updateContexts = matches
+		} else {
+			// A partial result cannot prove that an existing update disappeared.
+			updateContexts.merge(matches) { previous, fresh in fresh.isEmpty ? previous : fresh }
+		}
+	}
+
+	private func updateCheckIndicator() async {
+			guard !updateIndicatorRequest[1] else {
+				showsUpdateCheck = false
+				updateIndicatorStarted = nil
+				return
+			}
+			if isCheckingForUpdates {
+				if !showsUpdateCheck { updateIndicatorStarted = .now }
+				showsUpdateCheck = true
+			} else if showsUpdateCheck {
+				let elapsed = updateIndicatorStarted?.duration(to: .now) ?? .seconds(0.5)
+				do { try await Task.sleep(for: max(.zero, .seconds(0.5) - elapsed)) } catch { return }
+				guard !Task.isCancelled else { return }
+				showsUpdateCheck = false
+				updateIndicatorStarted = nil
+			}
+
 	}
 
 	private func startLibraryRefresh() {
@@ -284,6 +323,12 @@ struct LibraryView: View {
 			await repositories.value
 			await installed
 		}
+	}
+
+	private var updateIndicatorRequest: [Bool] {
+		[isCheckingForUpdates,
+		 isConnectingTunnel || cellularAssist.isBusy || isLoadingInstalledApps
+		 || !connection.isConnected || store.errorMessage != nil]
 	}
 
 	private var isCheckingForUpdates: Bool {
@@ -307,7 +352,7 @@ struct LibraryView: View {
 	}
 
 	private var allAppsIsBusy: Bool {
-		isConnectingTunnel || cellularAssist.isBusy || isLoadingInstalledApps || isCheckingForUpdates
+		isConnectingTunnel || cellularAssist.isBusy || isLoadingInstalledApps || showsUpdateCheck
 	}
 
 	private var allAppsSubtitle: String {
@@ -315,7 +360,9 @@ struct LibraryView: View {
 			return .localized("Connecting Tunnel")
 		}
 		if isLoadingInstalledApps { return .localized("Loading Installed Apps") }
-		if isCheckingForUpdates { return .localized("Checking for Updates…") }
+		if !connection.isConnected { return .localized("Tunnel Unavailable") }
+		if store.errorMessage != nil { return .localized("Unable to Load Apps") }
+		if showsUpdateCheck { return .localized("Checking for Updates…") }
 		if noUpdatesUntil != nil { return .localized("No Updates Available") }
 		return .localized("See all sideloaded apps")
 	}
@@ -371,7 +418,7 @@ struct LibraryView: View {
 	private var allAppsStatusSubtitles: [String] {
 		[.localized("Connecting Tunnel"), .localized("Loading Installed Apps"),
 		 .localized("Checking for Updates…"), .localized("No Updates Available"),
-		 .localized("See all sideloaded apps")]
+		 .localized("See all sideloaded apps"), .localized("Tunnel Unavailable"), .localized("Unable to Load Apps")]
 	}
 
 	private func allAppsSummary(subtitle: String) -> some View {
@@ -390,9 +437,7 @@ struct LibraryView: View {
 							Text(text).hidden().accessibilityHidden(true)
 						}
 					}
-					Text(subtitle)
-						.contentTransition(reduceMotion ? .identity : .opacity)
-						.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: subtitle)
+					SoftStatusText(subtitle, phase: subtitle) { Text($0) }
 				}
 				.nbRowSubtitle()
 				.foregroundStyle(.secondary)

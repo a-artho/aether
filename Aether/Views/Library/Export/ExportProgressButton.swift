@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ExportProgressButton: View {
 	@ObservedObject var export: AppExport
-	var showsTrack = true
+	var showsContent = true
 
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -11,7 +11,6 @@ struct ExportProgressButton: View {
 			ZStack {
 				Circle()
 					.stroke(_tint.opacity(0.2), lineWidth: 2.3)
-					.opacity(showsTrack ? 1 : 0)
 
 				if case .exporting = export.state {
 					Circle()
@@ -28,6 +27,7 @@ struct ExportProgressButton: View {
 					.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: _systemImage)
 			}
 			.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: _systemImage)
+			.opacity(showsContent ? 1 : 0)
 			.frame(width: 31, height: 31)
 			.frame(width: 44, height: 44)
 			.contentShape(Rectangle())
