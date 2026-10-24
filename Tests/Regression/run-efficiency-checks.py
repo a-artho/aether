@@ -204,7 +204,12 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
   let missing=FRAppIconLoader()
   missing.load(bundleURL:URL(fileURLWithPath:"/missing"),appearance:.light,tint:"",isTinted:false,dynamic:false)
   check(missing.isLoading,"Uncached icon should expose loading state")
-  try await Task.sleep(nanoseconds:150_000_000)
+  // Wait for the renderer completion callback instead of relying on a fixed
+  // 150ms delay; busy CI runners can defer MainActor delivery past that point.
+  for _ in 0..<300 {
+   if !missing.isLoading { break }
+   try await Task.sleep(nanoseconds:10_000_000)
+  }
   check(!missing.isLoading && missing.image == nil,"Failed render must stop loading animation")
   missing.load(bundleURL:old,appearance:.light,tint:"new-key",isTinted:false,dynamic:false)
   missing.cancel()
