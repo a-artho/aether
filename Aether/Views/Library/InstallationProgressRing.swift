@@ -4,11 +4,13 @@ struct InstallationProgressRing: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	let progress: Double?
 	let systemImage: String
+	var showsTrack = true
 
 	var body: some View {
 		ZStack {
 			Circle()
 				.stroke(Color.accentColor.opacity(0.2), lineWidth: 2.3)
+					.opacity(showsTrack ? 1 : 0)
 			if let progress {
 				Circle()
 					.trim(from: 0, to: progress)

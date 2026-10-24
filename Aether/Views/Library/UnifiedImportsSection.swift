@@ -604,25 +604,38 @@ private struct UnifiedImportMetadata: View {
 	}
 }
 
-/// Interpolate against the label's intrinsic width; no delayed geometry/state
-/// measurement and no replacement identity is needed for the circle/pill handoff.
+/// Reserve enough room for every ready action, including localized labels.
+/// Only the first subview is visible; the others supply intrinsic measurements.
 private struct ImportAccessoryLayout: Layout {
+	func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+		let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+		return CGSize(width: max(44, sizes.map(\.width).max() ?? 44),
+			height: max(44, sizes.map(\.height).max() ?? 44))
+	}
+
+	func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+		for view in subviews {
+			let size = view.sizeThatFits(.unspecified)
+			view.place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing,
+				proposal: ProposedViewSize(width: size.width, height: size.height))
+		}
+	}
+}
+
+/// A single shape owns the progress track and the pill throughout the morph.
+private struct ImportAccessorySurface: Shape {
 	var expansion: CGFloat
 	var animatableData: CGFloat {
 		get { expansion }
 		set { expansion = newValue }
 	}
 
-	func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-		let size = subviews.first?.sizeThatFits(.unspecified) ?? CGSize(width: 44, height: 44)
-		return CGSize(width: 44 + (max(44, size.width) - 44) * expansion, height: max(44, size.height))
-	}
-
-	func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-		guard let label = subviews.first else { return }
-		let size = label.sizeThatFits(.unspecified)
-		label.place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing,
-			proposal: ProposedViewSize(width: size.width, height: size.height))
+	func path(in rect: CGRect) -> Path {
+		let width = 31 + (rect.width - 31) * expansion
+		let height = 31 + 4 * expansion
+		let trailingInset = 6.5 * (1 - expansion)
+		return Capsule().path(in: CGRect(x: rect.maxX - trailingInset - width,
+			y: rect.midY - height / 2, width: width, height: height))
 	}
 }
 
@@ -654,42 +667,54 @@ private struct UnifiedImportAccessory: View {
 
 	private var isBusy: Bool { stage != "ready" }
 
+	private var morphAnimation: Animation? {
+		reduceMotion ? nil : .spring(duration: 0.3, bounce: 0)
+	}
+
 	var body: some View {
-		// One persistent pill owns layout and its surface. The progress controls
-		// occupy an overlay, so retiring work cannot insert a second layout owner.
-		Button {
-			guard !isBusy, let app = entry.app, !controller.isProtected(entry) else { return }
-			if app.isSigned {
-				if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
-			} else { controller.signingApp = AnyApp(base: app) }
-		} label: {
-			ImportAccessoryLayout(expansion: isBusy ? 0 : 1) {
+		ImportAccessoryLayout {
+			Button {
+				guard !isBusy, let app = entry.app, !controller.isProtected(entry) else { return }
+				if app.isSigned {
+					if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
+				} else { controller.signingApp = AnyApp(base: app) }
+			} label: {
 				NBButton(actionTitle, style: .text, showsBackground: false)
 					.foregroundStyle(Color.accentColor)
 					.contentTransition(reduceMotion ? .identity : .opacity)
 					.opacity(isBusy ? 0 : 1)
 			}
-				.background {
-					Capsule()
-						.fill(Color(uiColor: .quaternarySystemFill).opacity(isBusy ? 0 : 1))
-						.padding(.horizontal, isBusy ? 6.5 : 0)
-						.frame(height: isBusy ? 31 : 35)
-				}
-		}
-		.buttonStyle(.borderless)
-		.disabled(isBusy || controller.isProtected(entry))
-		.accessibilityHidden(isBusy)
-		.overlay(alignment: .trailing) {
-			ZStack {
-				progressControl.transition(.opacity)
+			.buttonStyle(.borderless)
+			.disabled(isBusy || controller.isProtected(entry))
+			.accessibilityHidden(isBusy)
+			// The surface is outside disabled styling; its track and the progress
+			// arc therefore retain the same color while work is active.
+			.background {
+				ImportAccessorySurface(expansion: isBusy ? 0 : 1)
+					.fill(Color(uiColor: .quaternarySystemFill))
+					.animation(morphAnimation, value: isBusy)
+					.opacity(isBusy ? 0 : 1)
+					.overlay {
+						ImportAccessorySurface(expansion: isBusy ? 0 : 1)
+							.stroke(surfaceTint.opacity(0.2), lineWidth: 2.3)
+							.animation(morphAnimation, value: isBusy)
+							.opacity(isBusy ? 1 : 0)
+					}
 			}
-			.allowsHitTesting(isBusy)
-			.accessibilityHidden(!isBusy)
+			ForEach(Array([String.localized("Sign"), String.localized("Install"), String.localized("Reinstall")].enumerated()), id: \.offset) { _, title in
+				NBButton(title, style: .text).hidden().accessibilityHidden(true)
+			}
+		}
+		.overlay(alignment: .trailing) {
+			ZStack { progressControl.transition(.opacity) }
+				.allowsHitTesting(isBusy)
+				.accessibilityHidden(!isBusy)
 		}
 		.tint(Color.accentColor)
 		.foregroundStyle(Color.accentColor)
-		.animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: stage)
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stage)
 		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: actionTitle)
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: surfaceTint)
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
 		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
 	}
@@ -697,7 +722,7 @@ private struct UnifiedImportAccessory: View {
 	@ViewBuilder private var progressControl: some View {
 		if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
 			ZStack {
-				InstallationProgressRing(progress: operationRingProgress, systemImage: operationRingSymbol)
+				InstallationProgressRing(progress: operationRingProgress, systemImage: operationRingSymbol, showsTrack: false)
 					.accessibilityLabel(model?.statusLabel ?? String.localized("Queued"))
 					.accessibilityValue(model.map { Text(progress($0), format: .percent.precision(.fractionLength(0))) } ?? Text(""))
 					.accessibilityHidden(canRetry)
@@ -709,8 +734,13 @@ private struct UnifiedImportAccessory: View {
 					.accessibilityLabel(String.localized("Retry"))
 				}
 			}
-		} else if let export = entry.export { ExportProgressButton(export: export) }
-		else if let download = entry.download { DownloadProgressButton(download: download) }
+		} else if let export = entry.export { ExportProgressButton(export: export, showsTrack: false) }
+		else if let download = entry.download { DownloadProgressButton(download: download, showsTrack: false) }
+	}
+
+	private var surfaceTint: Color {
+		if let export = entry.export, case .failed = export.state { return .red }
+		return .accentColor
 	}
 
 	private var canRetry: Bool {

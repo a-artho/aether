@@ -340,9 +340,14 @@ struct LibraryView: View {
 					HStack(spacing: 12) {
 						allAppsSummary(subtitle: allAppsSubtitle)
 						ZStack {
+							// Reserve a localized four-digit count even while the spinner
+							// is visible. Digit changes cannot squeeze the subtitle.
+							Text(max(9_999, store.apps.count), format: .number)
+								.hidden().accessibilityHidden(true)
 							Text(store.apps.count, format: .number)
-								.font(.footnote)
 								.foregroundStyle(.secondary)
+								.contentTransition(reduceMotion ? .identity : .opacity)
+								.animation(reduceMotion || allAppsIsBusy ? nil : .easeInOut(duration: 0.2), value: store.apps.count)
 								.opacity(allAppsIsBusy ? 0 : 1)
 								.accessibilityHidden(allAppsIsBusy)
 							if allAppsIsBusy {
@@ -350,6 +355,9 @@ struct LibraryView: View {
 									.transition(reduceMotion ? .identity : .opacity)
 							}
 						}
+						.font(.footnote)
+						.monospacedDigit()
+						.fixedSize(horizontal: true, vertical: false)
 						.frame(minWidth: 20, minHeight: 20)
 						.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: allAppsIsBusy)
 					}
@@ -360,6 +368,12 @@ struct LibraryView: View {
 		}
 	}
 
+	private var allAppsStatusSubtitles: [String] {
+		[.localized("Connecting Tunnel"), .localized("Loading Installed Apps"),
+		 .localized("Checking for Updates…"), .localized("No Updates Available"),
+		 .localized("See all sideloaded apps")]
+	}
+
 	private func allAppsSummary(subtitle: String) -> some View {
 		HStack(spacing: NBRowMetrics.contentSpacing) {
 			OverviewRowIcon(kind: .apps)
@@ -367,11 +381,23 @@ struct LibraryView: View {
 				Text(String.localized("All Apps"))
 					.nbRowTitle()
 					.foregroundStyle(.primary)
-				Text(subtitle)
-					.nbRowSubtitle()
-					.foregroundStyle(.secondary)
-					.contentTransition(reduceMotion ? .identity : .opacity)
-					.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: subtitle)
+				ZStack(alignment: .topLeading) {
+					// Measure every local status using the actual width and font.
+					// Longer translations and accessibility text remain untruncated,
+					// while changing phases keeps the title and subtitle anchored.
+					if installationMethod != 0 {
+						ForEach(Array(allAppsStatusSubtitles.enumerated()), id: \.offset) { _, text in
+							Text(text).hidden().accessibilityHidden(true)
+						}
+					}
+					Text(subtitle)
+						.contentTransition(reduceMotion ? .identity : .opacity)
+						.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: subtitle)
+				}
+				.nbRowSubtitle()
+				.foregroundStyle(.secondary)
+				.fixedSize(horizontal: false, vertical: true)
+				.frame(maxWidth: .infinity, alignment: .leading)
 			}
 			.padding(.vertical, NBRowMetrics.textVerticalPadding)
 			.frame(maxWidth: .infinity, alignment: .leading)
