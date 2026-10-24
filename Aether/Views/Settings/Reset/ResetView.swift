@@ -17,11 +17,19 @@ struct ResetView: View {
 	@ObservedObject private var downloads = DownloadManager.shared
 	@ObservedObject private var exports = ExportManager.shared
 	@ObservedObject private var pairing = OnDevicePairingManager.shared
+	@ObservedObject private var ignoredUpdates = IgnoredAppUpdates.shared
+	@State private var confirmsIgnoredUpdatesReset = false
 	@AppStorage("Aether.spoofing.simulationMayBeActive") private var spoofingActive = false
 	// MARK: Body
 	var body: some View {
 		NBList(.localized("Reset")) {
 			_cache()
+			Section {
+				Button { confirmsIgnoredUpdatesReset = true } label: {
+					SettingsRowLabel(.localized("Reset Ignored Updates"), systemImage: "arrow.counterclockwise", backgroundColor: .orange)
+				}
+				.disabled(ignoredUpdates.identifiers.isEmpty)
+			}
 			_installation()
 			_coredata()
 			_all()
@@ -30,6 +38,12 @@ struct ResetView: View {
 			}
 		}
 		.disabled(AppMaintenanceGuard.resetBlockReason != nil)
+		.confirmationDialog(String.localized("Reset Ignored Updates?"), isPresented: $confirmsIgnoredUpdatesReset, titleVisibility: .visible) {
+			Button(String.localized("Reset Ignored Updates"), role: .destructive) { ignoredUpdates.reset() }
+			Button(String.localized("Cancel"), role: .cancel) {}
+		} message: {
+			Text(String.localized("Check for updates again for all ignored apps."))
+		}
 	}
 	
 	private func _cacheSize() -> String {

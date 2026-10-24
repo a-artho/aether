@@ -18,6 +18,7 @@ struct LibraryView: View {
 	@ObservedObject private var cellularAssist = CellularAssistManager.shared
 	@ObservedObject private var tabManager = AppTabManager.shared
 	@ObservedObject private var sourcesViewModel = SourcesViewModel.shared
+	@ObservedObject private var ignoredUpdates = IgnoredAppUpdates.shared
 	@FetchRequest(sortDescriptors: []) private var sources: FetchedResults<AltSource>
 	@State private var updateContexts: [String: [SourceAppCatalogContext]] = [:]
 	@State private var libraryRefreshTask: Task<Void, Never>?
@@ -70,7 +71,7 @@ struct LibraryView: View {
 		let showAllApps = installationMethod == 0
 			? matchesSearch(String.localized("All Apps"), String.localized("Requires Local mode"))
 			: !showsDevicePlaceholder && (searchText.isEmpty || !sideloadedApps.isEmpty || matchesSearch(String.localized("All Apps")))
-		let appsWithUpdates = sideloadedApps.filter { updateContexts[$0.bundleIdentifier]?.isEmpty == false }
+		let appsWithUpdates = sideloadedApps.filter { !ignoredUpdates.identifiers.contains($0.bundleIdentifier) && updateContexts[$0.bundleIdentifier]?.isEmpty == false }
 		let importRows = imports.visibleRows.filter { entry in
 			let app = entry.app ?? entry.operation?.app ?? entry.export?.app
 			return matchesSearch(app?.name, app?.identifier, app?.version,
@@ -100,6 +101,12 @@ struct LibraryView: View {
 									}
 									.buttonStyle(.plain)
 									.id(app.id)
+									.swipeActions(edge: .trailing, allowsFullSwipe: true) {
+										Button(String.localized("Ignore Updates"), systemImage: "bell.slash") {
+											ignoredUpdates.ignore(app.bundleIdentifier)
+										}
+										.tint(.orange)
+									}
 								}
 							}
 							.listSectionSeparator(.hidden)
@@ -244,7 +251,7 @@ struct LibraryView: View {
 					sourceURL: source.sourceURL, repository: repository, revision: sourcesViewModel.revision(for: source))
 			}
 			do {
-				let matches = try await InstalledAppUpdateCatalog.shared.updates(installedVersions: versions, contexts: contexts)
+				let matches = try await InstalledAppUpdateCatalog.shared.updates(installedVersions: versions, contexts: contexts, ignoredIdentifiers: ignoredUpdates.identifiers)
 				try Task.checkCancellation()
 				updateContexts = matches
 				if matches.values.allSatisfy({ $0.isEmpty }), sourcesViewModel.refreshErrors.isEmpty,
@@ -332,13 +339,19 @@ struct LibraryView: View {
 				NavigationLink(value: InstalledAppsRoute.allApps) {
 					HStack(spacing: 12) {
 						allAppsSummary(subtitle: allAppsSubtitle)
-						if allAppsIsBusy {
-							ProgressView()
-						} else {
+						ZStack {
 							Text(store.apps.count, format: .number)
 								.font(.footnote)
 								.foregroundStyle(.secondary)
+								.opacity(allAppsIsBusy ? 0 : 1)
+								.accessibilityHidden(allAppsIsBusy)
+							if allAppsIsBusy {
+								ProgressView()
+									.transition(reduceMotion ? .identity : .opacity)
+							}
 						}
+						.frame(minWidth: 20, minHeight: 20)
+						.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: allAppsIsBusy)
 					}
 				}
 				.buttonStyle(.plain)
@@ -349,11 +362,7 @@ struct LibraryView: View {
 
 	private func allAppsSummary(subtitle: String) -> some View {
 		HStack(spacing: NBRowMetrics.contentSpacing) {
-			Image(systemName: "square.stack.3d.up.fill")
-				.font(.system(size: 30, weight: .regular))
-				.symbolRenderingMode(.hierarchical)
-				.foregroundStyle(.secondary)
-				.frame(width: 50, height: 50)
+			OverviewRowIcon(kind: .apps)
 			VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
 				Text(String.localized("All Apps"))
 					.nbRowTitle()
@@ -361,6 +370,8 @@ struct LibraryView: View {
 				Text(subtitle)
 					.nbRowSubtitle()
 					.foregroundStyle(.secondary)
+					.contentTransition(reduceMotion ? .identity : .opacity)
+					.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: subtitle)
 			}
 			.padding(.vertical, NBRowMetrics.textVerticalPadding)
 			.frame(maxWidth: .infinity, alignment: .leading)
@@ -406,6 +417,7 @@ struct LibraryView: View {
 		[String(installationMethod), String(sourcesViewModel.catalogRevision),
 			String(store.isLoading), String(store.hasLoadedApps), String(libraryRefreshInProgress),
 			String(sourcesViewModel.isFinished), String(sourcesViewModel.isRefreshRequested), String(updateCheckRevision)]
+			+ ignoredUpdates.identifiers.sorted()
 			+ store.apps.flatMap { [$0.bundleIdentifier, $0.version ?? ""] }
 			+ sources.flatMap { [$0.objectID.uriRepresentation().absoluteString, $0.sourceURL?.absoluteString ?? ""] }
 	}
@@ -568,7 +580,8 @@ struct InstalledAppIconView: View {
 	let bundleIdentifier: String
 	let cacheVersion: String
 	let loadsIcon: Bool
-	var size: CGFloat = 50
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
+	private var size: CGFloat { rowIconSize.points }
 	@State private var image: UIImage?
 	@State private var loadedIdentity: String?
 	@State private var iconIsLoading = false

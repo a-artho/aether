@@ -1,5 +1,30 @@
 import Foundation
+import Combine
 import AltSourceKit
+
+/// Preferences apply to the installed app, including all source/tweak variants.
+@MainActor
+final class IgnoredAppUpdates: ObservableObject {
+	static let shared = IgnoredAppUpdates()
+	private static let key = "Aether.ignoredUpdateBundleIdentifiers"
+	private let defaults: UserDefaults
+	@Published private(set) var identifiers: Set<String>
+
+	init(defaults: UserDefaults = .standard) {
+		self.defaults = defaults
+		identifiers = Set(defaults.stringArray(forKey: Self.key) ?? [])
+	}
+
+	func ignore(_ identifier: String) {
+		guard !identifier.isEmpty, identifiers.insert(identifier).inserted else { return }
+		defaults.set(identifiers.sorted(), forKey: Self.key)
+	}
+
+	func reset() {
+		identifiers = []
+		defaults.removeObject(forKey: Self.key)
+	}
+}
 
 /// Scan loaded catalogs once per source/installed-version change, off the UI thread.
 /// Retain only matching updates, never another copy of the entire source catalog.
@@ -20,8 +45,9 @@ actor InstalledAppUpdateCatalog {
 		cached = [:]
 	}
 
-	func updates(installedVersions: [String: String], contexts: [SourceAppCatalogContext]) throws -> [String: [SourceAppCatalogContext]] {
+	func updates(installedVersions: [String: String], contexts: [SourceAppCatalogContext], ignoredIdentifiers: Set<String> = []) throws -> [String: [SourceAppCatalogContext]] {
 		try Task.checkCancellation()
+		let installedVersions = installedVersions.filter { !ignoredIdentifiers.contains($0.key) }
 		guard !installedVersions.isEmpty else { signature = []; cached = [:]; return [:] }
 		let contexts = contexts.filter { !removedSources.contains($0.sourceObjectURI) }
 		let nextSignature = installedVersions.sorted { $0.key < $1.key }.flatMap { [$0.key, $0.value] }

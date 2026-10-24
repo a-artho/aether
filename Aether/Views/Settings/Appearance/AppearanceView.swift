@@ -12,7 +12,10 @@ import UIKit
 // MARK: - View
 // dear god help me
 struct AppearanceView: View {
-	@AppStorage("Aether.rowInset") private var _rowInset: NBRowInset = .system
+	@AppStorage("Aether.rowIconSize") private var _rowIconSize: RowIconSize = .standard
+	@AppStorage("Aether.allReposIcon") private var _allReposIcon: AllReposIcon = .appStore
+	@AppStorage("Aether.matchRepoIconStyle") private var _matchRepoIconStyle = false
+	@AppStorage("Aether.overviewIconStyle") private var _overviewIconStyle: OverviewIconStyle = .standalone
 	@AppStorage("Aether.repoDownloadIconSize") private var _repoDownloadIconSize: RepoDownloadIconSize = .large
 	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .sources
 	@AppStorage("Aether.settingsRowIconStyle") private var _settingsRowIconStyle: SettingsRowIconStyle = .colored
@@ -111,12 +114,41 @@ struct AppearanceView: View {
 			}
 
 			Section {
-				Slider(value: Binding(
-					get: { Double(_rowInset.rawValue) },
-					set: { _rowInset = NBRowInset(rawValue: Int($0.rounded())) ?? .system }
-				), in: 0...3, step: 1)
-				.accessibilityLabel(String.localized("Row Insets"))
-				.accessibilityValue(_rowInset.horizontal.map { String(Int($0)) } ?? String.localized("System Default"))
+				Picker(selection: $_rowIconSize) {
+					ForEach(RowIconSize.allCases) { size in
+						Text(size.title).tag(size)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Row Icon Size"), systemImage: "square.resize", backgroundColor: .gray)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+			}
+
+			Section {
+				Picker(selection: $_overviewIconStyle) {
+					ForEach(OverviewIconStyle.allCases) { style in
+						Text(style.title).tag(style)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Overview Icons"), systemImage: "square.stack.3d.up", backgroundColor: .gray)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+				Picker(selection: $_allReposIcon) {
+					ForEach(AllReposIcon.allCases) { icon in
+						Label(icon.title, systemImage: icon.systemImage).tag(icon)
+					}
+				} label: {
+					SettingsRowLabel(.localized("All Repos Icon"), systemImage: "appstore", backgroundColor: .gray)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+				Toggle(isOn: $_matchRepoIconStyle) {
+					SettingsRowLabel(.localized("Match Repo Icons"), systemImage: "square.on.square", backgroundColor: .gray)
+				}
+			} footer: {
+				Text(.localized("Overview styles apply to All Apps and All Repos. Match Repo Icons includes individual repo artwork."))
 			}
 
 			NBSection(.localized("Section Headers")) {

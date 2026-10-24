@@ -327,13 +327,14 @@ private struct UnifiedImportRow: View {
 	private var entry: UnifiedImportEntry { snapshot.reconciled(with: installations.installationCards) }
 	@ObservedObject var controller: UnifiedImportsController
 	@ObservedObject private var installations = AppInstallationManager.shared
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
 	@State private var retainedIconURL: URL?
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
 	var body: some View {
 		HStack(spacing: NBRowMetrics.contentSpacing) {
-			FRAppIconView(app: displayApp, size: 50, remoteIconURL: retainedIconURL ?? entry.download?.sourceProvenance?.sourceAppIconURL, usesDefaultApp: false, retainsPreviousImage: true)
+			FRAppIconView(app: displayApp, size: rowIconSize.points, remoteIconURL: retainedIconURL ?? entry.download?.sourceProvenance?.sourceAppIconURL, usesDefaultApp: false, retainsPreviousImage: true)
 				.overlay(alignment: .bottomTrailing) {
 					if displayApp?.isSigned == true {
 						Circle()

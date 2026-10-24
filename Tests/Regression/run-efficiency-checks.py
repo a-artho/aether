@@ -156,6 +156,23 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
   check(suffixList.rows.count==3,"Each variant retains its own repository row")
   let separateInstalled=try await updates.updates(installedVersions:["com.google.ios.youtube":"21.40.0","com.google.ios.youtube.youmod":"21.42.4"],contexts:[suffixContext])
   check(separateInstalled["com.google.ios.youtube"] != nil && separateInstalled["com.google.ios.youtube.youmod"] == nil,"Each installed app uses its own version comparison")
+  let preferencesName="AetherIgnoredUpdatesTests."+UUID().uuidString
+  let preferences=UserDefaults(suiteName:preferencesName)!
+  defer {preferences.removePersistentDomain(forName:preferencesName)}
+  let ignored=IgnoredAppUpdates(defaults:preferences)
+  ignored.ignore("com.google.ios.youtube")
+  ignored.ignore("com.google.ios.youtube");ignored.ignore("")
+  check(ignored.identifiers==["com.google.ios.youtube"],"Ignore must be idempotent and reject empty identifiers")
+  let relaunched=IgnoredAppUpdates(defaults:preferences)
+  check(relaunched.identifiers==ignored.identifiers,"Ignored apps survive a new preferences-store instance")
+  let ignoredMatches=try await updates.updates(installedVersions:["com.google.ios.youtube":"21.40.0","fixture.app":"0.9"],contexts:[suffixContext,context],ignoredIdentifiers:relaunched.identifiers)
+  check(ignoredMatches["com.google.ios.youtube"]==nil && ignoredMatches["fixture.app"] != nil,"Ignoring excludes all app variants without suppressing other installed apps")
+  let independent=try await updates.updates(installedVersions:["com.google.ios.youtube":"21.40.0","com.google.ios.youtube.youmod":"21.40.0"],contexts:[suffixContext],ignoredIdentifiers:relaunched.identifiers)
+  check(independent["com.google.ios.youtube"]==nil && independent["com.google.ios.youtube.youmod"] != nil,"Ignore applies to the exact installed identifier, not unrelated installed variants")
+  relaunched.reset()
+  check(IgnoredAppUpdates(defaults:preferences).identifiers.isEmpty,"Reset persists the cleared list")
+  let unignored=try await updates.updates(installedVersions:["com.google.ios.youtube":"21.40.0","fixture.app":"0.9"],contexts:[suffixContext,context],ignoredIdentifiers:relaunched.identifiers)
+  check(unignored["com.google.ios.youtube"] != nil && unignored["fixture.app"] != nil,"Reset restores matches even after an ignored result was cached")
   await updates.removeSource("source-key")
   let after=try await updates.updates(installedVersions:["fixture.app":"0.9"],contexts:[context])
   check(after.isEmpty,"Deleted-source stale context cannot restore update candidates")

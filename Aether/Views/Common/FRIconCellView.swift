@@ -13,43 +13,50 @@ import NimbleViews
 // MARK: - View
 struct FRIconCellView<Subtitle: View>: View {
 	@Environment(\.displayScale) private var displayScale
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
 	var title: String
 	var subtitleView: Subtitle
 	var badgeURL: URL? = nil
 	var iconUrl: URL?
-	var size: CGFloat = 50
+	private var sizeOverride: CGFloat?
+	private var size: CGFloat { sizeOverride ?? rowIconSize.points }
 	var isCircle: Bool = false
+	var overviewStyle: OverviewIconStyle? = nil
 	
 	init(
 		title: String,
 		subtitle: String,
 		iconUrl: URL? = nil,
 		badgeURL: URL? = nil,
-		size: CGFloat = 50,
-		isCircle: Bool = false
+		size: CGFloat? = nil,
+		isCircle: Bool = false,
+		overviewStyle: OverviewIconStyle? = nil
 	) where Subtitle == Text {
 		self.title = title
 		self.subtitleView = Text(subtitle)
 		self.iconUrl = iconUrl
 		self.badgeURL = badgeURL
-		self.size = size
+		self.sizeOverride = size
 		self.isCircle = isCircle
+		self.overviewStyle = overviewStyle
 	}
 	
 	init(
 		title: String,
 		iconUrl: URL? = nil,
 		badgeURL: URL? = nil,
-		size: CGFloat = 50,
+		size: CGFloat? = nil,
 		isCircle: Bool = false,
+		overviewStyle: OverviewIconStyle? = nil,
 		@ViewBuilder subtitle: () -> Subtitle
 	) {
 		self.title = title
 		self.subtitleView = subtitle()
 		self.iconUrl = iconUrl
 		self.badgeURL = badgeURL
-		self.size = size
+		self.sizeOverride = size
 		self.isCircle = isCircle
+		self.overviewStyle = overviewStyle
 	}
 	
 	// MARK: Body
@@ -61,7 +68,7 @@ struct FRIconCellView<Subtitle: View>: View {
 					.thumbnailKey: ImageRequest.ThumbnailOptions(maxPixelSize: Float(size * displayScale))
 				])) { state in
 					if let image = state.image {
-						image.appIconStyle(size: size, isCircle: isCircle)
+						image.appIconStyle(size: size, lineWidth: overviewStyle == nil || overviewStyle == .standalone ? 1 : 0, isCircle: isCircle)
 					} else {
 						AppIconSkeleton(size: size, isCircle: isCircle, isLoading: state.isLoading)
 					}
@@ -71,6 +78,7 @@ struct FRIconCellView<Subtitle: View>: View {
 			}
 			
             }
+            .modifier(OverviewIconSurface(style: overviewStyle ?? .standalone, size: size, isCircle: isCircle))
             .overlay(alignment: .bottomTrailing) {
                 if let badgeURL {
                     LazyImage(url: badgeURL) { state in

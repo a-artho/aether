@@ -11,6 +11,7 @@ import NimbleViews
 
 // MARK: - View
 struct SigningView: View {
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
 	@Environment(\.dismiss) var dismiss
 	@Environment(\.scenePhase) private var scenePhase
 	@StateObject private var _optionsManager = OptionsManager.shared
@@ -207,7 +208,7 @@ extension SigningView {
 					Image(uiImage: icon)
 						.appIconStyle()
 				} else {
-					FRAppIconView(app: app, size: 50)
+					FRAppIconView(app: app, size: rowIconSize.points)
 				}
 			}
 			

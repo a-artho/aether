@@ -11,6 +11,8 @@ import NukeUI
 
 // MARK: - View
 struct SourcesCellView: View {
+	@AppStorage("Aether.matchRepoIconStyle") private var matchRepoIconStyle = false
+	@AppStorage("Aether.overviewIconStyle") private var overviewIconStyle: OverviewIconStyle = .standalone
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	
 	var source: AltSource
@@ -24,7 +26,8 @@ struct SourcesCellView: View {
 		FRIconCellView(
 			title: (source.name ?? .localized("Unknown")).repoDisplayName,
 			subtitle: source.sourceURL?.absoluteString ?? "",
-			iconUrl: source.iconURL
+			iconUrl: source.iconURL,
+			overviewStyle: matchRepoIconStyle ? overviewIconStyle : nil
 		)
 			if isRefreshing { ProgressView().controlSize(.small) }
 		}

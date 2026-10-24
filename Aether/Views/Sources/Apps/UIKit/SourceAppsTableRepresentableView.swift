@@ -19,6 +19,7 @@ private final class SourceAppTableCell: UITableViewCell {
 
 /// Uses the same hosting margins, typography and native section layout as real rows.
 private struct SourceAppsSkeletonRow: View {
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
 	@AppStorage("Aether.storeCellAppearance") private var appearance = 0
 	var showsDownloadButton: Bool
 	private func skeletonBar(width: CGFloat, height: CGFloat) -> some View {
@@ -28,7 +29,7 @@ private struct SourceAppsSkeletonRow: View {
 	var body: some View {
 		VStack {
 			HStack(spacing: NBRowMetrics.contentSpacing) {
-				AppIconSkeleton(size: 50, isLoading: false)
+				AppIconSkeleton(size: rowIconSize.points, isLoading: false)
 				VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
 					Text("Application name").nbRowTitle().hidden()
 						.overlay(alignment: .leading) { skeletonBar(width: 150, height: 12) }
@@ -86,7 +87,6 @@ private struct SourceAppsSkeletonPulse: ViewModifier {
 
 // MARK: - Representable
 struct SourceAppsTableRepresentableView: UIViewRepresentable {
-	@AppStorage("Aether.rowInset") private var rowInset: NBRowInset = .system
 	@AppStorage("Aether.showRepoDownloadButtons") private var showsDownloadButtons = true
 	@AppStorage("Aether.userTintColor") private var themeHex = "#848ef9"
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
@@ -130,7 +130,6 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		let sortOptionChanged = context.coordinator.sortOption != sortOption
 		let sortDirectionChanged = context.coordinator.sortAscending != sortAscending
 		let badgeChanged = context.coordinator.showSourceBadge != showSourceBadge
-		let insetsChanged = context.coordinator.rowInset != rowInset
 		let accessoryChanged = context.coordinator.showsDownloadButtons != showsDownloadButtons || context.coordinator.themeHex != themeHex
 		
 		context.coordinator.sourceContexts = sourceContexts
@@ -141,9 +140,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		context.coordinator.showSourceBadge = showSourceBadge
 		context.coordinator.showsDownloadButtons = showsDownloadButtons
 		context.coordinator.themeHex = themeHex
-		context.coordinator.rowInset = rowInset
 		context.coordinator.updateNewsHeader(for: tableView)
-		if insetsChanged { tableView.reloadData() }
 		if accessoryChanged { context.coordinator.refreshVisibleAccessories() }
 		
 		if sourcesChanged || loadingChanged || searchChanged || sortOptionChanged || sortDirectionChanged || badgeChanged {
@@ -165,7 +162,6 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 			sortAscending: sortAscending,
 			showSourceBadge: showSourceBadge,
 			showsDownloadButtons: showsDownloadButtons,
-			rowInset: rowInset,
 			listStore: listStore,
 			onSelect: onSelect
 		)
@@ -185,7 +181,6 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	var sortAscending: Bool
 	var showSourceBadge: Bool
 	var showsDownloadButtons: Bool
-	var rowInset: NBRowInset
 	var themeHex = "#848ef9"
 	let listStore: SourceAppListStore
 	var onSelect: (SourceAppsView.SourceAppSelection) -> Void
@@ -224,7 +219,6 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		sortAscending: Bool,
 		showSourceBadge: Bool,
 		showsDownloadButtons: Bool,
-		rowInset: NBRowInset,
 		listStore: SourceAppListStore,
 		onSelect: @escaping (SourceAppsView.SourceAppSelection) -> Void
 	) {
@@ -235,7 +229,6 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		self.sortAscending = sortAscending
 		self.showSourceBadge = showSourceBadge
 		self.showsDownloadButtons = showsDownloadButtons
-		self.rowInset = rowInset
 		self.listStore = listStore
 		self.onSelect = onSelect
 		super.init()
@@ -257,8 +250,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 				cell.accessoryType = self.showsDownloadButtons ? .none : .disclosureIndicator
 				cell.backgroundConfiguration = .listCell()
 				let showsDownload = self.showsDownloadButtons
-				var configuration = UIHostingConfiguration { SourceAppsSkeletonRow(showsDownloadButton: showsDownload) }
-				if let horizontal = self.rowInset.horizontal { configuration = configuration.margins(.horizontal, horizontal) }
+				let configuration = UIHostingConfiguration { SourceAppsSkeletonRow(showsDownloadButton: showsDownload) }
 				cell.contentConfiguration = configuration
 				cell.isAccessibilityElement = false
 			} else if let row = self._displayed?.rows[id] ?? self._previousDisplay?.rows[id] {
@@ -304,11 +296,10 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		source.apps = []
 		source.news = nil
 		cell.backgroundConfiguration = .listCell()
-		var configuration = UIHostingConfiguration {
+		let configuration = UIHostingConfiguration {
 			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app, showSourceBadge: showBadge, showsDownloadButton: showDownload)
 				.tint(Color(hex: UserDefaults.standard.string(forKey: "Aether.userTintColor") ?? "#848ef9"))
 		}
-		if let horizontal = rowInset.horizontal { configuration = configuration.margins(.horizontal, horizontal) }
 		cell.contentConfiguration = configuration
 	}
 

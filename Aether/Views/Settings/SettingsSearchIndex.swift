@@ -46,8 +46,11 @@ enum SettingsSearchIndex {
 		add(.appearance, "Appearance", [
 			("Appearance", "light dark system theme"), ("Theme", "color tint"), ("Custom Theme Color", "colour tint"),
 			("Card Style", "settings device controls tunnel pairing certificate default liquid glass native raised card tiles background"),
-			("Row Insets", "repo apps details all apps row horizontal spacing padding slider"),
 			("Row Icons", "settings flat colored monochrome white muted gray grey icons"),
+			("Overview Icons", "all apps all repos standalone black system surface glass frame border icons"),
+			("Match Repo Icons", "sources artwork overview style frame border glass"),
+			("All Repos Icon", "app store globe books collection symbol"),
+			("Row Icon Size", "apps repos artwork default medium large 50 54 58"),
 			("Section Header Size", "heading font text size"), ("Muted Section Headers", "headings gray grey"), ("Hide Tab Labels", "tab bar icons hide labels"),
 			("Launch Tab", "startup cold launch start sources library default tab"),
 			("Search Placement", "page title right navigation"),
@@ -81,7 +84,7 @@ enum SettingsSearchIndex {
 			("Clear Diagnostics", "delete logs")
 		])
 		add(.reset, "Reset", [
-			("Reset", "clear delete"), ("Reset Work Cache", "storage temporary files"),
+			("Reset", "clear delete"), ("Reset Ignored Updates", "unignore apps versions updates list"), ("Reset Work Cache", "storage temporary files"),
 			("Reset Network Cache", "disk download cache"), ("Reset Pairing", "pair record"),
 			("Reset Tunneling", "vpn network"), ("Reset Sources", "repositories"), ("Reset Signed Apps", "library"),
 			("Reset Imported Apps", "library"), ("Reset Certificates", "signing profiles"),
