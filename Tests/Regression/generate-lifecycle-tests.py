@@ -93,7 +93,7 @@ struct ProvisioningProfileInfo {}
  var iconPrefetchTask:Task<Void,Never>?; var needsTrailingRefresh=false; var refreshGeneration=UUID(); var apps:[AppInfo]=[]; var isLoading=false; var errorMessage:String?
  func prefetchFirstScreenIcons() {}
  func updateApplications(with apps:[AppInfo],profiles:[ProvisioningProfileInfo]) { self.apps=apps }
-''', method(store,'func load() async'), method(store,'func refreshOnForeground() async'), method(store,'func clear()'), method(store,'func refresh(force:'), r'''
+''', method(store,'func load() async'), method(store,'func refreshOnForeground() async'), method(store,'func invalidateConnection()'), method(store,'func clear()'), method(store,'func refresh(force:'), r'''
 }
 @MainActor final class Cellular {
  enum State:Equatable { case idle, checkingSetup, waitingForDataOff, restoringData, establishingTransport }
