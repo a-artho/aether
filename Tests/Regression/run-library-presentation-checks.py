@@ -91,6 +91,7 @@ struct AltSource {}
  var updateIndicatorRequest: [Bool] { [isCheckingForUpdates, higherPriority] }
 '''
 source += declaration(library, 'init()') + '\n'
+source += declaration(library, 'private func beginConnectedRefreshPresentation()') + '\n'
 source += declaration(library, 'func updateRefreshIndicator(checking:') + '\n'
 source += declaration(library, 'func invalidateVerification()') + '\n'
 source += declaration(library, 'func matchUpdates(') + '\n'
@@ -147,6 +148,8 @@ source += '''@main struct Checks {
   precondition(lifecycle.deviceRevision != beforeDisconnect && !lifecycle.hasVerifiedUpdates, "Connection publication invalidates synchronously without a SwiftUI redraw")
   DeviceConnectionManager.shared.state = .connected
   precondition(!lifecycle.hasVerifiedUpdates, "Reconnecting does not validate updates before a fresh device browse")
+  precondition(lifecycle.showsAppRefresh && lifecycle.updateIndicatorStarted != nil,
+   "Reconnecting immediately presents the installed-app refresh while freshness is revalidated")
   lifecycle.invalidateVerification()
   precondition(!lifecycle.hasVerifiedUpdates && lifecycle.updateContexts["app"] == [fresh], "Idle invalidation hides results synchronously without dropping the cache")
   await lifecycle.matchUpdates(versions: ["app": "1"], contexts: [fresh], ignored: [], complete: true)
