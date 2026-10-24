@@ -193,7 +193,13 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
   check(loader.image?.id == "fresh","Old renderer cannot overwrite newer cached icon")
   check(!loader.isLoading,"Cached icon must not keep loading skeleton active")
   loader.load(bundleURL:URL(fileURLWithPath:"/missing"),appearance:.light,tint:"",isTinted:false,dynamic:false,retainsPreviousImage:true)
-  try await Task.sleep(nanoseconds:150_000_000)
+  check(loader.image?.id == "fresh","Handoff retains the previous icon while rendering")
+  // CI scheduling can exceed the renderer's nominal duration. Observe actual
+  // completion with a bounded timeout rather than assuming a 150ms deadline.
+  for _ in 0..<300 {
+   if !loader.isLoading { break }
+   try await Task.sleep(nanoseconds:10_000_000)
+  }
   check(loader.image?.id == "fresh" && !loader.isLoading,"Failed handoff render preserves the previous icon and stops loading")
   let missing=FRAppIconLoader()
   missing.load(bundleURL:URL(fileURLWithPath:"/missing"),appearance:.light,tint:"",isTinted:false,dynamic:false)
