@@ -329,6 +329,7 @@ private struct UnifiedImportRow: View {
 	@ObservedObject private var installations = AppInstallationManager.shared
 	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
 	@State private var retainedIconURL: URL?
+	@StateObject private var accessoryPresentation = ImportAccessoryPresentation()
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -348,8 +349,8 @@ private struct UnifiedImportRow: View {
 					}
 				}
 				.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: displayApp?.isSigned == true)
-			UnifiedImportMetadata(entry: entry, model: activeModel)
-			UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller)
+			UnifiedImportMetadata(entry: entry, model: activeModel, presentation: accessoryPresentation)
+			UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller, presentation: accessoryPresentation)
 		}
 		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: entry.signature)
 		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: entry.signOnlyCompleted(model: activeModel))
@@ -476,6 +477,29 @@ struct UnifiedImportActions: View {
 	}
 }
 
+/// Presentation-only lifetime shared by the status and accessory. Actual work,
+/// queue advancement and cancellation never wait for the visual minimum.
+@MainActor
+private final class ImportAccessoryPresentation: ObservableObject {
+    @Published private(set) var holdingCompletion = false
+    private var started: ContinuousClock.Instant?
+
+    func begin() {
+        guard !holdingCompletion else { return }
+        started = .now
+        holdingCompletion = true
+    }
+
+    func finish() async {
+        guard let started else { return }
+        do { try await Task.sleep(until: started.advanced(by: .milliseconds(600)), clock: .continuous) }
+        catch { return }
+        guard !Task.isCancelled else { return }
+        self.started = nil
+        holdingCompletion = false
+    }
+}
+
 /// Only metadata and controls observe frequent progress changes. The row and icon
 /// keep their SwiftUI identity while the backing artifact changes lifecycle stage.
 @MainActor
@@ -509,12 +533,16 @@ private extension UnifiedImportEntry {
 private struct UnifiedImportMetadata: View {
 	let entry: UnifiedImportEntry
 	let model: InstallerStatusViewModel?
+	@ObservedObject var presentation: ImportAccessoryPresentation
+	@State private var retainedStatus: String?
+	@State private var retainedPhase: String?
 	@StateObject private var activity: UnifiedImportActivity
 	@State private var showsErrorDetails = false
 
-	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?) {
+	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?, presentation: ImportAccessoryPresentation) {
 		self.entry = entry
 		self.model = model
+		self.presentation = presentation
 		_activity = StateObject(wrappedValue: UnifiedImportActivity(entry: entry, model: model))
 	}
 
@@ -583,18 +611,26 @@ private struct UnifiedImportMetadata: View {
 
 	var body: some View {
 		let status = status
-		LibraryRowDetails(
+        let holdsStatus = !showsTaskStatus && presentation.holdingCompletion
+        let taskStatus = showsTaskStatus || holdsStatus
+        LibraryRowDetails(
 			name: entry.displayName,
 			version: app?.version ?? entry.download?.sourceProvenance?.sourceAppVersion,
 			identifier: app?.identifier ?? entry.download?.sourceProvenance?.sourceAppIdentifier,
-			secondaryStatus: showsTaskStatus ? nil : status.text,
-			isFailed: !showsTaskStatus && status.failed,
+			secondaryStatus: taskStatus ? nil : status.text,
+			isFailed: !taskStatus && status.failed,
 			animatesStatus: true,
-			thirdLineStatus: showsTaskStatus ? status.text : nil,
-			thirdLineAnimationKey: numericProgressPhase ?? status.text,
+			thirdLineStatus: holdsStatus ? retainedStatus : (showsTaskStatus ? status.text : nil),
+			thirdLineAnimationKey: holdsStatus ? retainedPhase : (numericProgressPhase ?? status.text),
 			crossfadesStatus: true
 		)
-		.onTapGesture { if failureDetails != nil { showsErrorDetails = true } }
+        .onChange(of: status.text, initial: true) { _, text in
+            if showsTaskStatus { retainedStatus = text; retainedPhase = numericProgressPhase ?? text }
+        }
+        .onChange(of: numericProgressPhase) { _, phase in
+            if showsTaskStatus { retainedPhase = phase ?? status.text }
+        }
+        .onTapGesture { if failureDetails != nil { showsErrorDetails = true } }
 		.alert(String.localized("Error Details"), isPresented: $showsErrorDetails) {
 			Button(String.localized("OK"), role: .cancel) {}
 		} message: { Text(failureDetails ?? "") }
@@ -623,20 +659,29 @@ private struct ImportAccessoryLayout: Layout {
 
 /// A single shape owns the progress track and the pill throughout the morph.
 private struct ImportAccessorySurface: Shape {
-	var expansion: CGFloat
-	var animatableData: CGFloat {
-		get { expansion }
-		set { expansion = newValue }
-	}
-
-	func path(in rect: CGRect) -> Path {
-		let width = 31 + (rect.width - 31) * expansion
-		let height = 31 + 4 * expansion
-		let trailingInset = 6.5 * (1 - expansion)
-		return Capsule().path(in: CGRect(x: rect.maxX - trailingInset - width,
-			y: rect.midY - height / 2, width: width, height: height))
-	}
+ var expansion: CGFloat
+ var animatableData: CGFloat { get { expansion } set { expansion = newValue } }
+ func path(in rect: CGRect) -> Path {
+  let width = 35 + (rect.width - 35) * expansion
+  let height: CGFloat = 35
+  let right = rect.maxX - 4.5 * (1 - expansion)
+  let left = right - width
+  let radius = height / 2
+  let top = rect.midY - radius
+  let bottom = rect.midY + radius
+  var path = Path()
+  path.move(to: CGPoint(x: (left + right) / 2, y: top))
+  path.addLine(to: CGPoint(x: right - radius, y: top))
+  path.addArc(center: CGPoint(x: right - radius, y: rect.midY), radius: radius,
+              startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: false)
+  path.addLine(to: CGPoint(x: left + radius, y: bottom))
+  path.addArc(center: CGPoint(x: left + radius, y: rect.midY), radius: radius,
+              startAngle: .degrees(90), endAngle: .degrees(270), clockwise: false)
+  path.closeSubpath()
+  return path
+ }
 }
+
 
 /// A value snapshot keeps the departing progress visual alive without retaining
 /// a completed download, export or installation model.
@@ -649,65 +694,57 @@ private struct ImportAccessoryProgress: Equatable {
 
 /// Geometry and content derive from the same spring sample, not separate fades.
 private struct ImportAccessoryMorph: AnimatableModifier {
-	var expansion: CGFloat
-	let progress: ImportAccessoryProgress?
-	let reduceMotion: Bool
-
-	var animatableData: CGFloat {
-		get { expansion }
-		set { expansion = newValue }
-	}
-
-	private func ramp(_ start: CGFloat, _ end: CGFloat) -> Double {
-		let t = min(1, max(0, (expansion - start) / (end - start)))
-		return Double(t * t * (3 - 2 * t))
-	}
-
-	func body(content: Content) -> some View {
-		let geometry = min(1.08, max(0, expansion))
-		let tint: Color = progress?.failed == true ? .red : .accentColor
-		content
-			.opacity(ramp(0.45, 0.95))
-			.background {
-				ImportAccessorySurface(expansion: geometry)
-					.fill(Color(uiColor: .quaternarySystemFill).opacity(ramp(0.05, 0.9)))
-					.overlay {
-						ImportAccessorySurface(expansion: geometry)
-							.stroke(tint.opacity(0.2 * (1 - ramp(0.3, 1))), lineWidth: 2.3)
-					}
-			}
-			.overlay {
-				GeometryReader { bounds in
-					if let progress {
-						ZStack {
-							if let amount = progress.amount {
-								Circle().trim(from: 0, to: min(1, max(0, amount)))
-									.stroke(tint, style: StrokeStyle(lineWidth: 2.3, lineCap: .round))
-									.rotationEffect(.degrees(-90))
-									.animation(reduceMotion ? nil : .smooth, value: amount)
-							}
-							if progress.preparing {
-								ProgressView().controlSize(.small).tint(tint)
-							} else {
-								Image(systemName: progress.symbol)
-									.font(.footnote.bold()).foregroundStyle(tint)
-									.contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-									.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: progress.symbol)
-							}
-						}
-						.frame(width: 31, height: 31)
-						// Follow the center of the widening surface rather than leaving
-						// the old symbol stranded at the circle's original position.
-						.position(x: bounds.size.width - 6.5 * (1 - geometry)
-							- (31 + (bounds.size.width - 31) * geometry) / 2,
-							y: bounds.size.height / 2)
-						.opacity(1 - ramp(0.2, 0.7))
-					}
-				}
-				.allowsHitTesting(false).accessibilityHidden(true)
-			}
-	}
+ var expansion: CGFloat
+ let progress: ImportAccessoryProgress?
+ let reduceMotion: Bool
+ var animatableData: CGFloat { get { expansion } set { expansion = newValue } }
+ private func ramp(_ start: CGFloat, _ end: CGFloat) -> Double {
+  let t = min(1, max(0, (expansion - start) / (end - start)))
+  return Double(t * t * (3 - 2 * t))
+ }
+ func body(content: Content) -> some View {
+  let geometry = min(1, max(0, expansion))
+  let tint: Color = progress?.failed == true ? .red : .accentColor
+  content
+   // The surface is anchored on the right. Keep its label centered on the
+   // current surface, not the destination capsule, throughout the reveal.
+   .visualEffect { effect, bounds in
+    effect.offset(x: (1 - geometry) * (bounds.size.width / 2 - 22))
+   }
+   .opacity(ramp(0.62, 1))
+   .background {
+    ImportAccessorySurface(expansion: geometry).fill(Color(uiColor: .quaternarySystemFill).opacity(ramp(0.15, 0.9)))
+   }
+   .overlay {
+    GeometryReader { bounds in
+     if let progress {
+      ZStack {
+       Circle().stroke(tint.opacity(0.12), lineWidth: 1.7)
+       if let amount = progress.amount {
+        Circle().trim(from: 0, to: min(1, max(0, amount)))
+         .stroke(tint, style: StrokeStyle(lineWidth: 1.7, lineCap: .round))
+         .rotationEffect(.degrees(-90))
+         .animation(reduceMotion ? nil : .smooth(duration: 0.2), value: amount)
+       }
+       if progress.preparing {
+        ProgressView().controlSize(.mini).tint(tint)
+       } else {
+        Image(systemName: progress.symbol)
+         .font(.system(size: 12, weight: .bold)).foregroundStyle(tint)
+         .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: progress.symbol)
+       }
+      }
+      .frame(width: 26, height: 26)
+      .position(x: bounds.size.width - 4.5 * (1 - geometry)
+                - (35 + (bounds.size.width - 35) * geometry) / 2, y: bounds.size.height / 2)
+      .opacity(1 - ramp(0.12, 0.64))
+     }
+    }.allowsHitTesting(false).accessibilityHidden(true)
+   }
+ }
 }
+
 
 private struct UnifiedImportAccessory: View {
 	let entry: UnifiedImportEntry
@@ -715,12 +752,15 @@ private struct UnifiedImportAccessory: View {
 	@ObservedObject var controller: UnifiedImportsController
 	@StateObject private var activity: UnifiedImportActivity
 	@State private var retainedProgress: ImportAccessoryProgress?
+	@State private var retainedReadyTitle: String?
+	@ObservedObject var presentation: ImportAccessoryPresentation
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?, controller: UnifiedImportsController) {
+	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?, controller: UnifiedImportsController, presentation: ImportAccessoryPresentation) {
 		self.entry = entry
 		self.model = model
 		self.controller = controller
+		self.presentation = presentation
 		_activity = StateObject(wrappedValue: UnifiedImportActivity(entry: entry, model: model))
 	}
 
@@ -738,28 +778,31 @@ private struct UnifiedImportAccessory: View {
 
 	private var isBusy: Bool { stage != "ready" }
 
+	private var showsProgress: Bool { isBusy || presentation.holdingCompletion }
+
 	private var morphAnimation: Animation? {
-		reduceMotion ? nil : .spring(duration: 0.5, bounce: 0.12)
+		reduceMotion ? nil : .spring(duration: 0.7, bounce: 0)
 	}
 
 	var body: some View {
 		ImportAccessoryLayout {
 			Button {
-				guard !isBusy, let app = entry.app, !controller.isProtected(entry) else { return }
+				guard !showsProgress, let app = entry.app, !controller.isProtected(entry) else { return }
 				if app.isSigned {
 					if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
 				} else { controller.signingApp = AnyApp(base: app) }
 			} label: {
-				NBButton(actionTitle, style: .text, showsBackground: false)
+				NBButton(showsProgress ? (retainedReadyTitle ?? actionTitle) : actionTitle, style: .text, showsBackground: false)
 					.foregroundStyle(Color.accentColor)
-					.contentTransition(reduceMotion ? .identity : .opacity)
+					.fixedSize(horizontal: true, vertical: false)
+					.transaction { $0.animation = nil }
 			}
 			.buttonStyle(.borderless)
-			.disabled(isBusy || controller.isProtected(entry))
-			.accessibilityHidden(isBusy)
-			.modifier(ImportAccessoryMorph(expansion: isBusy ? 0 : 1,
+			.disabled(showsProgress || controller.isProtected(entry))
+			.accessibilityHidden(showsProgress)
+			.modifier(ImportAccessoryMorph(expansion: showsProgress ? 0 : 1,
 				progress: progressPresentation ?? retainedProgress, reduceMotion: reduceMotion))
-			.animation(morphAnimation, value: isBusy)
+			.animation(morphAnimation, value: showsProgress)
 			ForEach(Array([String.localized("Sign"), String.localized("Install"), String.localized("Reinstall")].enumerated()), id: \.offset) { _, title in
 				NBButton(title, style: .text).hidden().accessibilityHidden(true)
 			}
@@ -775,7 +818,19 @@ private struct UnifiedImportAccessory: View {
 		}
 		.tint(Color.accentColor)
 		.foregroundStyle(Color.accentColor)
-		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: actionTitle)
+        .onChange(of: isBusy, initial: true) { _, busy in
+            if busy { presentation.begin() }
+        }
+        .task(id: isBusy) {
+            guard !isBusy else { return }
+            await presentation.finish()
+        }
+        .onChange(of: showsProgress, initial: true) { _, busy in
+            if !busy { retainedReadyTitle = actionTitle }
+        }
+        .onChange(of: actionTitle) { _, title in
+            if !showsProgress { retainedReadyTitle = title }
+        }
 		.onChange(of: progressPresentation, initial: true) { _, presentation in
 			if let presentation { retainedProgress = presentation }
 		}

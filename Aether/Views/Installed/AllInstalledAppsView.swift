@@ -9,6 +9,7 @@ enum InstalledAppsRoute: Hashable {
 
 @MainActor
 struct AllInstalledAppsView<Placeholder: View>: View {
+	@AppStorage("Aether.rowHorizontalInset") private var horizontalInset: RowHorizontalInset = .standard
 	@ObservedObject var store: InstalledAppsStore
 	@ObservedObject private var installations = AppInstallationManager.shared
 	let loadsIcons: Bool
@@ -56,6 +57,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 							.contentShape(Rectangle())
 					}
 					.buttonStyle(.plain)
+					.listRowInsets(.horizontal, horizontalInset.points)
 					.disabled(deletingIDs.contains(app.id))
 					.id(app.id)
 					.listRowSeparator(app.id == apps.first?.id ? .hidden : .visible, edges: .top)

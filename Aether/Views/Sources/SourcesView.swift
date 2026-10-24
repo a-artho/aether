@@ -9,7 +9,6 @@ import SwiftUI
 import NimbleViews
 
 struct SourcesView: View {
-	@Environment(\.scenePhase) private var _scenePhase
 	@StateObject var viewModel = SourcesViewModel.shared
 	@State private var _searchText = ""
 	@State private var _refreshErrorMessage: String?
@@ -191,14 +190,6 @@ struct SourcesView: View {
 		}
 		.onChange(of: _sourceIdentitySnapshot) { _, _ in
 			_resolvePendingNavigationIntent()
-		}
-		.task(id: _sourceIdentitySnapshot) {
-			await viewModel.refreshIfNeeded(Array(_sources))
-		}
-		.task(id: _scenePhase) {
-			if _scenePhase == .active {
-				await viewModel.refreshIfNeeded(Array(_sources))
-			}
 		}
 	}
 

@@ -12,8 +12,8 @@ import UIKit
 // MARK: - View
 // dear god help me
 struct AppearanceView: View {
+	@AppStorage("Aether.rowHorizontalInset") private var _rowHorizontalInset: RowHorizontalInset = .standard
 	@AppStorage("Aether.downloadIconStyle") private var _downloadIconStyle: DownloadIconStyle = .cloud
-	@AppStorage("Aether.fullWidthActionStyle") private var _fullWidthActionStyle: FullWidthActionStyle = .current
 	@AppStorage("Aether.rowIconSize") private var _rowIconSize: RowIconSize = .standard
 	@AppStorage("Aether.allReposIcon") private var _allReposIcon: AllReposIcon = .appStore
 	@AppStorage("Aether.matchRepoIconStyle") private var _matchRepoIconStyle = false
@@ -116,24 +116,21 @@ struct AppearanceView: View {
 			}
 
 			Section {
-				Picker(selection: $_fullWidthActionStyle) {
-					ForEach(FullWidthActionStyle.allCases) { style in
-						Text(style.title).tag(style)
-					}
-				} label: {
-					SettingsRowLabel(.localized("Action Buttons"), systemImage: "capsule", backgroundColor: .gray)
-				}
-				.pickerStyle(.menu)
-				.tint(.secondary)
-			}
-
-			Section {
 				Picker(selection: $_rowIconSize) {
 					ForEach(RowIconSize.allCases) { size in
 						Text(size.title).tag(size)
 					}
 				} label: {
 					SettingsRowLabel(.localized("Row Icon Size"), systemImage: "square.resize", backgroundColor: .gray)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+				Picker(selection: $_rowHorizontalInset) {
+					ForEach(RowHorizontalInset.allCases) { inset in
+						Text(inset.title).tag(inset)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Horizontal Inset"), systemImage: "arrow.left.and.right", backgroundColor: .gray)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)

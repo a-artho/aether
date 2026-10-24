@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import NimbleExtensions
 
 public struct NBButton: View {
 	private var _title: String
@@ -47,7 +48,14 @@ public struct NBButton: View {
 					if _isLoading {
 						ProgressView().controlSize(.mini)
 					}
-					Text(_title).font(.footnote).bold()
+					ZStack {
+                        // Every compact text pill shares Install's intrinsic minimum.
+                        // Localization and Dynamic Type participate in measurement.
+                        Text(String.localized("Install")).font(.footnote).bold()
+                            .hidden().accessibilityHidden(true)
+                        Text(_title).font(.footnote).bold()
+                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                    }
 				}
 				.padding(.horizontal, _horizontalPadding)
 				.frame(height: 35)

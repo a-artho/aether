@@ -32,7 +32,7 @@ struct LibraryRowDetails: View {
 				.lineLimit(isFailed ? 2 : 1)
 
 			if crossfadesStatus || !thirdLineText.isEmpty {
-				SoftStatusText(thirdLineText, phase: statusIdentity) { text in
+				StatusTransitionText(thirdLineText, phase: statusIdentity) { text in
 					thirdLineContent(text.isEmpty ? " " : text)
 				}
 					.font(.footnote)

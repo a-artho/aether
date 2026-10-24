@@ -216,7 +216,8 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		await refresh()
 	}
 
-	func clear() {
+	/// A disconnected device invalidates freshness, not its last verified apps.
+	func invalidateConnection() {
 		initialBrowse?.cancel()
 		initialBrowse = nil
 		verifiedApps = nil
@@ -226,9 +227,13 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		iconPrefetchTask = nil
 		needsTrailingRefresh = false
 		refreshGeneration = UUID()
-		self.apps = []
-		self.errorMessage = nil
-		self.isLoading = false
+		isLoading = false
+		errorMessage = nil
+	}
+
+	func clear() {
+		invalidateConnection()
+		apps = []
 	}
 
 	func delete(app: InstalledApp) async throws {
@@ -254,13 +259,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 
 	func refresh(force: Bool = false) async {
 		guard DeviceConnectionManager.shared.isConnected else {
-			hasLoadedApps = false
-			refreshGeneration = UUID()
-			needsTrailingRefresh = false
-			isLoading = false
-			// Idle disconnects invalidate freshness, not the last verified list.
-			// A failed reconnect must not erase usable apps or update results.
-			self.errorMessage = nil
+			invalidateConnection()
 			return
 		}
 		guard !isLoading else {
@@ -318,6 +317,9 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 						category: "Device"
 					)
 				} catch {
+					// An obsolete lookup must not overwrite a newer session's status.
+					guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected,
+						!Task.isCancelled, !(error is CancellationError) else { return }
 					DebugLogManager.shared.log(
 						"Could not load provisioning profiles: \(error.localizedDescription)",
 						category: "Device",

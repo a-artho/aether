@@ -356,6 +356,14 @@ public final class DeviceConnectionManager: ObservableObject {
 		}
 	}
 
+	/// App-shell bootstrap; shares the existing guarded connection path with activation.
+	public func connectAutomaticallyIfNeeded() {
+		guard UIApplication.shared.applicationState == .active,
+			isConnectAutomaticallyEnabled, isIDeviceInstallationMode,
+			!CellularAssistManager.shared.isBusy else { return }
+		_connectForIDeviceMode()
+	}
+
 	public func prepareForForeground() {
 		awaitingInitialActivation = isConnectAutomaticallyEnabled && isIDeviceInstallationMode
 			&& hasPairingFile && !requiresInAppTunnelSetup

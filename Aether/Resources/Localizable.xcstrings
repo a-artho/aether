@@ -1,8 +1,8 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Checking for Updates…" : {
-
+    "Loading Installed Apps" : {
+      "extractionState" : "manual"
     },
     "Launch Tab" : {
 
@@ -121,9 +121,6 @@
     "Open Aether to resume" : {
       "extractionState" : "manual"
     },
-    "Loading Installed Apps" : {
-      "extractionState" : "manual"
-    },
     "Installation Mode" : {
       "extractionState" : "manual"
     },
@@ -149,6 +146,9 @@
       "extractionState" : "manual"
     },
     "Tab Bar" : {
+      "extractionState" : "manual"
+    },
+    "Horizontal Inset" : {
       "extractionState" : "manual"
     },
     "Hide Tab Labels" : {

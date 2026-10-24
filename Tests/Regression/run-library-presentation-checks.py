@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise production status transitions and update presentation without SwiftUI."""
+"""Exercise production update lifecycle and presentation state without SwiftUI."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -13,88 +13,182 @@ def declaration(path, marker):
         depth += (source[end] == '{') - (source[end] == '}')
         end += 1
     return source[start:end].replace('private func', 'func', 1)
-library = 'Aether/Views/Library/LibraryView.swift'
+library = 'Aether/Backend/Observable/LibraryUpdatesStore.swift'
 source = '''import Foundation
+import Combine
 struct Animation {
  static func easeIn(duration: Double) -> Self { Self() }
  static func easeOut(duration: Double) -> Self { Self() }
 }
 @MainActor func withAnimation(_ animation: Animation?, _ action: () -> Void) { action() }
-struct SourceAppCatalogContext: Equatable { let id: String }
+struct Transaction { var disablesAnimations = false; init(animation: Animation?) {} }
+@MainActor func withTransaction(_ transaction: Transaction, _ action: () -> Void) { action() }
+struct SourceAppCatalogContext: Equatable {
+ let id: String
+ var sourceObjectURI: String { id }
+ var sourceURL: URL? { nil }
+ var revision: String { id }
+}
+enum Level { case error }
+@MainActor final class DebugLogManager {
+ static let shared = DebugLogManager()
+ func log(_ message: String, category: String, level: Level) {}
+}
+actor InstalledAppUpdateCatalog {
+ static let shared = InstalledAppUpdateCatalog()
+ var calls = 0
+ var result: [String: [SourceAppCatalogContext]] = [:]
+ var pause = false
+ var waiter: CheckedContinuation<Void, Never>?
+ func configure(_ result: [String: [SourceAppCatalogContext]], pause: Bool = false) { self.result = result; self.pause = pause }
+ func resume() { waiter?.resume(); waiter = nil; pause = false }
+ func updates(installedVersions: [String: String], contexts: [SourceAppCatalogContext], ignoredIdentifiers: Set<String>) async throws -> [String: [SourceAppCatalogContext]] {
+  calls += 1
+  if pause { await withCheckedContinuation { waiter = $0 } }
+  return result
+ }
+}
+enum DeviceConnectionState { case connected, disconnecting, disconnected }
+@MainActor final class DeviceConnectionManager {
+ static let shared = DeviceConnectionManager()
+ @Published var state = DeviceConnectionState.connected
+}
+struct AltSource {}
+@MainActor final class SourcesViewModel {
+ static let shared = SourcesViewModel()
+ var calls = 0
+ var waiter: CheckedContinuation<Void, Never>?
+ func startRefresh(_ sources: [AltSource]) -> Task<Void, Never> {
+  calls += 1
+  return Task { await withCheckedContinuation { waiter = $0 } }
+ }
+ func finish() { waiter?.resume(); waiter = nil }
+}
+@MainActor final class InstalledAppsStore {
+ static let shared = InstalledAppsStore()
+ var calls = 0
+ func invalidateConnection() {}
+ func refresh(force: Bool) async { calls += 1 }
+}
 @MainActor final class Updates {
+ var connectionObservation: AnyCancellable?
+ var sources: [AltSource] = []
+ var refreshTask: Task<Void, Never>?
+ var refreshInProgress = false
  var updateContexts: [String: [SourceAppCatalogContext]] = [:]
- var showsUpdateCheck = false
+ var showsAppRefresh = false
  var updateIndicatorStarted: ContinuousClock.Instant?
+ var deviceRevision = 0
+ var hasVerifiedUpdates = false
+ var isMatching = false
+ var awaitingMatch = true
+ var verificationGeneration = UUID()
+ var checkID: UUID?
+ var lastMatchedInputs: [String]?
+ var noUpdatesUntil: Date?
  var isCheckingForUpdates = false
  var higherPriority = false
  var updateIndicatorRequest: [Bool] { [isCheckingForUpdates, higherPriority] }
 '''
-source += declaration(library, 'private func updateCheckIndicator()') + '\n'
+source += declaration(library, 'init()') + '\n'
+source += declaration(library, 'func updateRefreshIndicator(checking:') + '\n'
+source += declaration(library, 'func invalidateVerification()') + '\n'
+source += declaration(library, 'func matchUpdates(') + '\n'
+source += declaration(library, 'func startRefresh()') + '\n'
+source += 'func updateRefreshIndicator() async { await updateRefreshIndicator(checking: isCheckingForUpdates, higherPriority: higherPriority) }\n'
 source += declaration(library, 'private func publishUpdateMatches(') + '\n}\n'
-source += '''@MainActor final class Status {
- var text = "Preparing", phase = "preparing", reduceMotion = false
- var displayed = "Preparing", latest = "Preparing", displayedPhase = "preparing"
- var opacity: Double = 1
-'''
-source += declaration('Aether/Views/Common/SoftStatusText.swift', 'private func transitionText()') + '\n}\n'
 source += '''@main struct Checks {
  @MainActor static func main() async throws {
   let updates = Updates()
   let old = SourceAppCatalogContext(id: "old"), fresh = SourceAppCatalogContext(id: "fresh")
   updates.updateContexts = ["app": [old]]
   updates.isCheckingForUpdates = true
-  await updates.updateCheckIndicator()
-  precondition(updates.showsUpdateCheck && updates.updateContexts["app"] == [old], "Checking must not clear known rows")
+  await updates.updateRefreshIndicator()
+  precondition(updates.showsAppRefresh && updates.updateContexts["app"] == [old], "Checking must not clear known rows")
   updates.publishUpdateMatches(["app": [], "new": [fresh]], complete: false)
   precondition(updates.updateContexts["app"] == [old] && updates.updateContexts["new"] == [fresh], "Partial checks retain old updates and publish new ones immediately")
   updates.isCheckingForUpdates = false
   let started = updates.updateIndicatorStarted!
-  await updates.updateCheckIndicator()
+  await updates.updateRefreshIndicator()
   precondition(started.duration(to: .now) >= .seconds(0.5), "Fast checks must display the indicator for at least half a second")
-  precondition(!updates.showsUpdateCheck && updates.updateContexts["new"] == [fresh])
+  precondition(!updates.showsAppRefresh && updates.updateContexts["new"] == [fresh])
   updates.publishUpdateMatches([:], complete: true)
   precondition(updates.updateContexts.isEmpty, "A successful empty result removes old updates")
   updates.isCheckingForUpdates = true
-  await updates.updateCheckIndicator()
+  await updates.updateRefreshIndicator()
   updates.isCheckingForUpdates = false
-  let retiring = Task { await updates.updateCheckIndicator() }
+  let retiring = Task { await updates.updateRefreshIndicator() }
   await Task.yield()
   retiring.cancel()
   updates.isCheckingForUpdates = true
-  await updates.updateCheckIndicator()
+  await updates.updateRefreshIndicator()
   await retiring.value
-  precondition(updates.showsUpdateCheck, "An old canceled dismissal cannot hide a newer check")
+  precondition(updates.showsAppRefresh, "An old canceled dismissal cannot hide a newer check")
   updates.higherPriority = true
-  await updates.updateCheckIndicator()
-  precondition(!updates.showsUpdateCheck && updates.updateIndicatorStarted == nil, "Connection/loading status overrides the minimum")
+  await updates.updateRefreshIndicator()
+  precondition(!updates.showsAppRefresh && updates.updateIndicatorStarted == nil, "Connection/failure status overrides the minimum")
   updates.higherPriority = false
-  await updates.updateCheckIndicator()
+  await updates.updateRefreshIndicator()
   updates.updateIndicatorStarted = ContinuousClock.now.advanced(by: .seconds(-1))
   updates.isCheckingForUpdates = false
-  await updates.updateCheckIndicator()
-  precondition(!updates.showsUpdateCheck, "A slow check adds no extra hold")
-  let status = Status()
-  status.phase = "signing"; status.text = "Signing"
-  let swapping = Task { await status.transitionText() }
-  while status.opacity == 1 { await Task.yield() }
-  precondition(status.displayed == "Preparing" && status.opacity == 0.1, "Outgoing text fades before replacement")
-  status.latest = "Signing latest"
-  await swapping.value
-  precondition(status.displayed == "Signing latest" && status.opacity == 1, "Only the latest text is revealed")
-  status.text = "40 MB / 100 MB"; status.phase = "signing"
-  await status.transitionText()
-  precondition(status.displayed == status.text && status.opacity == 1, "Same-phase numeric updates do not fade")
-  status.phase = "packaging"; status.text = "Packaging"
-  let canceled = Task { await status.transitionText() }
-  while status.opacity == 1 { await Task.yield() }
-  canceled.cancel()
-  status.phase = "installing"; status.text = "Installing"
-  await status.transitionText(); await canceled.value
-  precondition(status.displayed == "Installing" && status.opacity == 1, "Rapid phase changes cannot reveal stale text")
-  status.phase = "done"; status.text = "Ready"; status.reduceMotion = true
-  await status.transitionText()
-  precondition(status.displayed == "Ready" && status.opacity == 1, "Reduce Motion swaps without fading out")
-  print("Library update retention, indicator minimum, cancellation and text transition checks passed")
+  await updates.updateRefreshIndicator()
+  precondition(!updates.showsAppRefresh, "A slow check adds no extra hold")
+  let catalog = InstalledAppUpdateCatalog.shared
+  let lifecycle = Updates()
+  await catalog.configure(["app": [fresh]])
+  await lifecycle.matchUpdates(versions: ["app": "1"], contexts: [fresh], ignored: [], complete: true)
+  precondition(lifecycle.hasVerifiedUpdates && lifecycle.updateContexts["app"] == [fresh])
+  let firstCalls = await catalog.calls
+  await lifecycle.matchUpdates(versions: ["app": "1"], contexts: [fresh], ignored: [], complete: true)
+  let duplicateCalls = await catalog.calls
+  precondition(duplicateCalls == firstCalls, "Reappearing tabs and identical inputs must not scan again")
+  let beforeDisconnect = lifecycle.deviceRevision
+  DeviceConnectionManager.shared.state = .disconnecting
+  precondition(lifecycle.deviceRevision != beforeDisconnect && !lifecycle.hasVerifiedUpdates, "Connection publication invalidates synchronously without a SwiftUI redraw")
+  DeviceConnectionManager.shared.state = .connected
+  precondition(!lifecycle.hasVerifiedUpdates, "Reconnecting does not validate updates before a fresh device browse")
+  lifecycle.invalidateVerification()
+  precondition(!lifecycle.hasVerifiedUpdates && lifecycle.updateContexts["app"] == [fresh], "Idle invalidation hides results synchronously without dropping the cache")
+  await lifecycle.matchUpdates(versions: ["app": "1"], contexts: [fresh], ignored: [], complete: true)
+  precondition(lifecycle.hasVerifiedUpdates, "A fresh browse can validate an unchanged result")
+  let revalidatedCalls = await catalog.calls
+  precondition(revalidatedCalls == firstCalls, "Revalidation of unchanged catalogs/versions reuses matches")
+  await catalog.configure(["stale": [old]], pause: true)
+  let stale = Task { await lifecycle.matchUpdates(versions: ["app": "2"], contexts: [fresh], ignored: [], complete: true) }
+  while await catalog.waiter == nil { await Task.yield() }
+  lifecycle.invalidateVerification()
+  await catalog.resume()
+  await stale.value
+  precondition(!lifecycle.hasVerifiedUpdates && lifecycle.updateContexts["stale"] == nil, "A pre-disconnect check cannot publish into a newer lifecycle")
+  await catalog.configure([:])
+  await lifecycle.matchUpdates(versions: ["app": "3"], contexts: [fresh], ignored: [], complete: false)
+  precondition(!lifecycle.hasVerifiedUpdates && lifecycle.updateContexts["app"] == [fresh], "A partial refresh cannot validate stale updates")
+  await lifecycle.matchUpdates(versions: ["app": "3"], contexts: [fresh], ignored: [], complete: true)
+  precondition(lifecycle.hasVerifiedUpdates && lifecycle.updateContexts.isEmpty, "A complete empty refresh replaces old matches")
+  lifecycle.invalidateVerification()
+  await lifecycle.matchUpdates(versions: ["app": "3"], contexts: [fresh], ignored: [], complete: true)
+  precondition(lifecycle.hasVerifiedUpdates && lifecycle.noUpdatesUntil != nil, "Cached empty revalidation still announces No Updates Available")
+  lifecycle.noUpdatesUntil = nil
+  await lifecycle.matchUpdates(versions: ["app": "3"], contexts: [fresh], ignored: [], complete: true)
+  precondition(lifecycle.noUpdatesUntil == nil, "Unchanged verified inputs must not replay the announcement")
+  await catalog.configure(["app": [fresh]], pause: true)
+  let canceledMatch = Task { await lifecycle.matchUpdates(versions: ["app": "4"], contexts: [fresh], ignored: [], complete: true) }
+  while await catalog.waiter == nil { await Task.yield() }
+  canceledMatch.cancel()
+  await catalog.resume()
+  await canceledMatch.value
+  precondition(!lifecycle.isMatching && lifecycle.updateContexts.isEmpty, "Canceled checks stop progress and cannot publish")
+  let manual = Updates()
+  manual.awaitingMatch = false
+  manual.startRefresh(); manual.startRefresh()
+  precondition(manual.awaitingMatch, "Manual refresh requests result validation even when catalogs remain unchanged")
+  precondition(manual.refreshInProgress && SourcesViewModel.shared.calls == 1, "Repeated pulls synchronously share one refresh owner")
+  while SourcesViewModel.shared.waiter == nil { await Task.yield() }
+  let pendingRefresh = manual.refreshTask!
+  SourcesViewModel.shared.finish()
+  await pendingRefresh.value
+  precondition(!manual.refreshInProgress && manual.refreshTask == nil && InstalledAppsStore.shared.calls == 1, "Manual refresh finishes both repositories and installed apps once")
+  print("Library lifecycle, deduplication, freshness, refresh ownership checks passed")
  }
 }
 '''

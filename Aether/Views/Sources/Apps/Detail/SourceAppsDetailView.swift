@@ -13,6 +13,7 @@ import UIKit
 
 // MARK: - SourceAppsDetailView
 struct SourceAppsDetailView: View {
+	@AppStorage("Aether.rowHorizontalInset") private var horizontalInset: RowHorizontalInset = .standard
 	@State private var _isScreenshotPreviewPresented: Bool = false
 	@State private var _selectedScreenshotIndex: Int = 0
 	@State private var _appStoreDestination: AppStoreDestination?
@@ -36,7 +37,7 @@ struct SourceAppsDetailView: View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: 28) {
 				_metadataStrip()
-					.padding(.horizontal)
+					.padding(.horizontal, horizontalInset.points ?? 20)
 
 				let screenshotURLs = _screenshotURLs
 				if !screenshotURLs.isEmpty {
@@ -266,13 +267,13 @@ extension SourceAppsDetailView {
 		VStack(alignment: .leading, spacing: 10) {
 			Text(title)
 				.nbSectionHeaderFont(weight: .semibold)
-				.nbSectionHeaderColor()
-				.padding(.horizontal)
+				.foregroundStyle(.primary)
+				.padding(.horizontal, horizontalInset.points ?? 20)
 
 			if fullWidthContent {
 				content()
 			} else {
-				content().padding(.horizontal)
+				content().padding(.horizontal, horizontalInset.points ?? 20)
 			}
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
@@ -490,7 +491,7 @@ extension SourceAppsDetailView {
 					}
 				}
 			}
-			.padding(.horizontal)
+			.padding(.horizontal, horizontalInset.points ?? 20)
 			.scrollTargetLayout()
 		}
 		.scrollTargetBehavior(.viewAligned)

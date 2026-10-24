@@ -5,6 +5,7 @@ import NimbleViews
 
 /// Small, already-matched update lists render directly; icons load independently.
 struct InstalledAppUpdatesView: View {
+	@AppStorage("Aether.rowHorizontalInset") private var horizontalInset: RowHorizontalInset = .standard
 	let contexts: [SourceAppCatalogContext]
 	@State private var selectedUpdate: SelectedUpdate?
 	@StateObject private var groupedUpdates: GroupedUpdates
@@ -115,6 +116,7 @@ struct InstalledAppUpdatesView: View {
 								selectedUpdate = SelectedUpdate(sourceURL: row.context.sourceURL,
 									repository: row.context.repository, app: row.app)
 							})
+							.listRowInsets(.horizontal, horizontalInset.points)
 					}
 				} header: {
 					SourceAppDateChip(title: group.title)

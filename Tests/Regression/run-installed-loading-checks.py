@@ -27,7 +27,7 @@ enum Level {case error, debug}
  static var failProfiles=false;static var fetches=0;static var profileFetches=0;static var profileWaiter:CheckedContinuation<[ProvisioningProfileInfo],Never>?
  static var result:[AppInfo]=[]
  func fetchApps(applicationType:String?,lightweight:Bool) async throws -> [AppInfo] {Self.fetches+=1;return Self.result}
- func provisioningProfiles() async throws -> [ProvisioningProfileInfo] {Self.profileFetches+=1;if Self.failProfiles {throw NSError(domain:"Test",code:1)};return await withCheckedContinuation {Self.profileWaiter=$0}}
+ func provisioningProfiles() async throws -> [ProvisioningProfileInfo] {Self.profileFetches+=1;if Self.failProfiles {throw NSError(domain:"Test",code:1)};let result = await withCheckedContinuation {Self.profileWaiter=$0};if Self.failProfiles {throw NSError(domain:"Late profile failure",code:2)};return result}
  static func getAppIconCached(for id:String,cacheVersion:String?) async throws -> String? {nil}
  nonisolated static func iconCacheRevision(for id:String)->String {""}
 }
@@ -37,7 +37,7 @@ enum Level {case error, debug}
  var needsTrailingRefresh=false;var refreshGeneration=UUID();var iconPrefetchTask:Task<Void,Never>?
  var isLoading=false;var errorMessage:String?
 '''
-for start in ['func stageInitialBrowse(', 'func stageVerifiedApps(', 'func load()', 'func refreshOnForeground()', 'func clear()', 'func refresh(force:', 'private func prefetchFirstScreenIcons()', 'private func updateApplications(']:
+for start in ['func stageInitialBrowse(', 'func stageVerifiedApps(', 'func load()', 'func refreshOnForeground()', 'func clear()', 'func invalidateConnection()', 'func refresh(force:', 'private func prefetchFirstScreenIcons()', 'private func updateApplications(']:
  s+=declaration('Aether/Views/Installed/InstalledAppsStore.swift',start)+'\n'
 s+='}\n'
 s+='@MainActor struct LoadingPresentation { let store:Store;let connection=DeviceConnectionManager.shared\n'+declaration('Aether/Views/Library/LibraryView.swift','private var isLoadingInstalledApps:').replace('private var','var',1)+'\n}\n'
@@ -81,10 +81,16 @@ func check(_ value:@autoclosure ()->Bool,_ label:String){precondition(value(),la
   InstallationAppProxy.result=[known,unknown]
   let stale=Task {await store.refresh()}
   while InstallationAppProxy.profileWaiter == nil {await Task.yield()}
-  store.clear();DeviceConnectionManager.shared.isConnected=false
+  store.invalidateConnection()
+  check(store.apps.map(\.id)==["known"] && !store.hasLoadedApps && !store.isLoading,"Background invalidation hides freshness before the asynchronous VPN stop")
+  InstallationAppProxy.failProfiles=true
   InstallationAppProxy.profileWaiter?.resume(returning:[ProvisioningProfileInfo()]);InstallationAppProxy.profileWaiter=nil
   await stale.value
-  check(store.apps.isEmpty && !store.isLoading,"Disconnect prevents stale fallback publication")
+  check(store.errorMessage == nil,"An invalidated profile failure cannot publish into the current session")
+  InstallationAppProxy.failProfiles=false
+  check(store.apps.map(\.id)==["known"] && !store.hasLoadedApps && !store.isLoading,"An old browse cannot publish after invalidation even if Connected has not changed yet")
+  store.clear();DeviceConnectionManager.shared.isConnected=false
+  check(store.apps.isEmpty,"Explicit reset still clears retained apps")
   DeviceConnectionManager.shared.isConnected=true
   InstallationAppProxy.result=[]
   await store.refresh(force:true)

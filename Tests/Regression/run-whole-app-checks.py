@@ -110,6 +110,7 @@ library = (repo/'Aether/Views/Library/LibraryView.swift').read_text()
 prelude = library[library.index('let sections: [LibrarySection] ='):library.index('let layout = LibraryLayout')]
 s += r'''
 struct LibrarySearchFixture {
+ struct Updates { var hasVerifiedUpdates = true }; var updates = Updates()
  enum LibrarySection {case allApps,status,imports,updates}
  var searchText="query";var showAllApps=false;var installationMethod=1;var showsDevicePlaceholder=true
  var importRows:[Int]=[];var appsWithUpdates:[Int]=[]
@@ -123,6 +124,10 @@ func check(_ value:@autoclosure ()->Bool,_ message:String){precondition(value(),
   check(empty.0==0 && empty.1,"No-results placeholder uses the filtered section membership")
   var searched=LibrarySearchFixture();searched.importRows=[1]
   check(!searched.results().1,"Matching download suppresses no-results placeholder")
+  var unverifiedRows=LibrarySearchFixture();unverifiedRows.searchText="";unverifiedRows.showsDevicePlaceholder=false;unverifiedRows.appsWithUpdates=[1]
+  check(unverifiedRows.results().0==1,"Verified updates have a section")
+  unverifiedRows.updates.hasVerifiedUpdates=false
+  check(unverifiedRows.results().0==0,"Unverified retained matches must not show an Updates section")
   let readiness=ReadyDriver(), verificationID=UUID(), record=PairingRecordIdentity(id:"one")
   readiness.activeVerificationID=verificationID;readiness.currentRecord=record
   readiness._publishVerifiedTransport(verificationID:UUID(),generation:nil,record:record,cellularAssistTransaction:false,startedAt:0)

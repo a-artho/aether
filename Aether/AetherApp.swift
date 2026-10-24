@@ -25,17 +25,11 @@ struct AetherApp: App {
 	var body: some Scene {
 		WindowGroup {
 			VariedTabbarView()
+				.modifier(LibraryLifecycleModifier())
 				.environment(\.managedObjectContext, storage.context)
 				.onOpenURL(perform: _handleURL)
 				.onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
 					DebugLogManager.shared.log("Aether became active; awaiting any system file handoff.", category: "Import", level: .debug)
-				}
-				.task(id: deviceConnection.isConnected) {
-					if deviceConnection.isConnected {
-						await installedApps.load()
-					} else {
-						installedApps.clear()
-					}
 				}
 				.onReceive(NotificationCenter.default.publisher(for: Notification.Name("Aether.installedAppsRefresh"))) { _ in
 					Task {
@@ -48,7 +42,6 @@ struct AetherApp: App {
 				}
 				.onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
 					deviceConnection.prepareForForeground()
-					Task { await installedApps.refreshOnForeground() }
 				}
 			.onReceive(NotificationCenter.default.publisher(for: .heartbeatInvalidHost)) { _ in
 				DispatchQueue.main.async {
