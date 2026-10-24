@@ -77,9 +77,20 @@ final class LibraryArtifactIndex: ObservableObject {
 			.flatMap { try? JSONDecoder().decode(LibraryArtifactLineage.self, from: $0) } ?? LibraryArtifactLineage()
 	}
 
-	func recordSigned(uuid: String, sourceUUID: String?, sourceIsSigned: Bool) {
+
+	/// Install the UI identity before Core Data announces the new signed artifact.
+	/// A failed database commit restores the previous mapping, including variants.
+	func publishSigned(uuid: String, sourceUUID: String?, sourceIsSigned: Bool,
+		commit: () throws -> Void) throws {
+		let previous = lineage
 		lineage.recordSigned(uuid: uuid, sourceUUID: sourceUUID, sourceIsSigned: sourceIsSigned)
-		save()
+		do {
+			try commit()
+			save()
+		} catch {
+			lineage = previous
+			throw error
+		}
 	}
 
 	func recordImport(uuid: String) {

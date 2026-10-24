@@ -17,6 +17,7 @@ struct ConfigurationView: View {
 	// MARK: Body
 	var body: some View {
 		NBList(.localized("Signing Options")) {
+			PostSigningSection(options: $_optionsManager.options)
 			Section {
 				NavigationLink(destination: ConfigurationDictView(
 					title: .localized("Display Names"),
@@ -35,7 +36,7 @@ struct ConfigurationView: View {
 			}footer: {
 				Text(.localized("This allows you to set rules for automatically replacing the Bundle ID/Display Name when signing an app."))
 			}
-			SigningOptionsView(options: $_optionsManager.options)
+			SigningOptionsView(options: $_optionsManager.options, showsPostSigning: false)
 		}
 		.toolbar {
 			NBToolbarMenu(

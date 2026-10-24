@@ -22,7 +22,10 @@ struct ExportProgressButton: View {
 				Image(systemName: _systemImage)
 					.foregroundStyle(_tint)
 					.font(.footnote.bold())
+					.contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+					.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: _systemImage)
 			}
+			.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: _systemImage)
 			.frame(width: 31, height: 31)
 			.frame(width: 44, height: 44)
 			.contentShape(Rectangle())

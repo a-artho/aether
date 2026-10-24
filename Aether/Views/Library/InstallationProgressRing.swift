@@ -17,10 +17,12 @@ struct InstallationProgressRing: View {
 					.animation(reduceMotion ? nil : .smooth, value: progress)
 			}
 			Image(systemName: systemImage)
-				.contentTransition(.symbolEffect(.replace))
+				.contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+				.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: systemImage)
 				.foregroundStyle(Color.accentColor)
 				.font(.footnote.bold())
 		}
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: progress != nil)
 		.frame(width: 31, height: 31)
 		.frame(width: 44, height: 44)
 	}

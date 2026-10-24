@@ -18,6 +18,13 @@ class DownloadManager: NSObject, ObservableObject {
 	}
 
 	@Published var downloads: [Download] = []
+	/// Successful imports awaiting delivery through the Library's fetched results.
+	@Published private(set) var committedImports: [String: AppSnapshot] = [:]
+
+	func acknowledgeImports(_ fetchedIDs: Set<String>) {
+		guard committedImports.keys.contains(where: { fetchedIDs.contains($0) }) else { return }
+		committedImports = committedImports.filter { !fetchedIDs.contains($0.key) }
+	}
 
 	var hasActiveWork: Bool { downloads.contains(where: \.isActive) || !_processingTasks.isEmpty || _retiringProcessingCount > 0 }
 
@@ -707,6 +714,11 @@ class DownloadManager: NSObject, ObservableObject {
 
 	private func _finishDownload(_ download: Download) {
 		guard _isCurrent(download) else { return }
+		// Publish the committed artifact before retiring its transfer. SwiftUI's
+		// fetched results may arrive later; both publications keep the same row ID.
+		if let imported = Storage.shared.importedApp(uuid: download.importIdentifier) {
+			committedImports[download.importIdentifier] = AppSnapshot(imported)
+		}
 		download.progress = 1
 		download.unpackageProgress = 1
 		#if !targetEnvironment(macCatalyst)

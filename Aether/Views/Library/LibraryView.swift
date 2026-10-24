@@ -100,7 +100,6 @@ struct LibraryView: View {
 									}
 									.buttonStyle(.plain)
 									.id(app.id)
-									.listRowInsets(NBRowMetrics.listInsets)
 								}
 							}
 							.listSectionSeparator(.hidden)

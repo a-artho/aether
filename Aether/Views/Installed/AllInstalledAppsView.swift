@@ -58,7 +58,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 					.buttonStyle(.plain)
 					.disabled(deletingIDs.contains(app.id))
 					.id(app.id)
-					.listRowInsets(NBRowMetrics.listInsets)
+				.nbOptionalRowInsets()
 					.listRowSeparator(app.id == apps.first?.id ? .hidden : .visible, edges: .top)
 					.listRowSeparator(app.id == apps.last?.id ? .hidden : .visible, edges: .bottom)
 					.swipeActions(edge: .trailing) {

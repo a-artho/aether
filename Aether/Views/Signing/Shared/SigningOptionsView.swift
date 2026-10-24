@@ -12,9 +12,14 @@ import NimbleViews
 struct SigningOptionsView: View {
 	@Binding var options: Options
 	var temporaryOptions: Options?
+	var showsPostSigning = true
 	
 	// MARK: Body
 	var body: some View {
+		if showsPostSigning {
+			PostSigningSection(options: $options, temporaryOptions: temporaryOptions)
+		}
+
 		if (temporaryOptions == nil) {
 			NBSection(.localized("Protection")) {
 				_toggle(
@@ -146,14 +151,7 @@ struct SigningOptionsView: View {
 			Text(.localized("By default, localized titles for the app won't be changed, however this option overrides it."))
 		}
 		
-		NBSection(.localized("Post Signing")) {
-			_toggle(
-				.localized("Install After Signing"),
-				systemImage: "arrow.down.circle.fill",
-				isOn: $options.post_installAppAfterSigned,
-				temporaryValue: temporaryOptions?.post_installAppAfterSigned
-			)
-		}
+
 		
 
 		Section {
@@ -232,6 +230,24 @@ struct SigningOptionsView: View {
 					Text(title).bold()
 				} else {
 					Text(title)
+				}
+			}
+		}
+	}
+}
+
+struct PostSigningSection: View {
+	@Binding var options: Options
+	var temporaryOptions: Options?
+
+	var body: some View {
+		NBSection(.localized("Post Signing")) {
+			Toggle(isOn: $options.post_installAppAfterSigned) {
+				HStack(spacing: 12) {
+					SettingsIconBadge(systemImage: "arrow.down.circle.fill",
+						backgroundColor: SettingsIconBadge.color(for: "arrow.down.circle.fill"))
+					Text(.localized("Install After Signing"))
+						.fontWeight(temporaryOptions.map { $0.post_installAppAfterSigned != options.post_installAppAfterSigned } == true ? .bold : .regular)
 				}
 			}
 		}

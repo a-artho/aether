@@ -210,6 +210,7 @@ final class SigningHandler: NSObject {
 		let signedUUID = _uuid
 		try await MainActor.run {
 			try Task.checkCancellation()
+			try LibraryArtifactIndex.shared.publishSigned(uuid: signedUUID, sourceUUID: sourceUUID, sourceIsSigned: sourceIsSigned) {
 			try Storage.shared.addSigned(
 				uuid: signedUUID,
 				source: sourceURL,
@@ -224,7 +225,7 @@ final class SigningHandler: NSObject {
 				to: signedUUID,
 				kind: .signed
 			)
-			LibraryArtifactIndex.shared.recordSigned(uuid: signedUUID, sourceUUID: sourceUUID, sourceIsSigned: sourceIsSigned)
+			}
 			// Publish the row and its final operation state in one main-actor turn.
 			onCommitted()
 		}

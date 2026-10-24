@@ -180,26 +180,19 @@ struct SigningView: View {
 
 // MARK: - Extension: View
 extension SigningView {
-	@ViewBuilder
 	private var _signingBottomBar: some View {
 		Button {
 			_start()
 		} label: {
-			NBSheetButton(
-				title: _temporaryOptions.post_installAppAfterSigned ? .localized("Sign and Install") : .localized("Start Signing"),
-				style: .prominent
-			)
+			Text(_temporaryOptions.post_installAppAfterSigned ? .localized("Sign and Install") : .localized("Start Signing"))
+				.fontWeight(.semibold)
+				.frame(maxWidth: .infinity)
 		}
-		.buttonStyle(.plain)
+		.buttonStyle(.glassProminent)
+		.controlSize(.large)
+		.tint(.accentColor)
 		.padding(.horizontal, 16)
 		.padding(.vertical, 10)
-		.frame(maxWidth: .infinity)
-		.background {
-			NBVariableBlurView()
-				.rotationEffect(.degrees(180))
-				.ignoresSafeArea(edges: .bottom)
-				.allowsHitTesting(false)
-		}
 	}
 
 	@ViewBuilder

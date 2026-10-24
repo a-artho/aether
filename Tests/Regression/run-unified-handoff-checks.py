@@ -16,7 +16,7 @@ class App:AppInfoPresentable {
  init(_ uuid:String,_ signed:Bool=false,_ date:Date=Date(timeIntervalSince1970:10)){self.uuid=uuid;isSigned=signed;self.date=date}
 }
 final class Imported:App {init(_ uuid:String){super.init(uuid)}}
-final class AppSnapshot:App {init(_ uuid:String){super.init(uuid,true)}}
+final class AppSnapshot:App {init(_ uuid:String,_ signed:Bool=true){super.init(uuid,signed)}}
 final class Signed:App {init(_ uuid:String){super.init(uuid,true)}}
 enum AppInstallationManager {
  struct InstallationRequest {
@@ -32,7 +32,7 @@ struct UnifiedImportEntry {
  var operation:AppInstallationManager.InstallationRequest?;var export:Export?;var date:Date?
 }
 struct Index {var lineage=LibraryArtifactLineage()}
-struct Downloads {var downloads=[Download]()}
+struct Downloads {var downloads=[Download]();var committedImports=[String:AppSnapshot]()}
 struct Installations {var installationCards=[AppInstallationManager.InstallationRequest]()}
 struct Exports {var exports=[Export]()}
 struct Controller {var rows=[UnifiedImportEntry]()}
@@ -76,6 +76,78 @@ struct Controller {var rows=[UnifiedImportEntry]()}
   p.installations.installationCards=[]
   p.index.lineage.remove(uuid:"resigned",isSigned:true)
   precondition(!p.projectedRows.contains{$0.app?.uuid=="resigned"},"Removed lineage cannot resurrect a retired snapshot")
+
+  // A transfer and its fetched import are two publications of the same row.
+  var download=Projection()
+  download.index.lineage.originalDates["download"] = Date(timeIntervalSince1970:1)
+  download.downloads.downloads=[Download(importIdentifier:"download")]
+  let transfer=download.projectedRows
+  precondition(transfer.map(\.id)==["app:download"])
+  download.controller.rows=transfer
+  download.imported=[Imported("download")]
+  let importedWhileTransferring=download.projectedRows
+  precondition(importedWhileTransferring.map(\.id)==transfer.map(\.id),"Database arrival must not create an extra transfer row")
+  precondition(importedWhileTransferring[0].app?.uuid=="download")
+  download.controller.rows=importedWhileTransferring
+  download.downloads.downloads=[]
+  let imported=download.projectedRows
+  precondition(imported.map(\.id)==transfer.map(\.id) && imported[0].date==transfer[0].date,"Finishing an import must preserve identity and order")
+
+  // Check each publication boundary, including multiple existing signed variants.
+  for revealed in [false,true] {
+   for sourceIsSigned in [false,true] {
+    for fetchedFirst in [false,true] {
+     var q=Projection();q.imported=[Imported("original")]
+     q.index.lineage.recordSigned(uuid:"old",sourceUUID:"original",sourceIsSigned:false)
+     q.signed=[Signed("old")]
+     if revealed {q.index.lineage.reveal(originalUUID:"original")}
+     let source:App = sourceIsSigned ? q.signed[0] : q.imported[0]
+     q.installations.installationCards=[.init(app:source)]
+     let initial=q.projectedRows
+     let activeID=initial.first{$0.operation != nil}!.id
+     let initialCount=initial.count
+     q.controller.rows=initial
+     q.index.lineage.recordSigned(uuid:"new",sourceUUID:source.uuid,sourceIsSigned:sourceIsSigned)
+     if fetchedFirst {q.signed.append(Signed("new"))}
+     q.installations.installationCards=[.init(app:AppSnapshot("new"))]
+     let committed=q.projectedRows
+     precondition(Set(committed.map(\.id)).count==committed.count,"No duplicate row IDs at commit")
+     // Re-signing retains the old signed artifact as a separate, intentional variant.
+     precondition(committed.count==initialCount+1,"Only the new signed variant may add a row")
+     if sourceIsSigned || !revealed {
+      precondition(committed.contains{$0.id==activeID && $0.app?.uuid=="new"},"New artifact must inherit the signing row")
+     }
+     q.controller.rows=committed
+     q.installations.installationCards=[]
+     let retired=q.projectedRows
+     precondition(retired.map(\.id)==committed.map(\.id),"Retiring the job must not add, remove or reorder rows")
+     q.controller.rows=retired
+     if !fetchedFirst {q.signed.append(Signed("new"))}
+     let delivered=q.projectedRows
+     precondition(delivered.map(\.id)==committed.map(\.id),"Fetched delivery must not add, remove or reorder rows")
+    }
+   }
+  }
+
+  var late=Projection()
+  late.index.lineage.originalDates["late"] = Date(timeIntervalSince1970:1)
+  late.downloads.downloads=[Download(importIdentifier:"late")]
+  let transferring=late.projectedRows
+  late.controller.rows=transferring
+  late.downloads.committedImports["late"] = AppSnapshot("late",false)
+  late.downloads.downloads=[]
+  let awaitingFetch=late.projectedRows
+  precondition(awaitingFetch.map(\.id)==transferring.map(\.id),"Completed transfer must not remove its row while fetched import is delayed")
+  precondition(awaitingFetch[0].app?.isSigned==false && awaitingFetch[0].download==nil)
+  precondition(awaitingFetch[0].date==transferring[0].date)
+  late.controller.rows=awaitingFetch
+  late.imported=[Imported("late")]
+  precondition(late.projectedRows.map(\.id)==awaitingFetch.map(\.id),"Fetched import replaces its handoff without a duplicate row")
+  late.downloads.committedImports=[:]
+  precondition(late.projectedRows.map(\.id)==awaitingFetch.map(\.id))
+  late.imported=[];late.downloads.committedImports["late"] = AppSnapshot("late",false)
+  late.index.lineage.remove(uuid:"late",isSigned:false)
+  precondition(late.projectedRows.isEmpty,"Deleted imports must not be resurrected by a delayed handoff")
   print("Unified import-to-signed handoff checks passed")
  }
 }

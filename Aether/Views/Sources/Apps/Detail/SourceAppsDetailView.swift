@@ -13,6 +13,7 @@ import UIKit
 
 // MARK: - SourceAppsDetailView
 struct SourceAppsDetailView: View {
+	@AppStorage("Aether.rowInset") private var rowInset: NBRowInset = .system
 	@State private var _isScreenshotPreviewPresented: Bool = false
 	@State private var _selectedScreenshotIndex: Int = 0
 	@State private var _appStoreDestination: AppStoreDestination?
@@ -36,10 +37,11 @@ struct SourceAppsDetailView: View {
 		ScrollView {
 			VStack(alignment: .leading, spacing: 28) {
 				_metadataStrip()
+					.padding(.horizontal, rowInset.horizontal)
 
 				let screenshotURLs = _screenshotURLs
 				if !screenshotURLs.isEmpty {
-					_detailSection(.localized("Screenshots")) {
+					_detailSection(.localized("Screenshots"), fullWidthContent: true) {
 						_screenshots(screenshotURLs: screenshotURLs)
 					}
 				}
@@ -137,7 +139,6 @@ struct SourceAppsDetailView: View {
 					}
 				}
 			}
-			.padding(.horizontal, 20)
 			.padding(.top, 10)
 			.padding(.bottom, 44)
 		}
@@ -260,39 +261,25 @@ extension SourceAppsDetailView {
 	@ViewBuilder
 	private func _detailSection<Content: View>(
 		_ title: String,
+		fullWidthContent: Bool = false,
 		@ViewBuilder content: () -> Content
 	) -> some View {
 		VStack(alignment: .leading, spacing: 10) {
 			Text(title)
 				.nbSectionHeaderFont(weight: .semibold)
 				.nbSectionHeaderColor()
+				.padding(.horizontal, rowInset.horizontal)
 
-			content()
-		}
-		.frame(maxWidth: .infinity, alignment: .leading)
-	}
-
-	@ViewBuilder
-	private func _detailSection<Trailing: View, Content: View>(
-		_ title: String,
-		@ViewBuilder trailing: () -> Trailing,
-		@ViewBuilder content: () -> Content
-	) -> some View {
-		VStack(alignment: .leading, spacing: 10) {
-			HStack(alignment: .firstTextBaseline, spacing: 12) {
-				Text(title)
-					.nbSectionHeaderFont(weight: .semibold)
-					.nbSectionHeaderColor()
-
-				Spacer(minLength: 8)
-
-				trailing()
+			if fullWidthContent {
+				content()
+			} else {
+				content().padding(.horizontal, rowInset.horizontal)
 			}
-
-			content()
 		}
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
+
+
 
 	// MARK: Metadata strip
 
@@ -504,10 +491,9 @@ extension SourceAppsDetailView {
 					}
 				}
 			}
-			.padding(.horizontal)
+			.padding(.horizontal, rowInset.horizontal)
 			.scrollTargetLayout()
 		}
 		.scrollTargetBehavior(.viewAligned)
-		.padding(.horizontal, -20)
 	}
 }

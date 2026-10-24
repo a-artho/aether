@@ -27,6 +27,14 @@ struct UnifiedImportEntry: Identifiable {
 		return row
 	}
 
+	var displayName: String {
+		let candidates = [app?.name, operation?.app.name, export?.app.name,
+			download?.sourceProvenance?.sourceAppName, app?.identifier,
+			download?.sourceProvenance?.sourceAppIdentifier, download?.fileName]
+		return candidates.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+			.first { !$0.isEmpty } ?? .localized("Unknown")
+	}
+
 	var signature: String {
 		var components: [String] = [id]
 		components.append(app?.uuid ?? "")
@@ -59,7 +67,7 @@ final class UnifiedImportsController: ObservableObject {
 	@Published private(set) var rows: [UnifiedImportEntry] = []
 
 	var visibleRows: [UnifiedImportEntry] {
-		rows.filter { !deletingRows.contains($0.id) }
+		rows.filter { !deletingRows.contains($0.id) && !cancellingRows.contains($0.id) }
 	}
 	var hasRows: Bool { !visibleRows.isEmpty }
 
@@ -90,13 +98,7 @@ final class UnifiedImportsController: ObservableObject {
 		Task { @MainActor in
 			defer {
 				// A retired transfer must not reappear when cleanup releases its lock.
-				updateRows(rows.compactMap { row in
-					guard row.id == rowID, row.download?.id == download.id else { return row }
-					guard row.app != nil else { return nil }
-					var retained = row
-					retained.download = nil
-					return retained
-				})
+				updateRows(rows.filter { $0.id != rowID })
 				cancellingRows.remove(rowID)
 			}
 			await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -188,6 +190,7 @@ struct UnifiedImportsDataSource: ViewModifier {
     private struct Inputs: Equatable {
         let artifacts: [ArtifactInput]
         let downloads: [String]
+        let committedImports: [String]
         let operations: [String]
         let exports: [UUID]
         let lineage: LibraryArtifactLineage
@@ -196,12 +199,15 @@ struct UnifiedImportsDataSource: ViewModifier {
         let artifacts: [AppInfoPresentable] = Array(imported).map { $0 as AppInfoPresentable } + Array(signed).map { $0 as AppInfoPresentable }
         return Inputs(artifacts: artifacts.map { ArtifactInput($0) },
             downloads: downloads.downloads.map { $0.id },
+            committedImports: downloads.committedImports.keys.sorted(),
             operations: installations.installationCards.map { "\($0.id)|\($0.appKey)|\($0.app.name ?? "")|\($0.app.version ?? "")" },
             exports: exports.exports.map(\.id), lineage: index.lineage)
     }
     func body(content: Content) -> some View {
         content.onChange(of: inputs, initial: true) { _, _ in
             controller.updateRows(projectedRows)
+            let retired = downloads.committedImports.keys.filter { index.lineage.originalDates[$0] == nil }
+            downloads.acknowledgeImports(Set(imported.compactMap(\.uuid)).union(retired))
         }
     }
 
@@ -232,6 +238,13 @@ struct UnifiedImportsDataSource: ViewModifier {
 				!linkedOriginals.contains(uuid) || lineage.revealedOriginals.contains(uuid) else { continue }
 			rows.append(UnifiedImportEntry(id: "app:" + uuid, app: app, date: lineage.originalDates[uuid] ?? app.date))
 		}
+		for (uuid, app) in downloads.committedImports {
+			guard lineage.originalDates[uuid] != nil, originals[uuid] == nil, !transferringOriginals.contains(uuid),
+				!linkedOriginals.contains(uuid) || lineage.revealedOriginals.contains(uuid) else { continue }
+			rows.append(UnifiedImportEntry(id: "app:" + uuid, app: app,
+				date: lineage.originalDates[uuid] ?? app.date))
+		}
+
 		for download in downloads.downloads {
 			rows.append(UnifiedImportEntry(id: "app:" + download.importIdentifier, app: originals[download.importIdentifier], download: download,
 				date: lineage.originalDates[download.importIdentifier]))
@@ -295,7 +308,6 @@ struct UnifiedImportsRows: View {
 		ForEach(entries) { entry in
 			UnifiedImportRow(entry: entry, controller: controller)
 				.id(entry.id)
-				.listRowInsets(NBRowMetrics.listInsets)
 				.onChange(of: entry.operation?.id, initial: true) { old, new in
 					if let old { visibleOperation(old, entry.id, false) }
 					if let new { visibleOperation(new, entry.id, true) }
@@ -316,6 +328,7 @@ private struct UnifiedImportRow: View {
 	@ObservedObject var controller: UnifiedImportsController
 	@ObservedObject private var installations = AppInstallationManager.shared
 	@State private var retainedIconURL: URL?
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
 	var body: some View {
@@ -330,11 +343,14 @@ private struct UnifiedImportRow: View {
 							.background(Color(uiColor: .systemBackground), in: .circle)
 							.offset(x: 3, y: 3)
 							.accessibilityLabel(String.localized("Signed"))
+							.transition(reduceMotion ? .identity : .opacity)
 					}
 				}
+				.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: displayApp?.isSigned == true)
 			UnifiedImportMetadata(entry: entry, model: activeModel)
 			UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller)
 		}
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: snapshot.signature)
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
 			if horizontalSizeClass != .compact {
@@ -550,7 +566,8 @@ private struct UnifiedImportMetadata: View {
 		if let download = entry.download {
 			switch download.state {
 			case .downloading: return "downloading"
-			case .processing where !download.waitingForForeground: return "download-processing"
+			case .processing where !download.waitingForForeground:
+					return download.isPreparingSource ? "download-preparing" : "download-processing"
 			default: return nil
 			}
 		}
@@ -565,7 +582,7 @@ private struct UnifiedImportMetadata: View {
 	var body: some View {
 		let status = status
 		LibraryRowDetails(
-			name: app?.name ?? entry.download?.sourceProvenance?.sourceAppName ?? entry.download?.fileName ?? .localized("Unknown"),
+			name: entry.displayName,
 			version: app?.version ?? entry.download?.sourceProvenance?.sourceAppVersion,
 			identifier: app?.identifier ?? entry.download?.sourceProvenance?.sourceAppIdentifier,
 			secondaryStatus: showsTaskStatus ? nil : status.text,
@@ -599,28 +616,35 @@ private struct UnifiedImportAccessory: View {
 		_activity = StateObject(wrappedValue: UnifiedImportActivity(entry: entry, model: model))
 	}
 
+	private var actionTitle: String {
+		guard let app = entry.app, app.isSigned else { return .localized("Sign") }
+		return AppInstallationManager.shared.installActionTitle(for: app)
+	}
+
 	private var stage: String {
 		if let operation = entry.operation, !entry.signOnlyCompleted(model: model) { return operation.id.uuidString }
 		if let export = entry.export { return "export:" + export.id.uuidString }
 		if let download = entry.download { return "download:" + download.id }
-		return entry.app?.isSigned == true ? "signed" : "imported"
+		return "ready"
 	}
 
 	var body: some View {
 		ZStack(alignment: .trailing) {
 			VStack(spacing: 0) {
 			if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
-				if let model = model {
-					if case .broken = model.status {
+				ZStack {
+					InstallationProgressRing(progress: operationRingProgress, systemImage: operationRingSymbol)
+						.accessibilityLabel(model?.statusLabel ?? String.localized("Queued"))
+						.accessibilityValue(model.map { Text(progress($0), format: .percent.precision(.fractionLength(0))) } ?? Text(""))
+						.accessibilityHidden(canRetry)
+					if canRetry {
 						Button { AppInstallationManager.shared.retryActiveInstall() } label: {
-							InstallationProgressRing(progress: nil, systemImage: "arrow.clockwise")
-						}.buttonStyle(.borderless).accessibilityLabel(String.localized("Retry"))
-					} else {
-						InstallationProgressRing(progress: progress(model), systemImage: model.statusImage)
-							.accessibilityLabel(model.statusLabel)
-							.accessibilityValue(Text(progress(model), format: .percent.precision(.fractionLength(0))))
+							Color.clear.frame(width: 44, height: 44).contentShape(Rectangle())
+						}
+						.buttonStyle(.borderless)
+						.accessibilityLabel(String.localized("Retry"))
 					}
-				} else { InstallationProgressRing(progress: nil, systemImage: "clock") }
+				}
 			} else if let export = entry.export { ExportProgressButton(export: export) }
 			else if let download = entry.download { DownloadProgressButton(download: download) }
 			else if let app = entry.app {
@@ -629,10 +653,13 @@ private struct UnifiedImportAccessory: View {
 						if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
 					} else { controller.signingApp = AnyApp(base: app) }
 				} label: {
-				NBButton(app.isSigned ? AppInstallationManager.shared.installActionTitle(for: app) : .localized("Sign"), style: .text)
+				NBButton(actionTitle, style: .text)
 					.foregroundStyle(Color.accentColor)
+					.contentTransition(reduceMotion ? .identity : .opacity)
+					.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: actionTitle)
 			}
 				.buttonStyle(.borderless)
+				.disabled(controller.isProtected(entry))
 			}
 		}
 			.id(stage)
@@ -643,6 +670,20 @@ private struct UnifiedImportAccessory: View {
 		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stage)
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
 		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
+	}
+
+	private var canRetry: Bool {
+		if case .broken = model?.status { return true }
+		return false
+	}
+
+	private var operationRingProgress: Double? {
+		guard let model, !canRetry else { return nil }
+		return progress(model)
+	}
+
+	private var operationRingSymbol: String {
+		canRetry ? "arrow.clockwise" : (model?.statusImage ?? "clock")
 	}
 
 	private func progress(_ model: InstallerStatusViewModel) -> Double { model.operationProgress }
@@ -657,6 +698,7 @@ struct UnifiedImportsPresentation: ViewModifier {
 			.fullScreenCover(item: $controller.signingApp) { SigningView(app: $0.base) }
 			.sheet(isPresented: $controller.importing) {
 				LibraryImportPickerView { urls in
+					controller.importing = false
 					for url in urls {
 						let download = DownloadManager.shared.startArchive(from: url, id: "AetherManualDownload_" + UUID().uuidString)
 						DownloadManager.shared.retryProcessing(download)

@@ -18,36 +18,40 @@ struct LibraryRowDetails: View {
 	var body: some View {
 		VStack(alignment: .leading, spacing: NBRowMetrics.lineSpacing) {
 			Text(name)
+				.contentTransition(crossfadesStatus && !reduceMotion ? .opacity : .identity)
+				.animation(textAnimation, value: name)
 				.nbRowTitle()
 				.foregroundStyle(.primary)
 				.lineLimit(1)
 
-			Text(_secondLine)
+			Text(crossfadesStatus && _secondLine.isEmpty ? " " : _secondLine)
 				.nbRowSubtitle()
-				.contentTransition(.interpolate)
-				.animation(animatesStatus && !reduceMotion ? .smooth(duration: 0.2) : nil, value: secondaryStatus)
+				.contentTransition(crossfadesStatus ? .opacity : .interpolate)
+				.animation(textAnimation, value: _secondLine)
 				.foregroundStyle(isFailed ? Color.red : Color.secondary)
 				.lineLimit(isFailed ? 2 : 1)
 
-			ZStack(alignment: .leading) {
-				if let text = thirdLineStatus ?? identifier, !text.isEmpty {
-					Text(text)
-						.font(.footnote)
-						.foregroundStyle(.secondary)
-						.lineLimit(thirdLineStatus != nil ? nil : 1)
-						.fixedSize(horizontal: false, vertical: thirdLineStatus != nil)
-						.allowsTightening(thirdLineStatus != nil)
-						.contentTransition(showsNumericProgress || crossfadesStatus ? .identity : .interpolate)
-						.id(crossfadesStatus ? statusIdentity : "status")
-						.transition(crossfadesStatus && !reduceMotion ? .opacity : .identity)
-				}
+			if crossfadesStatus || !thirdLineText.isEmpty {
+				Text(thirdLineText.isEmpty ? " " : thirdLineText)
+					.font(.footnote)
+					.foregroundStyle(.secondary)
+					.lineLimit(thirdLineStatus != nil ? nil : 1)
+					.fixedSize(horizontal: false, vertical: thirdLineStatus != nil)
+					.allowsTightening(thirdLineStatus != nil)
+					.contentTransition(reduceMotion ? .identity : (crossfadesStatus ? .opacity : (showsNumericProgress ? .identity : .interpolate)))
+					.animation(textAnimation, value: statusIdentity)
+					.accessibilityHidden(thirdLineText.isEmpty)
 			}
-			.animation(animatesStatus && !reduceMotion ? .easeInOut(duration: 0.2) : nil,
-				value: statusIdentity)
 		}
 		.padding(.vertical, NBRowMetrics.textVerticalPadding)
 		.frame(maxWidth: .infinity, alignment: .leading)
 	}
+
+	private var textAnimation: Animation? {
+		animatesStatus && !reduceMotion ? .easeInOut(duration: 0.2) : nil
+	}
+
+	private var thirdLineText: String { thirdLineStatus ?? identifier ?? "" }
 
 	private var statusIdentity: String {
 		thirdLineAnimationKey ?? thirdLineStatus ?? identifier ?? ""

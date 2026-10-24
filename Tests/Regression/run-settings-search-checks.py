@@ -11,6 +11,9 @@ start = manager.index('enum SettingsPage: String {')
 end = manager.index('\n\t}', start) + 3
 page = manager[start:end]
 index = (root / 'Aether/Views/Settings/SettingsSearchIndex.swift').read_text()
+metrics=(root/'NimbleKit/Sources/NimbleViews/Views/NBRowText.swift').read_text()
+a=metrics.index('public enum NBRowInset:');b=metrics.index('/// Balanced typography',a)
+insets=metrics[a:b]
 checks = r'''
 @main struct SearchChecks {
  @MainActor static func main() {
@@ -18,6 +21,9 @@ checks = r'''
   func has(_ query: String, _ key: String, _ page: AppTabManager.SettingsPage) -> Bool {
    results(query).contains { $0.key == key && $0.destination == .page(page) }
   }
+  precondition(NBRowInset.allCases.map(\.rawValue)==[0,1,2,3])
+  precondition(NBRowInset.allCases.map(\.horizontal)==[nil,20,22,24],"Slider stops must preserve system defaults before the three explicit insets")
+  precondition(has("row insets","Row Insets",.appearance))
   precondition(results("  \n ").isEmpty)
   precondition(results("nonexistentoptionxyz").isEmpty)
   precondition(has("HÁPTICS", "Haptics", .appearance))
@@ -32,13 +38,13 @@ checks = r'''
   precondition(Set(SettingsSearchIndex.entries.map(\.id)).count == SettingsSearchIndex.entries.count)
   precondition(results("github").first?.destination == .sourceCode)
   precondition(!SettingsSearchIndex.entries.contains { $0.key == "Controls in Header" || $0.key == "Liquid Glass Tiles" || $0.key == "Settings Placement" })
-  print("Settings search: 14 matching, ranking, identity, and routing checks passed")
+  print("Settings search and four-stop row inset checks passed")
  }
 }
 '''
 with tempfile.TemporaryDirectory(prefix='aether-search-tests-') as folder:
     source = Path(folder) / 'SearchChecks.swift'
-    source.write_text('import Foundation\nstruct AppTabManager {\n' + page + '\n}\nextension String { static func localized(_ key: String) -> String { key } }\n' + index + checks)
+    source.write_text('import Foundation\nstruct AppTabManager {\n' + page + '\n}\nextension String { static func localized(_ key: String) -> String { key } }\n' + index + insets + checks)
     binary = Path(folder) / 'SearchChecks'
     env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
     subprocess.run(['xcrun', 'swiftc', '-parse-as-library', str(source), '-o', str(binary)], check=True, env=env)

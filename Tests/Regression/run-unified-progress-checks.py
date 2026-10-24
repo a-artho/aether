@@ -10,10 +10,23 @@ activity = source[source.index('@MainActor\nprivate final class UnifiedImportAct
 cancellation = source[source.index('\tfunc cancelDownload('):source.index('\n\tfunc delete(_ targets:')]
 visibility = source[source.index('\tvar visibleRows:'):source.index('\n\tfunc updateRows(')]
 update_rows = source[source.index('\tfunc updateRows('):source.index('\n\tfunc isProtected(')]
+def declaration(marker):
+    a=source.index(marker);b=source.index('{',a)+1;n=1
+    while n:
+        n+=(source[b]=='{')-(source[b]=='}');b+=1
+    return source[a:b]
+name=declaration('var displayName:')
+phase=declaration('private var numericProgressPhase:').replace('private var','var',1)
 fixture = r'''
 import Foundation
 import Combine
-@MainActor final class Download: ObservableObject { let id = UUID().uuidString; @Published var progress = 0.0 }
+@MainActor final class Download: ObservableObject {
+ let id = UUID().uuidString; @Published var progress = 0.0
+ enum State {case downloading,processing,paused}
+ var state=State.downloading;var isPreparingSource=false;var waitingForForeground=false
+ struct Provenance {var sourceAppName:String?;var sourceAppIdentifier:String?}
+ var sourceProvenance:Provenance?;var fileName:String="Fixture.ipa"
+}
 @MainActor final class DownloadManager {
  static let shared = DownloadManager()
  var requests = 0
@@ -33,21 +46,28 @@ import Combine
  UPDATE_ROWS
  CANCELLATION
 }
-@MainActor final class AppExport: ObservableObject { @Published var progress = 0.0 }
+@MainActor final class AppExport: ObservableObject {
+ @Published var progress = 0.0
+ enum State {case exporting,failed}
+ var state=State.exporting;var app=UnifiedImportEntry.App()
+}
 @MainActor final class InstallerStatusViewModel: ObservableObject {
  enum Status { case signing, completed(Result<Void, Error>) }
  @Published var status = Status.signing
 }
 @MainActor struct UnifiedImportEntry {
  var id = UUID().uuidString
- var signature: String { id }
- struct App {var isSigned=true}
+ var signature: String { id + "|" + (download?.id ?? "") + "|" + String(app != nil) }
+ struct App {var isSigned=true;var name:String?;var identifier:String?}
  struct Operation {var installRequested:Bool;var signing:Bool?=true;var app=App()}
  var download: Download?
  var export: AppExport?
  var operation: Operation?
  var app:App?=App()
 }
+extension String {static func localized(_ s:String)->String{s}}
+extension UnifiedImportEntry {DISPLAY_NAME}
+@MainActor struct MetadataFixture {var entry:UnifiedImportEntry;var model:InstallerStatusViewModel?;PHASE}
 enum Failure: Error { case fixture }
 @MainActor private final class WeakReference {
  weak var value: UnifiedImportActivity?
@@ -110,6 +130,37 @@ enum Failure: Error { case fixture }
   DownloadManager.shared.completions.removeValue(forKey: ObjectIdentifier(second))!()
   while !cancellation.cancellingRows.isEmpty && Date() < deadline { await Task.yield() }
   precondition(cancellation.cancellingRows.isEmpty)
+  // Cancelling a transaction also rolls back any imported record it has published.
+  let retainedDownload=Download(), discardedDownload=Download()
+  let retained=CancellationFixture()
+  retained.updateRows([.init(id:"retained",download:retainedDownload), .init(id:"discarded",download:discardedDownload,app:nil)])
+  retained.cancelDownload(retainedDownload,rowID:"retained")
+  retained.cancelDownload(discardedDownload,rowID:"discarded")
+  precondition(retained.visibleRows.isEmpty,"Cancelled rows disappear in one layout change")
+  // Simulate transfer removal arriving before its database rollback.
+  retained.updateRows([.init(id:"retained"),.init(id:"discarded",app:nil)])
+  precondition(retained.visibleRows.isEmpty,"A temporary ready artifact must remain masked during cancellation")
+  let cleanupDeadline=Date().addingTimeInterval(2)
+  while DownloadManager.shared.completions.count<2 && Date()<cleanupDeadline {await Task.yield()}
+  precondition(DownloadManager.shared.completions.count==2)
+  DownloadManager.shared.completions.removeValue(forKey:ObjectIdentifier(retainedDownload))!()
+  DownloadManager.shared.completions.removeValue(forKey:ObjectIdentifier(discardedDownload))!()
+  while !retained.cancellingRows.isEmpty && Date()<cleanupDeadline {await Task.yield()}
+  precondition(retained.visibleRows.isEmpty && retained.rows.isEmpty,"Cleanup must not revive a transient imported row")
+  var title=UnifiedImportEntry(app:.init(name:"  ",identifier:"com.fixture.app"))
+  precondition(title.displayName=="com.fixture.app","Blank names must fall back to a useful identifier")
+  title.download=Download();title.download!.sourceProvenance = .init(sourceAppName:" Source Name ",sourceAppIdentifier:nil)
+  precondition(title.displayName=="Source Name")
+  title.app = .init(name:" App Name ",identifier:nil)
+  precondition(title.displayName=="App Name")
+  let processing=Download();processing.state = .processing;processing.isPreparingSource=true
+  let presentation=MetadataFixture(entry:.init(download:processing),model:nil)
+  let preparing=presentation.numericProgressPhase
+  processing.isPreparingSource=false
+  let extracting=presentation.numericProgressPhase
+  precondition(preparing != extracting,"Preparing and processing must transition as distinct phases")
+  processing.progress=0.9
+  precondition(presentation.numericProgressPhase==extracting,"Progress ticks must not restart phase transitions")
   print("Unified row progress, completion, subscription release and download cancellation checks passed")
  }
 }
@@ -117,7 +168,7 @@ enum Failure: Error { case fixture }
 with tempfile.TemporaryDirectory(prefix='aether-unified-progress-') as directory:
     root = pathlib.Path(directory)
     swift = root / 'Checks.swift'
-    swift.write_text(fixture.replace('CANCELLATION', cancellation).replace('VISIBILITY', visibility).replace('UPDATE_ROWS', update_rows).replace('@main struct Checks', activity + '\n@main struct Checks'))
+    swift.write_text(fixture.replace('DISPLAY_NAME',name).replace('PHASE',phase).replace('CANCELLATION', cancellation).replace('VISIBILITY', visibility).replace('UPDATE_ROWS', update_rows).replace('@main struct Checks', activity + '\n@main struct Checks'))
     environment = dict(os.environ)
     environment.setdefault('DEVELOPER_DIR', '/Applications/Xcode.app/Contents/Developer')
     subprocess.run(['xcrun', 'swiftc', '-parse-as-library', str(swift), '-o', str(root / 'Checks')], env=environment, check=True)

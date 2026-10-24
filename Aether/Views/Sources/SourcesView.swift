@@ -64,7 +64,7 @@ struct SourcesView: View {
 									.foregroundStyle(.secondary)
 									.frame(width: 50, height: 50)
 								NBTitleWithSubtitleView(
-									title: .localized("Store"),
+									title: .localized("All Repos"),
 									subtitle: .localized("See all apps from your sources")
 								)
 							}

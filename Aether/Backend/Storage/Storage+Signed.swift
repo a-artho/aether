@@ -22,24 +22,30 @@ extension Storage {
 	) throws {
 		let new = Signed(context: context)
 		
-		new.uuid = uuid
-		new.source = source
-		new.date = Date()
-		// if nil, we assume adhoc or certificate was deleted afterwards
-		if let certificateUUID {
-			let request: NSFetchRequest<CertificatePair> = CertificatePair.fetchRequest()
-			request.fetchLimit = 1
-			request.predicate = NSPredicate(format: "uuid == %@", certificateUUID)
-			new.certificate = try context.fetch(request).first
-		}
-		// could possibly be nil, but thats fine.
-		new.identifier = appIdentifier
-		new.name = appName
-		new.icon = appIcon
-		new.version = appVersion
+		do {
+			new.uuid = uuid
+			new.source = source
+			new.date = Date()
+			// if nil, we assume adhoc or certificate was deleted afterwards
+			if let certificateUUID {
+				let request: NSFetchRequest<CertificatePair> = CertificatePair.fetchRequest()
+				request.fetchLimit = 1
+				request.predicate = NSPredicate(format: "uuid == %@", certificateUUID)
+				new.certificate = try context.fetch(request).first
+			}
+			// could possibly be nil, but thats fine.
+			new.identifier = appIdentifier
+			new.name = appName
+			new.icon = appIcon
+			new.version = appVersion
 		
-		if context.hasChanges {
-			try context.save()
+			if context.hasChanges {
+				try context.save()
+			}
+		} catch {
+			// Remove only this insertion; unrelated pending context edits must survive.
+			context.delete(new)
+			throw error
 		}
 		HapticManager.shared.impact()
 	}

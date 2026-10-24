@@ -12,6 +12,7 @@ import UIKit
 // MARK: - View
 // dear god help me
 struct AppearanceView: View {
+	@AppStorage("Aether.rowInset") private var _rowInset: NBRowInset = .system
 	@AppStorage("Aether.repoDownloadIconSize") private var _repoDownloadIconSize: RepoDownloadIconSize = .large
 	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .sources
 	@AppStorage("Aether.settingsRowIconStyle") private var _settingsRowIconStyle: SettingsRowIconStyle = .colored
@@ -107,6 +108,15 @@ struct AppearanceView: View {
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
+			}
+
+			Section {
+				Slider(value: Binding(
+					get: { Double(_rowInset.rawValue) },
+					set: { _rowInset = NBRowInset(rawValue: Int($0.rounded())) ?? .system }
+				), in: 0...3, step: 1)
+				.accessibilityLabel(String.localized("Row Insets"))
+				.accessibilityValue(_rowInset.horizontal.map { String(Int($0)) } ?? String.localized("System Default"))
 			}
 
 			NBSection(.localized("Section Headers")) {

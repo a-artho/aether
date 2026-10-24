@@ -8,6 +8,7 @@ import NimbleViews
 import IDeviceSwift
 
 struct TunnelView: View {
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@ObservedObject private var connection = DeviceConnectionManager.shared
 	@ObservedObject private var embeddedTunnel = EmbeddedTunnelManager.shared
 	@ObservedObject private var installations = AppInstallationManager.shared
@@ -63,80 +64,91 @@ struct TunnelView: View {
 	@ViewBuilder
 	private var _inAppControls: some View {
 		Section {
-			DisclosureGroup(isExpanded: $networkConfigurationExpanded) {
-				Text(.localized("Network Configuration"))
-					.font(.subheadline.weight(.semibold))
-					.foregroundStyle(.secondary)
-
-			HStack {
-				SettingsRowLabel(.localized("Tunnel IP"), systemImage: "network", backgroundColor: .blue)
-				Spacer()
-				TextField("10.7.1.1/32", text: $draftInterfaceIP)
-					.multilineTextAlignment(.trailing)
-					.autocorrectionDisabled()
-					.textInputAutocapitalization(.never)
-					.keyboardType(.numbersAndPunctuation)
-					.onChange(of: draftInterfaceIP) { _, _ in _validate() }
-					.disabled(connection.isUpdating || AppMaintenanceGuard.pairingBlockReason != nil)
-			}
-
-			HStack {
-				SettingsRowLabel(.localized("Device IP"), systemImage: "iphone", backgroundColor: .purple)
-				Spacer()
-				TextField("10.7.0.1/32", text: $draftPeerIP)
-					.multilineTextAlignment(.trailing)
-					.autocorrectionDisabled()
-					.textInputAutocapitalization(.never)
-					.keyboardType(.numbersAndPunctuation)
-					.onChange(of: draftPeerIP) { _, _ in _validate() }
-					.disabled(connection.isUpdating || AppMaintenanceGuard.pairingBlockReason != nil)
-			}
-
-			Toggle(isOn: $draftAllowIntermediate) {
-				SettingsRowLabel(.localized("Allow Intermediate Addresses"), systemImage: "arrow.triangle.branch", backgroundColor: .teal)
-			}
-			.onChange(of: draftAllowIntermediate) { _, _ in _validate() }
-			.disabled(connection.isUpdating || AppMaintenanceGuard.pairingBlockReason != nil)
-
-			if let validationError {
-				Text(validationError)
-					.font(.caption)
-					.foregroundColor(.red)
-			}
-
-			if _isDirty {
-				Button {
-					_saveSettings()
-				} label: {
-					HStack {
-						Spacer()
-						if isSaving {
-							ProgressView()
-								.controlSize(.small)
-								.padding(.trailing, 4)
-						}
-						Text(.localized("Save & Apply"))
-							.fontWeight(.semibold)
-							.foregroundColor(_isValid ? .accentColor : .secondary)
-						Spacer()
-					}
+			Button {
+				withAnimation(reduceMotion ? nil : .snappy) {
+					networkConfigurationExpanded.toggle()
 				}
-				.disabled(!_isValid || isSaving || connection.state != .disconnected || connection.isUpdating)
+			} label: {
+				HStack(spacing: 12) {
+					SettingsIconBadge(systemImage: _embeddedStatusIcon, backgroundColor: _embeddedStatusColor)
+					VStack(alignment: .leading, spacing: 2) {
+						Text(.localized("Aether Tunnel"))
+							.foregroundStyle(.primary)
+						Text(_embeddedStatusText)
+							.font(.footnote)
+							.foregroundStyle(.secondary)
+					}
+					Spacer()
+					Image(systemName: "chevron.right")
+						.font(.footnote.weight(.semibold))
+						.foregroundStyle(.tertiary)
+						.rotationEffect(.degrees(networkConfigurationExpanded ? 90 : 0))
+						.accessibilityHidden(true)
+				}
+				.contentShape(Rectangle())
 			}
+			.buttonStyle(.plain)
+			.accessibilityValue(networkConfigurationExpanded ? String.localized("Expanded") : String.localized("Collapsed"))
+
+			if networkConfigurationExpanded {
+				HStack {
+					SettingsRowLabel(.localized("Tunnel IP"), systemImage: "network", backgroundColor: .blue)
+					Spacer()
+					TextField("10.7.1.1/32", text: $draftInterfaceIP)
+						.multilineTextAlignment(.trailing)
+						.autocorrectionDisabled()
+						.textInputAutocapitalization(.never)
+						.keyboardType(.numbersAndPunctuation)
+						.onChange(of: draftInterfaceIP) { _, _ in _validate() }
+						.disabled(connection.isUpdating || AppMaintenanceGuard.pairingBlockReason != nil)
+				}
+
+				HStack {
+					SettingsRowLabel(.localized("Device IP"), systemImage: "iphone", backgroundColor: .purple)
+					Spacer()
+					TextField("10.7.0.1/32", text: $draftPeerIP)
+						.multilineTextAlignment(.trailing)
+						.autocorrectionDisabled()
+						.textInputAutocapitalization(.never)
+						.keyboardType(.numbersAndPunctuation)
+						.onChange(of: draftPeerIP) { _, _ in _validate() }
+						.disabled(connection.isUpdating || AppMaintenanceGuard.pairingBlockReason != nil)
+				}
+
+				Toggle(isOn: $draftAllowIntermediate) {
+					SettingsRowLabel(.localized("Allow Intermediate Addresses"), systemImage: "arrow.triangle.branch", backgroundColor: .teal)
+				}
+				.onChange(of: draftAllowIntermediate) { _, _ in _validate() }
+				.disabled(connection.isUpdating || AppMaintenanceGuard.pairingBlockReason != nil)
+
+				if let validationError {
+					Text(validationError)
+						.font(.caption)
+						.foregroundColor(.red)
+				}
+
+				if _isDirty {
+					Button {
+						_saveSettings()
+					} label: {
+						HStack {
+							Spacer()
+							if isSaving {
+								ProgressView()
+									.controlSize(.small)
+									.padding(.trailing, 4)
+							}
+							Text(.localized("Save & Apply"))
+								.fontWeight(.semibold)
+								.foregroundColor(_isValid ? .accentColor : .secondary)
+							Spacer()
+						}
+					}
+					.disabled(!_isValid || isSaving || connection.state != .disconnected || connection.isUpdating)
+				}
 				Text(.localized("When enabled, non-base CIDR addresses (e.g. 10.7.0.1/24) are accepted and normalized to their network base route. Adjust these addresses if the default 10.7.0.1 subnet conflicts with your Wi-Fi network."))
 					.font(.footnote)
 					.foregroundStyle(.secondary)
-			} label: {
-			HStack(spacing: 12) {
-				SettingsIconBadge(systemImage: _embeddedStatusIcon, backgroundColor: _embeddedStatusColor)
-				VStack(alignment: .leading, spacing: 2) {
-					Text(.localized("Aether Tunnel"))
-						.foregroundColor(.primary)
-					Text(_embeddedStatusText)
-						.font(.footnote)
-						.foregroundColor(.secondary)
-				}
-			}
 			}
 		}
 

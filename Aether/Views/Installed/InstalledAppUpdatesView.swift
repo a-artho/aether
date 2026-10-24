@@ -115,7 +115,6 @@ struct InstalledAppUpdatesView: View {
 								selectedUpdate = SelectedUpdate(sourceURL: row.context.sourceURL,
 									repository: row.context.repository, app: row.app)
 							})
-						.listRowInsets(NBRowMetrics.listInsets)
 					}
 				} header: {
 					SourceAppDateChip(title: group.title)

@@ -41,6 +41,14 @@ extension Storage {
 	}
 
 	@MainActor
+	func importedApp(uuid: String) -> Imported? {
+		let request: NSFetchRequest<Imported> = Imported.fetchRequest()
+		request.fetchLimit = 1
+		request.predicate = NSPredicate(format: "uuid == %@", uuid)
+		return try? context.fetch(request).first
+	}
+
+	@MainActor
 	func importedExists(uuid: String) throws -> Bool {
 		let request: NSFetchRequest<Imported> = Imported.fetchRequest()
 		request.fetchLimit = 1
