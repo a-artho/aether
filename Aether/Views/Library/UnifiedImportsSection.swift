@@ -351,7 +351,8 @@ private struct UnifiedImportRow: View {
 			UnifiedImportMetadata(entry: entry, model: activeModel)
 			UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller)
 		}
-		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: snapshot.signature)
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: entry.signature)
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: entry.signOnlyCompleted(model: activeModel))
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
 			if horizontalSizeClass != .compact {
@@ -603,6 +604,28 @@ private struct UnifiedImportMetadata: View {
 	}
 }
 
+/// Interpolate against the label's intrinsic width; no delayed geometry/state
+/// measurement and no replacement identity is needed for the circle/pill handoff.
+private struct ImportAccessoryLayout: Layout {
+	var expansion: CGFloat
+	var animatableData: CGFloat {
+		get { expansion }
+		set { expansion = newValue }
+	}
+
+	func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+		let size = subviews.first?.sizeThatFits(.unspecified) ?? CGSize(width: 44, height: 44)
+		return CGSize(width: 44 + (max(44, size.width) - 44) * expansion, height: max(44, size.height))
+	}
+
+	func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+		guard let label = subviews.first else { return }
+		let size = label.sizeThatFits(.unspecified)
+		label.place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing,
+			proposal: ProposedViewSize(width: size.width, height: size.height))
+	}
+}
+
 private struct UnifiedImportAccessory: View {
 	let entry: UnifiedImportEntry
 	let model: InstallerStatusViewModel?
@@ -629,48 +652,65 @@ private struct UnifiedImportAccessory: View {
 		return "ready"
 	}
 
+	private var isBusy: Bool { stage != "ready" }
+
 	var body: some View {
-		ZStack(alignment: .trailing) {
-			VStack(spacing: 0) {
-			if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
-				ZStack {
-					InstallationProgressRing(progress: operationRingProgress, systemImage: operationRingSymbol)
-						.accessibilityLabel(model?.statusLabel ?? String.localized("Queued"))
-						.accessibilityValue(model.map { Text(progress($0), format: .percent.precision(.fractionLength(0))) } ?? Text(""))
-						.accessibilityHidden(canRetry)
-					if canRetry {
-						Button { AppInstallationManager.shared.retryActiveInstall() } label: {
-							Color.clear.frame(width: 44, height: 44).contentShape(Rectangle())
-						}
-						.buttonStyle(.borderless)
-						.accessibilityLabel(String.localized("Retry"))
-					}
-				}
-			} else if let export = entry.export { ExportProgressButton(export: export) }
-			else if let download = entry.download { DownloadProgressButton(download: download) }
-			else if let app = entry.app {
-				Button {
-					if app.isSigned {
-						if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
-					} else { controller.signingApp = AnyApp(base: app) }
-				} label: {
-				NBButton(actionTitle, style: .text)
+		// One persistent pill owns layout and its surface. The progress controls
+		// occupy an overlay, so retiring work cannot insert a second layout owner.
+		Button {
+			guard !isBusy, let app = entry.app, !controller.isProtected(entry) else { return }
+			if app.isSigned {
+				if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
+			} else { controller.signingApp = AnyApp(base: app) }
+		} label: {
+			ImportAccessoryLayout(expansion: isBusy ? 0 : 1) {
+				NBButton(actionTitle, style: .text, showsBackground: false)
 					.foregroundStyle(Color.accentColor)
 					.contentTransition(reduceMotion ? .identity : .opacity)
-					.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: actionTitle)
+					.opacity(isBusy ? 0 : 1)
 			}
-				.buttonStyle(.borderless)
-				.disabled(controller.isProtected(entry))
-			}
+				.background {
+					Capsule()
+						.fill(Color(uiColor: .quaternarySystemFill).opacity(isBusy ? 0 : 1))
+						.padding(.horizontal, isBusy ? 6.5 : 0)
+						.frame(height: isBusy ? 31 : 35)
+				}
 		}
-			.id(stage)
-			.transition(reduceMotion ? .identity : .opacity)
+		.buttonStyle(.borderless)
+		.disabled(isBusy || controller.isProtected(entry))
+		.accessibilityHidden(isBusy)
+		.overlay(alignment: .trailing) {
+			ZStack {
+				progressControl.transition(.opacity)
+			}
+			.allowsHitTesting(isBusy)
+			.accessibilityHidden(!isBusy)
 		}
 		.tint(Color.accentColor)
 		.foregroundStyle(Color.accentColor)
-		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: stage)
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: stage)
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: actionTitle)
 		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
 		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
+	}
+
+	@ViewBuilder private var progressControl: some View {
+		if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
+			ZStack {
+				InstallationProgressRing(progress: operationRingProgress, systemImage: operationRingSymbol)
+					.accessibilityLabel(model?.statusLabel ?? String.localized("Queued"))
+					.accessibilityValue(model.map { Text(progress($0), format: .percent.precision(.fractionLength(0))) } ?? Text(""))
+					.accessibilityHidden(canRetry)
+				if canRetry {
+					Button { AppInstallationManager.shared.retryActiveInstall() } label: {
+						Color.clear.frame(width: 44, height: 44).contentShape(Rectangle())
+					}
+					.buttonStyle(.borderless)
+					.accessibilityLabel(String.localized("Retry"))
+				}
+			}
+		} else if let export = entry.export { ExportProgressButton(export: export) }
+		else if let download = entry.download { DownloadProgressButton(download: download) }
 	}
 
 	private var canRetry: Bool {

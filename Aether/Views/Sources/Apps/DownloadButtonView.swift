@@ -21,6 +21,28 @@ enum RepoDownloadIconSize: Int, CaseIterable, Identifiable {
     }
 }
 
+enum DownloadIconStyle: String, CaseIterable, Identifiable {
+	case cloud, circle, arrow, save
+
+	var id: Self { self }
+	var systemImage: String {
+		switch self {
+		case .cloud: "icloud.and.arrow.down"
+		case .circle: "arrow.down.circle"
+		case .arrow: "arrow.down"
+		case .save: "square.and.arrow.down"
+		}
+	}
+	var title: String {
+		switch self {
+		case .cloud: .localized("Cloud")
+		case .circle: .localized("Circle")
+		case .arrow: .localized("Arrow")
+		case .save: .localized("Save")
+		}
+	}
+}
+
 struct DownloadButtonView: View {
 	enum Style {
 		case compact
@@ -31,6 +53,7 @@ struct DownloadButtonView: View {
 	let source: ASRepository?
 	let app: ASRepository.App
 	var style: Style = .compact
+	@AppStorage("Aether.downloadIconStyle") private var iconStyle: DownloadIconStyle = .cloud
 	@AppStorage("Aether.repoDownloadIconSize") private var iconSize: RepoDownloadIconSize = .large
 	@AppStorage("Aether.userTintColor") private var themeHex = "#848ef9"
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -60,13 +83,13 @@ struct DownloadButtonView: View {
 				} label: {
 					switch style {
 					case .compact:
-						Image(systemName: "icloud.and.arrow.down")
+						Image(systemName: iconStyle.systemImage)
 							.foregroundStyle(_themeColor)
                             .font(.system(size: CGFloat(iconSize.rawValue), weight: .semibold))
 							.frame(width: 44, height: 44)
 							.contentShape(Rectangle())
 					case .navigation:
-						Image(systemName: "icloud.and.arrow.down")
+						Image(systemName: iconStyle.systemImage)
 							.fontWeight(.semibold)
 							.foregroundStyle(.primary)
 					}

@@ -189,9 +189,7 @@ extension SigningView {
 				.fontWeight(.semibold)
 				.frame(maxWidth: .infinity)
 		}
-		.buttonStyle(.glassProminent)
-		.controlSize(.large)
-		.tint(.accentColor)
+		.fullWidthActionStyle()
 		.padding(.horizontal, 16)
 		.padding(.vertical, 10)
 	}

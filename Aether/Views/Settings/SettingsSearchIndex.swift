@@ -50,12 +50,14 @@ enum SettingsSearchIndex {
 			("Overview Icons", "all apps all repos standalone black system surface glass frame border icons"),
 			("Match Repo Icons", "sources artwork overview style frame border glass"),
 			("All Repos Icon", "app store globe books collection symbol"),
+			("Action Buttons", "full width signing pairing news current glass button style"),
 			("Row Icon Size", "apps repos artwork default medium large 50 54 58"),
 			("Section Header Size", "heading font text size"), ("Muted Section Headers", "headings gray grey"), ("Hide Tab Labels", "tab bar icons hide labels"),
 			("Launch Tab", "startup cold launch start sources library default tab"),
 			("Search Placement", "page title right navigation"),
 			("Left-Aligned Page Titles", "leading left navigation main tabs title alignment"), ("Hide Search Icon", "page title magnifying glass"), ("Dynamic Icons", "app light dark"),
 			("Tinted Icons", "app color colour"), ("Show Download Buttons", "repo sources chevron"),
+			("Download Icon", "cloud circle arrow save symbol repo rows app details download"),
 			("Download Icon Size", "repo small medium large 14 16 18 sizing"), ("Store Cell Appearance", "sources rows description"), ("Standard", "sources description layout"),
 			("Big Description", "sources rows layout"), ("Haptics", "click feedback strength")
 		])

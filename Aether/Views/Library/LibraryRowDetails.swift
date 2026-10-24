@@ -4,6 +4,7 @@ import NimbleViews
 /// Shared metadata hierarchy for Library apps and in-flight transfers.
 struct LibraryRowDetails: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@Environment(\.dynamicTypeSize) private var dynamicTypeSize
 	let name: String
 	let version: String?
 	let identifier: String?
@@ -32,12 +33,9 @@ struct LibraryRowDetails: View {
 				.lineLimit(isFailed ? 2 : 1)
 
 			if crossfadesStatus || !thirdLineText.isEmpty {
-				Text(thirdLineText.isEmpty ? " " : thirdLineText)
+				thirdLineContent
 					.font(.footnote)
 					.foregroundStyle(.secondary)
-					.lineLimit(thirdLineStatus != nil ? nil : 1)
-					.fixedSize(horizontal: false, vertical: thirdLineStatus != nil)
-					.allowsTightening(thirdLineStatus != nil)
 					.contentTransition(reduceMotion ? .identity : (crossfadesStatus ? .opacity : (showsNumericProgress ? .identity : .interpolate)))
 					.animation(textAnimation, value: statusIdentity)
 					.accessibilityHidden(thirdLineText.isEmpty)
@@ -45,6 +43,22 @@ struct LibraryRowDetails: View {
 		}
 		.padding(.vertical, NBRowMetrics.textVerticalPadding)
 		.frame(maxWidth: .infinity, alignment: .leading)
+	}
+
+	@ViewBuilder private var thirdLineContent: some View {
+		let text = thirdLineText.isEmpty ? " " : thirdLineText
+		if thirdLineStatus != nil && !dynamicTypeSize.isAccessibilitySize {
+			// Prefer one natural-size line; if it cannot fit, preserve the full
+			// message instead of truncating it or shrinking it to unreadable text.
+			ViewThatFits(in: .horizontal) {
+				Text(text).lineLimit(1).fixedSize(horizontal: true, vertical: true)
+				Text(text).fixedSize(horizontal: false, vertical: true)
+			}
+		} else {
+			Text(text)
+				.lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+				.fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
+		}
 	}
 
 	private var textAnimation: Animation? {

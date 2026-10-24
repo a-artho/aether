@@ -12,6 +12,8 @@ import UIKit
 // MARK: - View
 // dear god help me
 struct AppearanceView: View {
+	@AppStorage("Aether.downloadIconStyle") private var _downloadIconStyle: DownloadIconStyle = .cloud
+	@AppStorage("Aether.fullWidthActionStyle") private var _fullWidthActionStyle: FullWidthActionStyle = .current
 	@AppStorage("Aether.rowIconSize") private var _rowIconSize: RowIconSize = .standard
 	@AppStorage("Aether.allReposIcon") private var _allReposIcon: AllReposIcon = .appStore
 	@AppStorage("Aether.matchRepoIconStyle") private var _matchRepoIconStyle = false
@@ -108,6 +110,18 @@ struct AppearanceView: View {
 					}
 				} label: {
 					SettingsRowLabel(.localized("Card Style"), systemImage: "rectangle.on.rectangle", backgroundColor: .gray)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+			}
+
+			Section {
+				Picker(selection: $_fullWidthActionStyle) {
+					ForEach(FullWidthActionStyle.allCases) { style in
+						Text(style.title).tag(style)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Action Buttons"), systemImage: "capsule", backgroundColor: .gray)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
@@ -213,6 +227,15 @@ struct AppearanceView: View {
 				Toggle(isOn: $_showRepoDownloadButtons) {
 					SettingsRowLabel(.localized("Show Download Buttons"), systemImage: "icloud.and.arrow.down", backgroundColor: .blue)
 				}
+				Picker(selection: $_downloadIconStyle) {
+					ForEach(DownloadIconStyle.allCases) { style in
+						Label(style.title, systemImage: style.systemImage).tag(style)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Download Icon"), systemImage: "arrow.down.circle", backgroundColor: .blue)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
                 Picker(selection: $_repoDownloadIconSize) {
                     ForEach(RepoDownloadIconSize.allCases) { size in Text(size.label).tag(size) }
                 } label: {

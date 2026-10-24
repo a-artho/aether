@@ -159,7 +159,7 @@ final class FRAppIconLoader: ObservableObject {
 			await MainActor.run { [weak self] in
 				guard !Task.isCancelled, self?.generation == generation else { return }
 				self?.isLoading = false
-				self?.image = generated
+				if generated != nil || !retainsPreviousImage { self?.image = generated }
 			}
 		}
 	}
@@ -184,6 +184,7 @@ struct FRAppIconView: View {
 	private let usesDefaultApp: Bool
 	private let retainsPreviousImage: Bool
 
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@Environment(\.displayScale) private var displayScale
 	@Environment(\.colorScheme) private var colorScheme
 	@StateObject private var loader = FRAppIconLoader()
@@ -205,20 +206,29 @@ struct FRAppIconView: View {
 	}
 
 	var body: some View {
-		Group {
+		ZStack {
 			if let image = loader.image {
 				Image(uiImage: image)
 					.appIconStyle(size: size)
+					.id(ObjectIdentifier(image))
+					.transition(.opacity)
 			} else if let remoteIconURL {
 				LazyImage(url: remoteIconURL) { state in
-					if let image = state.image { image.appIconStyle(size: size) }
-					else { AppIconSkeleton(size: size, isLoading: state.isLoading) }
+					ZStack {
+						if let image = state.image {
+							image.appIconStyle(size: size).transition(.opacity)
+						} else {
+							AppIconSkeleton(size: size, isLoading: state.isLoading).transition(.opacity)
+						}
+					}
+					.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: state.image != nil)
 				}.processors([.resize(width: size * displayScale)])
 			} else {
 				skeleton
 			}
 		}
-		.transaction { $0.animation = nil }
+		.frame(width: size, height: size)
+		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: loader.image.map { ObjectIdentifier($0) })
 		.task(id: "\(app?.uuid ?? "")|\(app?.isSigned ?? false)|\(appearance.rawValue)\(selectedColorHex)\(shouldTintIcons)\(shouldChangeIconsBasedOffStyle)\(displayScale)") {
 			await _load()
 		}

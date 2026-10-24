@@ -66,9 +66,11 @@ struct SourceNewsCardInfoView: View {
 							Button {
 								UIApplication.shared.open(url)
 							} label: {
-								NBSheetButton(title: .localized("Open"), systemImage: "arrow.up.right")
+								Label(String.localized("Open"), systemImage: "arrow.up.right")
+									.fontWeight(.semibold)
+									.frame(maxWidth: .infinity)
 							}
-							.buttonStyle(.plain)
+							.fullWidthActionStyle()
 						}
 						
 						if let date = new.date?.date {

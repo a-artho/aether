@@ -102,7 +102,7 @@ struct LibraryView: View {
 									.buttonStyle(.plain)
 									.id(app.id)
 									.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-										Button(String.localized("Ignore Updates"), systemImage: "bell.slash") {
+										Button(String.localized("Ignore"), systemImage: "bell.slash") {
 											ignoredUpdates.ignore(app.bundleIdentifier)
 										}
 										.tint(.orange)

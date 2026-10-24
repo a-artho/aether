@@ -8,7 +8,6 @@
 import SwiftUI
 
 struct AppVersionInfo: View {
-	@AppStorage("Aether.mutedSectionHeaders") private var mutedSectionHeaders = false
 	let version: String
 	let date: Date?
 	let description: String
@@ -34,7 +33,7 @@ struct AppVersionInfo: View {
 			if isPlaceholder {
 				Text(SourceAppBodyText.replacingEmoji(in: description))
 					.modifier(SourceAppBodyFont(textStyle: textStyle))
-					.foregroundStyle(mutedSectionHeaders ? Color.primary : Color.secondary)
+					.foregroundStyle(.secondary)
 					.fixedSize(horizontal: false, vertical: true)
 			} else {
 				ExpandableText(

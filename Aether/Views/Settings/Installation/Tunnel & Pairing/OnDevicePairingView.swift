@@ -100,10 +100,10 @@ struct OnDevicePairingView: View {
 				_openSettings()
 			} label: {
 				Text(.localized("Open Settings"))
+					.fontWeight(.semibold)
 					.frame(maxWidth: .infinity)
 			}
-			.buttonStyle(.borderedProminent)
-			.controlSize(.large)
+			.fullWidthActionStyle()
 
 			Text(.localized("Aether stays active in the background while Settings completes the secure pairing."))
 				.font(.footnote)
@@ -178,10 +178,10 @@ struct OnDevicePairingView: View {
 				_openSettings()
 			} label: {
 				Text(.localized("Open Settings"))
+					.fontWeight(.semibold)
 					.frame(maxWidth: .infinity)
 			}
-			.buttonStyle(.borderedProminent)
-			.controlSize(.large)
+			.fullWidthActionStyle()
 		}
 	}
 
