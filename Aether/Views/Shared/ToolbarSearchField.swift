@@ -13,6 +13,19 @@ enum SearchPlacement: String, CaseIterable, Identifiable {
 	}
 }
 
+enum RootPageTitlePlacement: String, CaseIterable, Identifiable {
+	case center, left, hidden
+
+	var id: Self { self }
+	var title: String {
+		switch self {
+		case .center: .localized("Center")
+		case .left: .localized("Left")
+		case .hidden: .localized("Hide")
+		}
+	}
+}
+
 /// Applies the native iOS 26 soft scroll-edge treatment to a navigation stack.
 struct FloatingNavigationAppearance: ViewModifier {
 	func body(content: Content) -> some View {
@@ -36,15 +49,22 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	var secondaryLabel = String.localized("Add")
 	var secondaryAction: (() -> Void)?
 	var secondaryURLAction: (() -> Void)? = nil
+	var titleSubtitle: AnyView? = nil
 	@ViewBuilder var titleMenu: () -> MenuContent
 	@StateObject private var transition = SearchToolbarTransition()
 	@State private var searchButtonAnchor: WindowFrameAnchor?
 	@AppStorage("Aether.searchPlacement") private var searchPlacement: SearchPlacement = .right
-	@AppStorage("Aether.leadingPageTitles") private var leadingPageTitles = false
+	@AppStorage("Aether.pageTitlePlacement") private var pageTitlePlacement: RootPageTitlePlacement = .center
+	@AppStorage("Aether.statusUnderPageTitle") private var statusUnderPageTitle = false
 
 	private var usesTitleSearch: Bool { searchPlacement == .pageTitle }
-	private var hidesTitle: Bool { isTabRoot && !usesTitleSearch }
-	private var usesLeadingTitle: Bool { isTabRoot && usesTitleSearch && leadingPageTitles }
+	private var hidesTitle: Bool { isTabRoot && pageTitlePlacement == .hidden && !usesTitleSearch }
+	private var usesLeadingTitle: Bool { isTabRoot && pageTitlePlacement == .left && !hidesTitle }
+	private var showsTitleSubtitle: Bool {
+		// Keep the root toolbar structure stable while NavigationStack pushes or pops.
+		// Search activity is route-scoped separately by SearchHeaderOverlay.
+		isTabRoot && statusUnderPageTitle && titleSubtitle != nil
+	}
 	// Different navigation actions need distinct identities for the native handoff.
 	// Keep each identity stable while its button becomes the search-close control.
 	private var secondaryToolbarID: String { hasTitleSearchMenu ? "navigation-filter" : "navigation-add" }
@@ -57,9 +77,31 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			.navigationBarBackButtonHidden(transition.expanded)
 			.toolbar {
 				if enabled {
-					if usesLeadingTitle {
+					if hidesTitle {
+						if showsTitleSubtitle, let titleSubtitle {
+							ToolbarItem(id: "page-title-status-leading", placement: .topBarLeading) {
+								titleSubtitle
+									.fixedSize(horizontal: true, vertical: false)
+									.layoutPriority(1)
+									.opacity(transition.expanded ? 0 : 1)
+									.animation(transition.animation, value: transition.expanded)
+									.accessibilityHidden(transition.expanded)
+							}
+							.sharedBackgroundVisibility(.hidden)
+						}
+					} else if usesLeadingTitle {
 						ToolbarItem(id: "page-title-leading", placement: .topBarLeading) {
-							titleLabel.fixedSize(horizontal: true, vertical: false)
+							VStack(alignment: .leading, spacing: 0) {
+								titleLabel
+								if showsTitleSubtitle, let titleSubtitle {
+									titleSubtitle
+										.fixedSize(horizontal: true, vertical: false)
+										.opacity(transition.expanded ? 0 : 1)
+										.animation(transition.animation, value: transition.expanded)
+										.accessibilityHidden(transition.expanded)
+								}
+							}
+							.fixedSize(horizontal: true, vertical: false)
 						}
 						.sharedBackgroundVisibility(.hidden)
 						// Override the native center title without reserving its text width.
@@ -68,8 +110,19 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 						}
 						.sharedBackgroundVisibility(.hidden)
 					} else {
-						ToolbarItem(id: "page-title", placement: .principal) { titleLabel }
-							.sharedBackgroundVisibility(.hidden)
+						ToolbarItem(id: "page-title", placement: .principal) {
+							titleLabel
+						}
+						.sharedBackgroundVisibility(.hidden)
+					}
+					if showsTitleSubtitle && !usesLeadingTitle && !hidesTitle, let titleSubtitle {
+						ToolbarItem(id: "page-title-subtitle", placement: .subtitle) {
+							titleSubtitle
+								.opacity(transition.expanded ? 0 : 1)
+								.animation(transition.animation, value: transition.expanded)
+								.accessibilityHidden(transition.expanded)
+						}
+						.sharedBackgroundVisibility(.hidden)
 					}
 					if usesTitleSearch {
 						if transition.expanded || secondaryAction != nil || hasTitleSearchMenu {
@@ -110,7 +163,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 				}
 			}
 			.onChange(of: searchPlacement) { _, _ in searchButtonAnchor = nil }
-			.onChange(of: leadingPageTitles) { _, _ in searchButtonAnchor = nil }
+			.onChange(of: pageTitlePlacement) { _, _ in searchButtonAnchor = nil }
 			.onChange(of: isPresented) { _, presented in
 				transition.setPresented(presented, keyboardExpected: focus.wrappedValue)
 				guard !presented else { return }
@@ -131,7 +184,6 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			if usesTitleSearch {
 				Button(action: openSearch) {
 					Text(title).font(.headline).foregroundStyle(.primary).lineLimit(1)
-					.frame(minHeight: 44)
 					.contentShape(Rectangle())
 					.background {
 						WindowFrameReader { anchor in

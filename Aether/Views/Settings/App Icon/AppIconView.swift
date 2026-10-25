@@ -43,6 +43,8 @@ struct AppIconView: View {
 		"Main": [
 			AltIcon(displayName: "Aether", author: "Artho", key: nil),
 			AltIcon(displayName: "Aether Dark", author: "Artho", key: "AetherDark", previewImageName: "AetherDarkPreview"),
+			AltIcon(displayName: "Aether Glass", author: "Artho", key: "AetherGlassMuted", previewImageName: "AetherGlassMutedPreview"),
+			AltIcon(displayName: "Aether Gold Glass", author: "Artho", key: "AetherGlassGold", previewImageName: "AetherGlassGoldPreview"),
 			AltIcon(displayName: "Feather (macOS)", author: "Samara", key: "V2Mac"),
 			AltIcon(displayName: "Feather v1", author: "Samara", key: "V1"),
 			AltIcon(displayName: "Feather v1 (macOS)", author: "Samara", key: "V1Mac"),

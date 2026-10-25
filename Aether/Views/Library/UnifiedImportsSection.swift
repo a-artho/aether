@@ -842,15 +842,15 @@ private struct UnifiedImportMetadata: View {
 
 	var body: some View {
 		let status = status
+		let version = app?.version ?? entry.download?.sourceProvenance?.sourceAppVersion
 		let details = LibraryRowDetails(
 			name: entry.displayName,
-			version: app?.version ?? entry.download?.sourceProvenance?.sourceAppVersion,
+			version: showsTaskStatus ? nil : version,
 			identifier: splitParent ? nil : (app?.identifier ?? entry.download?.sourceProvenance?.sourceAppIdentifier),
-			secondaryStatus: showsTaskStatus ? nil : status.text,
-			isFailed: !showsTaskStatus && status.failed,
+			secondaryStatus: status.text,
+			isFailed: showsTaskStatus && status.failed,
 			animatesStatus: true,
-			thirdLineStatus: splitParent ? (showsTaskStatus ? status.text : .localized("split view parent")) : (showsTaskStatus ? status.text : nil),
-			thirdLineAnimationKey: (splitParent && !showsTaskStatus) ? "split" : (numericProgressPhase ?? status.text),
+			thirdLineStatus: splitParent ? .localized("split view parent") : nil,
 			showsNumericProgress: numericProgressPhase != nil
 		)
 		Group {

@@ -11,7 +11,6 @@ import NukeUI
 
 // MARK: - View
 struct SourcesCellView: View {
-	@AppStorage("Aether.matchRepoIconStyle") private var matchRepoIconStyle = false
 	@AppStorage("Aether.overviewIconStyle") private var overviewIconStyle: OverviewIconStyle = .standalone
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	
@@ -25,10 +24,13 @@ struct SourcesCellView: View {
 		HStack(spacing: 12) {
 		FRIconCellView(
 			title: (source.name ?? .localized("Unknown")).repoDisplayName,
-			subtitle: source.sourceURL?.absoluteString ?? "",
 			iconUrl: source.iconURL,
-			overviewStyle: matchRepoIconStyle ? overviewIconStyle : nil
-		)
+				overviewStyle: overviewIconStyle
+		) {
+			if let url = source.sourceURL?.absoluteString {
+				Text(url)
+			}
+		}
 			if isRefreshing { ProgressView().controlSize(.small) }
 		}
 		.padding(isRegular ? 12 : 0)

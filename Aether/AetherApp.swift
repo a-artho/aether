@@ -21,6 +21,17 @@ struct AetherApp: App {
 
 	let storage = Storage.shared
 
+	init() {
+		let defaults = UserDefaults.standard
+		let placementKey = "Aether.pageTitlePlacement"
+		let legacyKey = "Aether.leadingPageTitles"
+		if defaults.object(forKey: placementKey) == nil,
+			let wasLeading = defaults.object(forKey: legacyKey) as? Bool {
+			defaults.set((wasLeading ? RootPageTitlePlacement.left : .center).rawValue, forKey: placementKey)
+		}
+		defaults.removeObject(forKey: legacyKey)
+	}
+
 	var body: some Scene {
 		WindowGroup {
 			VariedTabbarView()

@@ -5,13 +5,16 @@ struct SourceRefreshStatusView: View {
 	let lastUpdated: Date?
 	let isRefreshing: Bool
 	let hasFailures: Bool
+	var textAlignment: TextAlignment = .trailing
+	var lineLimit: Int? = nil
 
 	var body: some View {
 		TimelineView(.periodic(from: .now, by: 60)) { context in
 			Text(status(at: context.date))
 				.font(.caption)
 				.foregroundStyle(.secondary)
-				.multilineTextAlignment(.trailing)
+				.multilineTextAlignment(textAlignment)
+				.lineLimit(lineLimit)
 		}
 	}
 

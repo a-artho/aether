@@ -43,7 +43,19 @@
     "Muted" : {
       "extractionState" : "manual"
     },
-    "Left-Aligned Page Titles" : {
+    "Center" : {
+      "extractionState" : "manual"
+    },
+    "Hide" : {
+      "extractionState" : "manual"
+    },
+    "Left" : {
+      "extractionState" : "manual"
+    },
+    "Page Title Position" : {
+      "extractionState" : "manual"
+    },
+    "Status on Navigation Bar" : {
       "extractionState" : "manual"
     },
     "Section Header Size" : {
@@ -143,6 +155,9 @@
       "extractionState" : "manual"
     },
     "Page Title" : {
+      "extractionState" : "manual"
+    },
+    "Choose search placement, page title alignment, and status placement." : {
       "extractionState" : "manual"
     },
     "Right" : {

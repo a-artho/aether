@@ -1,12 +1,11 @@
 import SwiftUI
 
 enum OverviewIconStyle: String, CaseIterable, Identifiable {
-	case standalone, black, glass
+	case standalone, glass
 	var id: Self { self }
 	var title: String {
 		switch self {
 		case .standalone: .localized("Standalone")
-		case .black: .localized("Black")
 		case .glass: .localized("Glass")
 		}
 	}
@@ -83,13 +82,7 @@ struct OverviewIconSurface: ViewModifier {
 			.background {
 				switch style {
 				case .standalone: EmptyView()
-				case .black: shape.fill(.black)
 				case .glass: Color.clear.glassEffect(.regular, in: shape)
-				}
-			}
-			.overlay {
-				if style == .black {
-					shape.strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.65)
 				}
 			}
 	}

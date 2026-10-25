@@ -19,7 +19,6 @@ struct SourceAppsCellView: View {
 		case tableView
 	}
 
-	@Environment(\.displayScale) private var displayScale
 	@AppStorage("Aether.storeCellAppearance") private var _storeCellAppearance: Int = 0
 	
 	let sourceURL: URL?

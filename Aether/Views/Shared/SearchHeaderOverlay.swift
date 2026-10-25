@@ -170,7 +170,10 @@ struct SearchOverlaySurface: View {
 				height: transition.expanded ? final.height : 44)
 			.clipped()
 			.glassEffect(.regular.interactive(), in: .capsule)
-			.position(CGPoint(x: transition.expanded ? final.midX : source.x, y: source.y))
+			.position(CGPoint(
+				x: transition.expanded ? final.midX : source.x,
+				y: transition.expanded ? final.midY : source.y
+			))
 			.opacity(transition.expanded ? 1 : 0)
 			.allowsHitTesting(transition.expanded)
 			.accessibilityHidden(!transition.expanded)

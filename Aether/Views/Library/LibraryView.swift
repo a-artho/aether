@@ -12,6 +12,7 @@ import UIKit
 struct LibraryView: View {
 	@StateObject private var imports = UnifiedImportsController()
 	@AppStorage("Aether.installationMethod") private var installationMethod = 0
+	@AppStorage("Aether.statusUnderPageTitle") private var statusUnderPageTitle = false
 	@StateObject private var store: InstalledAppsStore
 	@ObservedObject private var installationManager = AppInstallationManager.shared
 	@ObservedObject private var connection = DeviceConnectionManager.shared
@@ -57,157 +58,208 @@ struct LibraryView: View {
 		let updates: [String]
 	}
 
-	var body: some View {
-		let sideloadedApps = store.apps.filter { matchesSearch($0.name, $0.bundleIdentifier, $0.version, $0.build) }
-		let showAllApps = installationMethod == 0
-			? matchesSearch(String.localized("All Apps"), String.localized("Requires Local mode"))
-			: !showsDevicePlaceholder && (searchText.isEmpty || !sideloadedApps.isEmpty || matchesSearch(String.localized("All Apps")))
-		let appsWithUpdates = sideloadedApps.filter { !ignoredUpdates.identifiers.contains($0.bundleIdentifier) && updates.updateContexts[$0.bundleIdentifier]?.isEmpty == false }
-		let libraryRows = imports.visibleRows.filter { entry in
+	private var sideloadedApps: [InstalledApp] {
+		store.apps.filter { matchesSearch($0.name, $0.bundleIdentifier, $0.version, $0.build) }
+	}
+
+	private var showAllApps: Bool {
+		if installationMethod == 0 {
+			return matchesSearch(String.localized("All Apps"), String.localized("Requires Local mode"))
+		}
+		return !showsDevicePlaceholder
+			&& (searchText.isEmpty || !sideloadedApps.isEmpty || matchesSearch(String.localized("All Apps")))
+	}
+
+	private var appsWithUpdates: [InstalledApp] {
+		sideloadedApps.filter {
+			!ignoredUpdates.identifiers.contains($0.bundleIdentifier)
+				&& updates.updateContexts[$0.bundleIdentifier]?.isEmpty == false
+		}
+	}
+
+	private var libraryRows: [UnifiedImportEntry] {
+		imports.visibleRows.filter { entry in
 			let app = entry.app ?? entry.operation?.app ?? entry.export?.app
 			return matchesSearch(app?.name, app?.identifier, app?.version,
 				entry.download?.sourceProvenance?.sourceAppName, entry.download?.sourceProvenance?.sourceAppIdentifier,
 				entry.download?.sourceProvenance?.sourceAppVersion, entry.download?.fileName)
 		}
-		let allSplitGroups = SplitArtifactGroup.makeGroups(from: imports.visibleRows,
-			lineage: LibraryArtifactIndex.shared.lineage)
-		let splitGroups = allSplitGroups.filter { group in
-			searchText.isEmpty || group.entries.contains { entry in
-				let app = entry.app ?? entry.operation?.app ?? entry.export?.app
-				return matchesSearch(app?.name, app?.identifier, app?.version,
-					entry.download?.sourceProvenance?.sourceAppName, entry.download?.sourceProvenance?.sourceAppIdentifier,
-					entry.download?.sourceProvenance?.sourceAppVersion, entry.download?.fileName)
+	}
+
+	private var splitGroups: [SplitArtifactGroup] {
+		SplitArtifactGroup.makeGroups(from: imports.visibleRows, lineage: LibraryArtifactIndex.shared.lineage)
+			.filter { group in
+				searchText.isEmpty || group.entries.contains { entry in
+					let app = entry.app ?? entry.operation?.app ?? entry.export?.app
+					return matchesSearch(app?.name, app?.identifier, app?.version,
+						entry.download?.sourceProvenance?.sourceAppName, entry.download?.sourceProvenance?.sourceAppIdentifier,
+						entry.download?.sourceProvenance?.sourceAppVersion, entry.download?.fileName)
+				}
 			}
-		}
+	}
+
+	private var importRows: [UnifiedImportEntry] {
 		let splitRowIDs = Set(splitGroups.flatMap { $0.entries.map(\.id) })
-		let importRows = libraryRows.filter { !splitRowIDs.contains($0.id) }
-		let sections: [LibrarySection] = [
+		return libraryRows.filter { !splitRowIDs.contains($0.id) }
+	}
+
+	private var librarySections: [LibrarySection] {
+		[
 			showAllApps ? .allApps : nil,
 			installationMethod == 1 && searchText.isEmpty && !libraryRows.isEmpty && showsDevicePlaceholder ? .status : nil,
 			importRows.isEmpty && splitGroups.isEmpty ? nil : .imports,
 			showsDevicePlaceholder || !updates.hasVerifiedUpdates || appsWithUpdates.isEmpty ? nil : .updates
 		].compactMap { $0 }
-		let layout = LibraryLayout(sections: sections,
-			imports: importRows.map(\.id), splitGroups: splitGroups.map(\.id), updates: appsWithUpdates.map(\.id))
-		NavigationStack(path: $appNavigationPath) {
-			ScrollViewReader { scrollProxy in
-				List {
-					ForEach(sections) { section in
-						switch section {
-						case .allApps:
-							allAppsRow
-						case .updates:
-							NBSection(String.localized("Updates")) {
-								ForEach(appsWithUpdates) { app in
-									NavigationLink(value: InstalledAppsRoute.updates(app.bundleIdentifier)) {
-										InstalledAppCellView(app: app, loadsIcon: loadsIcons)
-									}
-									.buttonStyle(.plain)
-									.id(app.id)
-									.swipeActions(edge: .trailing, allowsFullSwipe: true) {
-										Button(String.localized("Ignore"), systemImage: "bell.slash") {
-											ignoredUpdates.ignore(app.bundleIdentifier)
-										}
-										.tint(.orange)
-									}
-								}
-							}
-							.listSectionSeparator(.hidden)
-						case .status:
-							compactDeviceStatus
-						case .imports:
-							NBSection(.localized("Imports")) {
-								UnifiedLibraryImportRows(entries: libraryRows, groups: splitGroups, controller: imports) {
-									appNavigationPath.append(.splitArtifacts($0))
-								}
-							}
-							.listSectionSeparator(.hidden)
-							.id("libraryImports")
-						}
-					}
-				}
-				.navigationBarTitleDisplayMode(.inline)
-				.navigationDestination(for: InstalledAppsRoute.self) { route in
-					Group {
-						switch route {
-						case .allApps:
-							AllInstalledAppsView(store: store, loadsIcons: loadsIcons,
-								initialSearch: searchText, placeholder: allAppsPlaceholder)
-						case let .updates(identifier):
-							InstalledAppUpdatesView(contexts: updates.updateContexts[identifier] ?? [])
-						case let .splitArtifacts(originalUUID):
-							SplitArtifactsView(originalUUID: originalUUID, controller: imports)
-						}
-					}
-				}
-				.listStyle(.plain)
-				.onAppear { isRootListVisible = true }
-				.onDisappear { isRootListVisible = false }
-				.task(id: libraryFocusState) {
-					guard !Task.isCancelled, let request = tabManager.libraryFocusRequest,
-						tabManager.selectedTab == .library else { return }
-					var transaction = Transaction()
-					transaction.disablesAnimations = true
-					if !appNavigationPath.isEmpty || imports.infoApp != nil {
-						withTransaction(transaction) {
-							appNavigationPath.removeAll()
-							imports.infoApp = nil
-						}
-						return
-					}
-					guard isRootListVisible, imports.hasRows else { return }
-					withTransaction(transaction) {
-						scrollProxy.scrollTo("libraryImports", anchor: .top)
-					}
-					tabManager.consumeLibraryFocusRequest(request)
-				}
-				.overlay {
-					if !searchText.isEmpty && sections.isEmpty {
-						TabPlaceholderView(title: .localized("No Results"), description: .localized("Try another search."), systemImage: "magnifyingglass")
-					} else if installationMethod == 1 && searchText.isEmpty && (!imports.hasRows && showsDevicePlaceholder) {
-						_placeholderContent
-							.transition(.opacity)
-					}
-				}
-				.animation(reduceMotion || !hasLoadedInitialContent ? nil : .snappy, value: layout)
-				.modifier(UnifiedImportsDataSource(controller: imports))
-				.refreshable {
-					guard loadsApps else { return }
-					updates.startRefresh()
-				}
-			}
-			.task { hasLoadedInitialContent = true }
-			.modifier(SearchToolbarModifier(
-				text: $searchText, isPresented: $tabManager.isLibrarySearchPresented,
-				focus: $searchFocused, title: libraryTitle,
-				isScreenActive: isRootListVisible && appNavigationPath.isEmpty
-					&& imports.infoApp == nil && imports.signingApp == nil
-					&& !imports.importing && !imports.importingURL,
-				isTabRoot: true, hasTitleMenu: false,
-				secondaryAction: { imports.importing = true },
-				secondaryURLAction: { imports.urlText = ""; imports.importingURL = true }
-			) { EmptyView() })
-			.onChange(of: tabManager.isLibrarySearchPresented) { _, presented in
-				if !presented { searchFocused = false }
-			}
-			.onChange(of: appNavigationPath) { _, path in
-				if !path.isEmpty { searchFocused = false }
-			}
+	}
 
-			.onChange(of: tabManager.libraryFocusRequest) { _, request in
-				if request != nil { resetSearch() }
-			}
-			.modifier(UnifiedImportsPresentation(controller: imports))
-			.onChange(of: installationMethod) { _, mode in
-				if mode == 0 { appNavigationPath.removeAll() }
-			}
-			.onChange(of: showsDevicePlaceholder) { _, shouldShowPlaceholder in
-				guard shouldShowPlaceholder,
-					appNavigationPath.contains(.allApps) else { return }
-				appNavigationPath.removeAll()
-			}
+	private var libraryLayout: LibraryLayout {
+		LibraryLayout(
+			sections: librarySections,
+			imports: importRows.map(\.id),
+			splitGroups: splitGroups.map(\.id),
+			updates: appsWithUpdates.map(\.id)
+		)
+	}
+
+	var body: some View {
+		NavigationStack(path: $appNavigationPath) {
+			rootContent
 		}
 		.modifier(FloatingNavigationAppearance())
+	}
+
+	private var rootContent: some View {
+		ScrollViewReader { scrollProxy in
+			libraryList(scrollProxy: scrollProxy)
+		}
+		.task { hasLoadedInitialContent = true }
+		.modifier(SearchToolbarModifier(
+			text: $searchText, isPresented: $tabManager.isLibrarySearchPresented,
+			focus: $searchFocused, title: libraryTitle,
+			isScreenActive: isRootListVisible && appNavigationPath.isEmpty
+				&& imports.infoApp == nil && imports.signingApp == nil
+				&& !imports.importing && !imports.importingURL,
+			isTabRoot: true, hasTitleMenu: false,
+			secondaryAction: { imports.importing = true },
+			secondaryURLAction: { imports.urlText = ""; imports.importingURL = true },
+			titleSubtitle: libraryPageTitleSubtitle
+		) { EmptyView() })
+		.onChange(of: tabManager.isLibrarySearchPresented) { _, presented in
+			if !presented { searchFocused = false }
+		}
+		.onChange(of: appNavigationPath) { _, path in
+			if !path.isEmpty { searchFocused = false }
+		}
+		.onChange(of: tabManager.libraryFocusRequest) { _, request in
+			if request != nil { resetSearch() }
+		}
+		.modifier(UnifiedImportsPresentation(controller: imports))
+		.onChange(of: installationMethod) { _, mode in
+			if mode == 0 { appNavigationPath.removeAll() }
+		}
+		.onChange(of: showsDevicePlaceholder) { _, shouldShowPlaceholder in
+			guard shouldShowPlaceholder, appNavigationPath.contains(.allApps) else { return }
+			appNavigationPath.removeAll()
+		}
+	}
+
+	private func libraryList(scrollProxy: ScrollViewProxy) -> some View {
+		List {
+			ForEach(librarySections) { section in
+				librarySectionContent(section)
+			}
+		}
+		.navigationBarTitleDisplayMode(.inline)
+		.navigationDestination(for: InstalledAppsRoute.self) { route in
+			Group {
+				switch route {
+				case .allApps:
+					AllInstalledAppsView(store: store, loadsIcons: loadsIcons,
+						initialSearch: searchText, placeholder: allAppsPlaceholder)
+				case let .updates(identifier):
+					InstalledAppUpdatesView(contexts: updates.updateContexts[identifier] ?? [])
+				case let .splitArtifacts(originalUUID):
+					SplitArtifactsView(originalUUID: originalUUID, controller: imports)
+				}
+			}
+		}
+		.listStyle(.plain)
+		.onAppear { isRootListVisible = true }
+		.onDisappear { isRootListVisible = false }
+		.task(id: libraryFocusState) {
+			guard !Task.isCancelled, let request = tabManager.libraryFocusRequest,
+				tabManager.selectedTab == .library else { return }
+			var transaction = Transaction()
+			transaction.disablesAnimations = true
+			if !appNavigationPath.isEmpty || imports.infoApp != nil {
+				withTransaction(transaction) {
+					appNavigationPath.removeAll()
+					imports.infoApp = nil
+				}
+				return
+			}
+			guard isRootListVisible, imports.hasRows else { return }
+			withTransaction(transaction) {
+				scrollProxy.scrollTo("libraryImports", anchor: .top)
+			}
+			tabManager.consumeLibraryFocusRequest(request)
+		}
+		.overlay {
+			if !searchText.isEmpty && librarySections.isEmpty {
+				TabPlaceholderView(title: .localized("No Results"), description: .localized("Try another search."), systemImage: "magnifyingglass")
+			} else if installationMethod == 1 && searchText.isEmpty && (!imports.hasRows && showsDevicePlaceholder) {
+				_placeholderContent.transition(.opacity)
+			}
+		}
+		.animation(reduceMotion || !hasLoadedInitialContent ? nil : .snappy, value: libraryLayout)
+		.modifier(UnifiedImportsDataSource(controller: imports))
+		.refreshable {
+			guard loadsApps else { return }
+			updates.startRefresh()
+		}
+	}
+
+	@ViewBuilder
+	private func librarySectionContent(_ section: LibrarySection) -> some View {
+		switch section {
+		case .allApps:
+			allAppsRow
+		case .updates:
+			updatesSection
+		case .status:
+			compactDeviceStatus
+		case .imports:
+			importsSection
+		}
+	}
+
+	private var updatesSection: some View {
+		NBSection(String.localized("Updates")) {
+			ForEach(appsWithUpdates) { app in
+				NavigationLink(value: InstalledAppsRoute.updates(app.bundleIdentifier)) {
+					InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+				}
+				.buttonStyle(.plain)
+				.id(app.id)
+				.swipeActions(edge: .trailing, allowsFullSwipe: true) {
+					Button(String.localized("Ignore"), systemImage: "bell.slash") {
+						ignoredUpdates.ignore(app.bundleIdentifier)
+					}
+					.tint(.orange)
+				}
+			}
+		}
+		.listSectionSeparator(.hidden)
+	}
+
+	private var importsSection: some View {
+		NBSection(.localized("Imports")) {
+			UnifiedLibraryImportRows(entries: libraryRows, groups: splitGroups, controller: imports) {
+				appNavigationPath.append(.splitArtifacts($0))
+			}
+		}
+		.listSectionSeparator(.hidden)
+		.id("libraryImports")
 	}
 
 	private var isConnectingTunnel: Bool {
@@ -231,16 +283,48 @@ struct LibraryView: View {
 			|| updates.phase == .connecting || updates.phase == .checking
 	}
 
+	private var checkingForUpdatesStatus: String {
+		.localized("Checking for Updates") + "…"
+	}
+
+	private var isCheckingForUpdatesStatus: Bool {
+		allAppsSubtitle == checkingForUpdatesStatus
+	}
+
+	private var isConnectingTunnelStatus: Bool {
+		isConnectingTunnel || cellularAssist.isBusy || updates.phase == .connecting
+	}
+
+	private var showsAllAppsActivityIndicator: Bool {
+		allAppsIsBusy && !isCheckingForUpdatesStatus && !isConnectingTunnelStatus
+	}
+
 	private var allAppsSubtitle: String {
 		if isConnectingTunnel || cellularAssist.isBusy || updates.phase == .connecting {
-			return .localized("Connecting Tunnel")
+			return .localized("Connecting Tunnel") + "…"
 		}
-		if isLoadingInstalledApps { return .localized("Checking for Updates") }
+		if isLoadingInstalledApps { return checkingForUpdatesStatus }
 		if !connection.isConnected { return .localized("Tunnel Unavailable") }
 		if store.errorMessage != nil { return .localized("Unable to Load Apps") }
-		if updates.phase == .checking { return .localized("Checking for Updates") }
+		if updates.phase == .checking { return checkingForUpdatesStatus }
 		if updates.noUpdatesUntil != nil { return .localized("No Updates Available") }
 		return .localized("See all sideloaded apps")
+	}
+
+	private var libraryPageTitleStatus: String? {
+		guard statusUnderPageTitle, installationMethod == 1, !showsDevicePlaceholder else { return nil }
+		let status = allAppsSubtitle
+		return status == .localized("See all sideloaded apps") ? nil : status
+	}
+
+	private var libraryPageTitleSubtitle: AnyView? {
+		guard let status = libraryPageTitleStatus else { return nil }
+		return AnyView(
+			Text(status).lineLimit(1)
+			.font(.caption)
+			.foregroundStyle(.secondary)
+			.fixedSize(horizontal: false, vertical: true)
+		)
 	}
 
 	private var allAppsRow: some View {
@@ -261,7 +345,8 @@ struct LibraryView: View {
 			} else {
 				NavigationLink(value: InstalledAppsRoute.allApps) {
 					HStack(spacing: 12) {
-						allAppsSummary(subtitle: allAppsSubtitle)
+						allAppsSummary(subtitle: libraryPageTitleStatus == nil
+							? allAppsSubtitle : String.localized("See all sideloaded apps"))
 						ZStack {
 							// Reserve a localized four-digit count even while the spinner
 							// is visible. Digit changes cannot squeeze the subtitle.
@@ -269,9 +354,9 @@ struct LibraryView: View {
 								.hidden().accessibilityHidden(true)
 							Text(store.apps.count, format: .number)
 								.foregroundStyle(.secondary)
-								.opacity(allAppsIsBusy ? 0 : 1)
-								.accessibilityHidden(allAppsIsBusy)
-							if allAppsIsBusy {
+								.opacity(showsAllAppsActivityIndicator && libraryPageTitleStatus == nil ? 0 : 1)
+								.accessibilityHidden(showsAllAppsActivityIndicator && libraryPageTitleStatus == nil)
+							if showsAllAppsActivityIndicator && libraryPageTitleStatus == nil {
 								ProgressView()
 							}
 						}
@@ -342,7 +427,7 @@ struct LibraryView: View {
 		} else if _showsCellularConnectionGuidance && store.apps.isEmpty {
 			return DeviceStatus(title: _needsManualCellularRefresh ? .localized("Refresh Cellular Connection") : .localized("Connecting on Cellular"), description: _needsManualCellularRefresh ? .localized("Turn off Mobile Data or briefly enable Airplane Mode. Switch it back on once Aether connects.") : .localized("Aether is refreshing the cellular connection to reach your device."), icon: "antenna.radiowaves.left.and.right", busy: true)
 		} else if isConnectingTunnel && store.apps.isEmpty {
-			return DeviceStatus(title: .localized("Connecting Tunnel"), description: .localized("Aether is connecting so you can view sideloaded apps or spoof device location."), icon: "network", busy: true)
+			return DeviceStatus(title: .localized("Connecting Tunnel"), description: .localized("Aether is connecting so you can view sideloaded apps or spoof device location."), icon: "network")
 		} else if !connection.isConnected && store.apps.isEmpty {
 			return DeviceStatus(title: .localized("Tunnel Unavailable"), description: .localized("Reconnect the tunnel to view sideloaded apps or spoof device location."), icon: "network.slash", action: .reconnect, buttonTitle: .localized("Retry"))
 
@@ -361,6 +446,12 @@ struct LibraryView: View {
 	@ViewBuilder private var allAppsPlaceholder: some View {
 		if showsDevicePlaceholder {
 			_placeholderContent
+		} else if isConnectingTunnelStatus {
+			TabPlaceholderView(
+				title: .localized("Connecting Tunnel"),
+				description: .localized("Aether is connecting so you can view sideloaded apps or spoof device location."),
+				systemImage: "network"
+			)
 		} else if allAppsIsBusy {
 			ProgressView(allAppsSubtitle)
 		} else if let error = store.errorMessage {

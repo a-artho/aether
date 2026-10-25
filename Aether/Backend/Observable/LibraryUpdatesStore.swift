@@ -354,10 +354,10 @@ final class LibraryUpdatesStore: ObservableObject {
 
 	private func announceNoUpdates() {
 		clearAnnouncement()
-		let deadline = Date().addingTimeInterval(2)
+		let deadline = Date().addingTimeInterval(3)
 		noUpdatesUntil = deadline
 		announcementTask = Task { [weak self] in
-			do { try await Task.sleep(for: .seconds(2)) } catch { return }
+			do { try await Task.sleep(for: .seconds(3)) } catch { return }
 			guard !Task.isCancelled, self?.noUpdatesUntil == deadline else { return }
 			self?.noUpdatesUntil = nil
 			self?.announcementTask = nil

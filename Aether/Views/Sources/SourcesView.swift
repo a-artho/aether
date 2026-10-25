@@ -14,6 +14,8 @@ struct SourcesView: View {
 	@State private var _refreshErrorMessage: String?
 	@State private var _reportRefreshFailures = false
 	@State private var _isSearchFocused = false
+	@AppStorage("Aether.statusUnderPageTitle") private var _statusUnderPageTitle = false
+	@AppStorage("Aether.pageTitlePlacement") private var _pageTitlePlacement: RootPageTitlePlacement = .center
 	// Keep the collection keyboard state outside the pushed destination.
 	@State private var _isCollectionSearchFocused = false
 	@ObservedObject private var router = SourcesRouter.shared
@@ -26,6 +28,27 @@ struct SourcesView: View {
 
 	private var _sourceIdentitySnapshot: [String] {
 		_sources.map { $0.objectID.uriRepresentation().absoluteString }
+	}
+
+	@ViewBuilder private var repoRows: some View {
+		ForEach(_filteredSources) { source in
+			NavigationLink(
+				value: SourcesRouter.Route.collection(
+					.source(objectURI: source.objectID.uriRepresentation().absoluteString)
+				)
+			) {
+				SourcesCellView(source: source, isRefreshing: viewModel.isRefreshing(source))
+			}
+			.buttonStyle(.plain)
+		}
+	}
+
+	private func refreshStatus() -> some View {
+		SourceRefreshStatusView(
+			lastUpdated: viewModel.lastUpdated,
+			isRefreshing: !viewModel.isFinished,
+			hasFailures: !viewModel.refreshErrors.isEmpty
+		)
 	}
 
 	private var _rootSearchPresented: Binding<Bool> {
@@ -69,25 +92,15 @@ struct SourcesView: View {
 						Text(String.localized("No Results")).foregroundStyle(.secondary)
 					}
 					if !_filteredSources.isEmpty {
-					NBSection(.localized("Repos"), trailing: {
-						SourceRefreshStatusView(
-							lastUpdated: viewModel.lastUpdated,
-							isRefreshing: !viewModel.isFinished,
-							hasFailures: !viewModel.refreshErrors.isEmpty
-						)
-					}) {
-						ForEach(_filteredSources) { source in
-							NavigationLink(
-								value: SourcesRouter.Route.collection(
-									.source(objectURI: source.objectID.uriRepresentation().absoluteString)
-								)
-							) {
-								SourcesCellView(source: source, isRefreshing: viewModel.isRefreshing(source))
+						NBSection(.localized("Repos"), trailing: {
+							if !_statusUnderPageTitle {
+								refreshStatus()
 							}
-							.buttonStyle(.plain)
+						}) {
+							repoRows
 						}
+						.listSectionSeparator(.hidden)
 					}
-				}
 				}
 			}
 			.modifier(SourcesRefreshModifier(isEnabled: !_sources.isEmpty) {
@@ -117,7 +130,8 @@ struct SourcesView: View {
 				text: $_searchText, isPresented: _rootSearchPresented,
 				focus: $_isSearchFocused, title: .localized("Sources"), isScreenActive: router.path.isEmpty && router.addSourceRequest == nil, isTabRoot: true, hasTitleMenu: false,
 				secondaryLabel: .localized("Add Source"),
-				secondaryAction: { router.presentAddSource() }
+				secondaryAction: { router.presentAddSource() },
+				titleSubtitle: pageTitleStatusView
 			) { EmptyView() })
 			.onChange(of: router.searchTarget) { _, target in
 				switch target {
@@ -190,6 +204,17 @@ struct SourcesView: View {
 		.onChange(of: _sourceIdentitySnapshot) { _, _ in
 			_resolvePendingNavigationIntent()
 		}
+	}
+
+	private var pageTitleStatusView: AnyView? {
+		guard _statusUnderPageTitle, !_sources.isEmpty else { return nil }
+		return AnyView(SourceRefreshStatusView(
+			lastUpdated: viewModel.lastUpdated,
+			isRefreshing: !viewModel.isFinished,
+			hasFailures: !viewModel.refreshErrors.isEmpty,
+			textAlignment: _pageTitlePlacement == .center ? .center : .leading,
+			lineLimit: 1
+		))
 	}
 
 	private func _source(withObjectURI objectURI: String) -> AltSource? {

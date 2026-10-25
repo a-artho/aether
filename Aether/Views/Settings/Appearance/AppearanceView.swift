@@ -13,12 +13,9 @@ import UIKit
 // dear god help me
 struct AppearanceView: View {
 	@AppStorage("Aether.rowHorizontalInset") private var _rowHorizontalInset: RowHorizontalInset = .standard
-	@AppStorage("Aether.downloadIconStyle") private var _downloadIconStyle: DownloadIconStyle = .cloud
 	@AppStorage("Aether.rowIconSize") private var _rowIconSize: RowIconSize = .standard
 	@AppStorage("Aether.allReposIcon") private var _allReposIcon: AllReposIcon = .appStore
-	@AppStorage("Aether.matchRepoIconStyle") private var _matchRepoIconStyle = false
 	@AppStorage("Aether.overviewIconStyle") private var _overviewIconStyle: OverviewIconStyle = .standalone
-	@AppStorage("Aether.repoDownloadIconSize") private var _repoDownloadIconSize: RepoDownloadIconSize = .large
 	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .sources
 	@AppStorage("Aether.settingsRowIconStyle") private var _settingsRowIconStyle: SettingsRowIconStyle = .colored
 	@AppStorage("Aether.deviceControlsStyle") private var _deviceControlsStyle: DeviceControlsStyle = .standard
@@ -32,7 +29,8 @@ struct AppearanceView: View {
 
 	@AppStorage("Aether.searchPlacement")
 	private var _searchPlacement: SearchPlacement = .right
-	@AppStorage("Aether.leadingPageTitles") private var _leadingPageTitles = false
+	@AppStorage("Aether.pageTitlePlacement") private var _pageTitlePlacement: RootPageTitlePlacement = .center
+	@AppStorage("Aether.statusUnderPageTitle") private var _statusUnderPageTitle = false
 
 	@AppStorage("Aether.shouldChangeIconsBasedOffStyle")
 	private var _shouldChangeIconsBasedOffStyle: Bool = false
@@ -152,11 +150,8 @@ struct AppearanceView: View {
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
-				Toggle(isOn: $_matchRepoIconStyle) {
-					SettingsRowLabel(.localized("Match Repo Icons"), systemImage: "square.on.square", backgroundColor: .gray)
-				}
 			} footer: {
-				Text(.localized("Overview styles apply to All Apps and All Repos. Match Repo Icons includes individual repo artwork."))
+				Text(.localized("Overview styles apply to All Apps, All Repos, and individual repo artwork."))
 			}
 
 			NBSection(.localized("Section Headers")) {
@@ -193,13 +188,24 @@ struct AppearanceView: View {
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
-				if _searchPlacement == .pageTitle {
-					Toggle(isOn: $_leadingPageTitles) {
-						SettingsRowLabel(.localized("Left-Aligned Page Titles"), systemImage: "text.alignleft", backgroundColor: .blue)
+
+				Picker(selection: $_pageTitlePlacement) {
+					ForEach(RootPageTitlePlacement.allCases) { placement in
+						Text(placement.title)
+							.tag(placement)
+							.disabled(placement == .hidden && _searchPlacement == .pageTitle)
 					}
+				} label: {
+					SettingsRowLabel(.localized("Page Title Position"), systemImage: "text.aligncenter", backgroundColor: .blue)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+
+				Toggle(isOn: $_statusUnderPageTitle) {
+					SettingsRowLabel(.localized("Status on Navigation Bar"), systemImage: "textformat", backgroundColor: .blue)
 				}
 			} footer: {
-				Text(.localized("Choose where search appears."))
+				Text(.localized("Choose search placement, page title alignment, and status placement."))
 			}
 
 			NBSection(.localized("Library")) {
@@ -215,24 +221,6 @@ struct AppearanceView: View {
 				Toggle(isOn: $_showRepoDownloadButtons) {
 					SettingsRowLabel(.localized("Show Download Buttons"), systemImage: "icloud.and.arrow.down", backgroundColor: .blue)
 				}
-				Picker(selection: $_downloadIconStyle) {
-					ForEach(DownloadIconStyle.allCases) { style in
-						Image(systemName: style.systemImage)
-							.accessibilityLabel(style.title)
-							.tag(style)
-					}
-				} label: {
-					SettingsRowLabel(.localized("Download Icon"), systemImage: "arrow.down.circle", backgroundColor: .blue)
-				}
-				.pickerStyle(.menu)
-				.tint(.secondary)
-                Picker(selection: $_repoDownloadIconSize) {
-                    ForEach(RepoDownloadIconSize.allCases) { size in Text(size.label).tag(size) }
-                } label: {
-                    SettingsRowLabel(.localized("Download Icon Size"), systemImage: "arrow.down.circle", backgroundColor: .blue)
-                }
-                .pickerStyle(.menu)
-                .tint(.secondary)
 				Picker(.localized("Store Cell Appearance"), selection: $_storeCellAppearance) {
 					ForEach(0..<_storeCellAppearanceMethods.count, id: \.self) { index in
 						let method = _storeCellAppearanceMethods[index]
@@ -277,6 +265,16 @@ struct AppearanceView: View {
 						}
 					}
 				}
+			}
+		}
+		.onAppear {
+			if _searchPlacement == .pageTitle && _pageTitlePlacement == .hidden {
+				_pageTitlePlacement = .center
+			}
+		}
+		.onChange(of: _searchPlacement) { _, placement in
+			if placement == .pageTitle && _pageTitlePlacement == .hidden {
+				_pageTitlePlacement = .center
 			}
 		}
 	}

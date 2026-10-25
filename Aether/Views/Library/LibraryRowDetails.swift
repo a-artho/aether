@@ -11,7 +11,6 @@ struct LibraryRowDetails: View {
 	var isFailed = false
 	var animatesStatus = false
 	var thirdLineStatus: String? = nil
-	var thirdLineAnimationKey: String? = nil
 	var showsNumericProgress = false
 
 	var body: some View {
@@ -23,7 +22,7 @@ struct LibraryRowDetails: View {
 
 			Text(_secondLine)
 				.nbRowSubtitle()
-				.contentTransition(.interpolate)
+				.contentTransition(showsNumericProgress ? .identity : .interpolate)
 				.animation(animatesStatus && !reduceMotion ? .smooth(duration: 0.2) : nil, value: secondaryStatus)
 				.foregroundStyle(isFailed ? Color.red : Color.secondary)
 				.lineLimit(isFailed ? 2 : 1)
@@ -35,9 +34,9 @@ struct LibraryRowDetails: View {
 					.lineLimit(thirdLineStatus != nil ? nil : 1)
 					.fixedSize(horizontal: false, vertical: thirdLineStatus != nil)
 					.allowsTightening(thirdLineStatus != nil)
-					.contentTransition(showsNumericProgress ? .identity : .interpolate)
-					.animation(animatesStatus && thirdLineStatus != nil && !reduceMotion ? .smooth(duration: 0.2) : nil,
-						value: thirdLineAnimationKey ?? thirdLineStatus)
+					.contentTransition(.interpolate)
+					.animation(animatesStatus && !reduceMotion ? .smooth(duration: 0.2) : nil,
+						value: thirdLineStatus ?? identifier)
 			}
 		}
 		.padding(.vertical, NBRowMetrics.textVerticalPadding)

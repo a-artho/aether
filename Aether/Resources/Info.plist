@@ -45,6 +45,20 @@
 	<dict>
 		<key>CFBundleAlternateIcons</key>
 		<dict>
+			<key>AetherGlassMuted</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array><string>AetherGlassMuted</string></array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+			<key>AetherGlassGold</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array><string>AetherGlassGold</string></array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
 			<key>AetherDark</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
