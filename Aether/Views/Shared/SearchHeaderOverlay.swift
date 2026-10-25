@@ -9,6 +9,7 @@ struct SearchHeaderOverlay: UIViewRepresentable {
 	let title: String
 	@ObservedObject var transition: SearchToolbarTransition
 	let sourceAnchor: WindowFrameAnchor?
+	let targetAnchor: WindowFrameAnchor?
 	let searchInTitle: Bool
 	var titleIsLeading = false
 	let isScreenActive: Bool
@@ -23,6 +24,7 @@ struct SearchHeaderOverlay: UIViewRepresentable {
 		view.surface = SearchOverlaySurface(text: $text, focus: Binding(get: { isScreenActive && focus.wrappedValue },
 			set: { focus.wrappedValue = $0 }), title: title,
 			transition: transition, layout: view.layout, sourceAnchor: sourceAnchor,
+			targetAnchor: targetAnchor,
 			searchFieldOwner: view.searchFieldOwner,
 			searchInTitle: searchInTitle, titleIsLeading: titleIsLeading,
 			rightToLeft: layoutDirection == .rightToLeft,
@@ -135,6 +137,7 @@ struct SearchOverlaySurface: View {
 	@ObservedObject var transition: SearchToolbarTransition
 	@ObservedObject var layout: SearchOverlayLayout
 	let sourceAnchor: WindowFrameAnchor?
+	let targetAnchor: WindowFrameAnchor?
 	let searchFieldOwner: SearchTextFieldOwner
 	let searchInTitle: Bool
 	var titleIsLeading = false
@@ -144,19 +147,27 @@ struct SearchOverlaySurface: View {
 	var body: some View {
 		GeometryReader { geometry in
 			let width = max(44, min(600, geometry.size.width - 84))
-			let final = CGRect(x: rightToLeft ? geometry.size.width - 16 - width : 16,
-				y: (geometry.size.height - 40) / 2, width: width, height: 40)
+			let barAnchor = layout.barAnchor
 			let fallbackX = searchInTitle
 				? (titleIsLeading ? (rightToLeft ? geometry.size.width - 38 : 38) : geometry.size.width / 2)
 				: (rightToLeft ? 38 : geometry.size.width - 38)
 			let source: CGPoint = {
-				guard let sourceAnchor, let barAnchor = layout.barAnchor,
+				guard let sourceAnchor, let barAnchor,
 					sourceAnchor.windowID == barAnchor.windowID else {
 					return CGPoint(x: fallbackX, y: geometry.size.height / 2)
 				}
 				return CGPoint(x: sourceAnchor.frame.midX - barAnchor.frame.minX,
 					y: sourceAnchor.frame.midY - barAnchor.frame.minY)
 			}()
+			let targetY: CGFloat = {
+				guard let targetAnchor, let barAnchor,
+					targetAnchor.windowID == barAnchor.windowID else {
+					return geometry.size.height / 2
+				}
+				return targetAnchor.frame.midY - barAnchor.frame.minY
+			}()
+			let final = CGRect(x: rightToLeft ? geometry.size.width - 16 - width : 16,
+				y: targetY - 20, width: width, height: 40)
 			HStack(spacing: 8) {
 				Image(systemName: "magnifyingglass")
 					.font(.system(size: 16)).foregroundStyle(.secondary)

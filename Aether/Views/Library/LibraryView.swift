@@ -58,79 +58,82 @@ struct LibraryView: View {
 		let updates: [String]
 	}
 
-	private var sideloadedApps: [InstalledApp] {
-		store.apps.filter { matchesSearch($0.name, $0.bundleIdentifier, $0.version, $0.build) }
+	private struct LibraryProjection {
+		let appsWithUpdates: [InstalledApp]
+		let libraryRows: [UnifiedImportEntry]
+		let splitGroups: [SplitArtifactGroup]
+		let sections: [LibrarySection]
+		let layout: LibraryLayout
 	}
 
-	private var showAllApps: Bool {
-		if installationMethod == 0 {
-			return matchesSearch(String.localized("All Apps"), String.localized("Requires Local mode"))
+	var body: some View {
+		let projection = makeLibraryProjection()
+		NavigationStack(path: $appNavigationPath) {
+			rootContent(projection: projection)
 		}
-		return !showsDevicePlaceholder
-			&& (searchText.isEmpty || !sideloadedApps.isEmpty || matchesSearch(String.localized("All Apps")))
+		.modifier(FloatingNavigationAppearance())
 	}
 
-	private var appsWithUpdates: [InstalledApp] {
-		sideloadedApps.filter {
+	private func makeLibraryProjection() -> LibraryProjection {
+		let sideloadedApps = store.apps.filter {
+			matchesSearch($0.name, $0.bundleIdentifier, $0.version, $0.build)
+		}
+		let showAllApps: Bool
+		if installationMethod == 0 {
+			showAllApps = matchesSearch(String.localized("All Apps"), String.localized("Requires Local mode"))
+		} else {
+			showAllApps = !showsDevicePlaceholder
+				&& (searchText.isEmpty || !sideloadedApps.isEmpty || matchesSearch(String.localized("All Apps")))
+		}
+		let appsWithUpdates = sideloadedApps.filter {
 			!ignoredUpdates.identifiers.contains($0.bundleIdentifier)
 				&& updates.updateContexts[$0.bundleIdentifier]?.isEmpty == false
 		}
-	}
-
-	private var libraryRows: [UnifiedImportEntry] {
-		imports.visibleRows.filter { entry in
+		let visibleRows = imports.visibleRows
+		let libraryRows = visibleRows.filter { entry in
 			let app = entry.app ?? entry.operation?.app ?? entry.export?.app
 			return matchesSearch(app?.name, app?.identifier, app?.version,
 				entry.download?.sourceProvenance?.sourceAppName, entry.download?.sourceProvenance?.sourceAppIdentifier,
 				entry.download?.sourceProvenance?.sourceAppVersion, entry.download?.fileName)
 		}
-	}
-
-	private var splitGroups: [SplitArtifactGroup] {
-		SplitArtifactGroup.makeGroups(from: imports.visibleRows, lineage: LibraryArtifactIndex.shared.lineage)
-			.filter { group in
-				searchText.isEmpty || group.entries.contains { entry in
-					let app = entry.app ?? entry.operation?.app ?? entry.export?.app
-					return matchesSearch(app?.name, app?.identifier, app?.version,
-						entry.download?.sourceProvenance?.sourceAppName, entry.download?.sourceProvenance?.sourceAppIdentifier,
-						entry.download?.sourceProvenance?.sourceAppVersion, entry.download?.fileName)
-				}
+		let splitGroups = SplitArtifactGroup.makeGroups(
+			from: visibleRows,
+			lineage: LibraryArtifactIndex.shared.lineage
+		).filter { group in
+			searchText.isEmpty || group.entries.contains { entry in
+				let app = entry.app ?? entry.operation?.app ?? entry.export?.app
+				return matchesSearch(app?.name, app?.identifier, app?.version,
+					entry.download?.sourceProvenance?.sourceAppName, entry.download?.sourceProvenance?.sourceAppIdentifier,
+					entry.download?.sourceProvenance?.sourceAppVersion, entry.download?.fileName)
 			}
-	}
-
-	private var importRows: [UnifiedImportEntry] {
+		}
 		let splitRowIDs = Set(splitGroups.flatMap { $0.entries.map(\.id) })
-		return libraryRows.filter { !splitRowIDs.contains($0.id) }
-	}
-
-	private var librarySections: [LibrarySection] {
-		[
+		let importRows = libraryRows.filter { !splitRowIDs.contains($0.id) }
+		let sections: [LibrarySection] = [
 			showAllApps ? .allApps : nil,
 			installationMethod == 1 && searchText.isEmpty && !libraryRows.isEmpty && showsDevicePlaceholder ? .status : nil,
 			importRows.isEmpty && splitGroups.isEmpty ? nil : .imports,
 			showsDevicePlaceholder || !updates.hasVerifiedUpdates || appsWithUpdates.isEmpty ? nil : .updates
 		].compactMap { $0 }
-	}
-
-	private var libraryLayout: LibraryLayout {
-		LibraryLayout(
-			sections: librarySections,
+		let layout = LibraryLayout(
+			sections: sections,
 			imports: importRows.map(\.id),
 			splitGroups: splitGroups.map(\.id),
 			updates: appsWithUpdates.map(\.id)
 		)
+
+		return LibraryProjection(
+			appsWithUpdates: appsWithUpdates,
+			libraryRows: libraryRows,
+			splitGroups: splitGroups,
+			sections: sections,
+			layout: layout
+		)
 	}
 
-	var body: some View {
-		NavigationStack(path: $appNavigationPath) {
-			rootContent
-		}
-		.modifier(FloatingNavigationAppearance())
-	}
-
-	private var rootContent: some View {
+	private func rootContent(projection: LibraryProjection) -> some View {
 		ScrollViewReader { scrollProxy in
-			libraryList(scrollProxy: scrollProxy)
+			libraryList(scrollProxy: scrollProxy, projection: projection)
 		}
 		.task { hasLoadedInitialContent = true }
 		.modifier(SearchToolbarModifier(
@@ -163,10 +166,10 @@ struct LibraryView: View {
 		}
 	}
 
-	private func libraryList(scrollProxy: ScrollViewProxy) -> some View {
+	private func libraryList(scrollProxy: ScrollViewProxy, projection: LibraryProjection) -> some View {
 		List {
-			ForEach(librarySections) { section in
-				librarySectionContent(section)
+			ForEach(projection.sections) { section in
+				librarySectionContent(section, projection: projection)
 			}
 		}
 		.navigationBarTitleDisplayMode(.inline)
@@ -205,13 +208,13 @@ struct LibraryView: View {
 			tabManager.consumeLibraryFocusRequest(request)
 		}
 		.overlay {
-			if !searchText.isEmpty && librarySections.isEmpty {
+			if !searchText.isEmpty && projection.sections.isEmpty {
 				TabPlaceholderView(title: .localized("No Results"), description: .localized("Try another search."), systemImage: "magnifyingglass")
 			} else if installationMethod == 1 && searchText.isEmpty && (!imports.hasRows && showsDevicePlaceholder) {
 				_placeholderContent.transition(.opacity)
 			}
 		}
-		.animation(reduceMotion || !hasLoadedInitialContent ? nil : .snappy, value: libraryLayout)
+		.animation(reduceMotion || !hasLoadedInitialContent ? nil : .snappy, value: projection.layout)
 		.modifier(UnifiedImportsDataSource(controller: imports))
 		.refreshable {
 			guard loadsApps else { return }
@@ -220,22 +223,22 @@ struct LibraryView: View {
 	}
 
 	@ViewBuilder
-	private func librarySectionContent(_ section: LibrarySection) -> some View {
+	private func librarySectionContent(_ section: LibrarySection, projection: LibraryProjection) -> some View {
 		switch section {
 		case .allApps:
 			allAppsRow
 		case .updates:
-			updatesSection
+			updatesSection(apps: projection.appsWithUpdates)
 		case .status:
 			compactDeviceStatus
 		case .imports:
-			importsSection
+			importsSection(entries: projection.libraryRows, groups: projection.splitGroups)
 		}
 	}
 
-	private var updatesSection: some View {
+	private func updatesSection(apps: [InstalledApp]) -> some View {
 		NBSection(String.localized("Updates")) {
-			ForEach(appsWithUpdates) { app in
+			ForEach(apps) { app in
 				NavigationLink(value: InstalledAppsRoute.updates(app.bundleIdentifier)) {
 					InstalledAppCellView(app: app, loadsIcon: loadsIcons)
 				}
@@ -252,9 +255,9 @@ struct LibraryView: View {
 		.listSectionSeparator(.hidden)
 	}
 
-	private var importsSection: some View {
+	private func importsSection(entries: [UnifiedImportEntry], groups: [SplitArtifactGroup]) -> some View {
 		NBSection(.localized("Imports")) {
-			UnifiedLibraryImportRows(entries: libraryRows, groups: splitGroups, controller: imports) {
+			UnifiedLibraryImportRows(entries: entries, groups: groups, controller: imports) {
 				appNavigationPath.append(.splitArtifacts($0))
 			}
 		}

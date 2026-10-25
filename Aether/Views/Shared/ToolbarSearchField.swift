@@ -53,6 +53,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	@ViewBuilder var titleMenu: () -> MenuContent
 	@StateObject private var transition = SearchToolbarTransition()
 	@State private var searchButtonAnchor: WindowFrameAnchor?
+	@State private var secondaryButtonAnchor: WindowFrameAnchor?
 	@AppStorage("Aether.searchPlacement") private var searchPlacement: SearchPlacement = .right
 	@AppStorage("Aether.pageTitlePlacement") private var pageTitlePlacement: RootPageTitlePlacement = .center
 	@AppStorage("Aether.statusUnderPageTitle") private var statusUnderPageTitle = false
@@ -150,13 +151,14 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 				if enabled {
 					SearchHeaderOverlay(text: $text, focus: focus, title: title,
 					transition: transition, sourceAnchor: searchButtonAnchor,
+					targetAnchor: secondaryButtonAnchor,
 					searchInTitle: usesTitleSearch, titleIsLeading: usesLeadingTitle,
 					isScreenActive: isScreenActive)
 				}
 			}
 			.onAppear { transition.restore(isPresented: isPresented) }
 			.onChange(of: isScreenActive) { _, active in
-				if active { transition.restore(isPresented: isPresented) }
+			if active { transition.restore(isPresented: isPresented) }
 				else {
 					focus.wrappedValue = false
 					transition.cancelPendingKeyboardTransition()
@@ -240,23 +242,31 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	}
 
 	@ViewBuilder private var secondaryButton: some View {
-		if hasTitleSearchMenu && usesTitleSearch && !transition.expanded {
-			Menu { titleMenu() } label: { Image(systemName: secondarySymbol) }
-				.accessibilityLabel(secondaryLabel)
-		} else {
-			Button {
-				if transition.expanded { closeSearch() }
-				else { secondaryAction?() }
-			} label: { Image(systemName: transition.expanded ? "xmark" : secondarySymbol) }
-				.accessibilityLabel(transition.expanded ? .localized("Cancel") : secondaryLabel)
-				.opacity(secondaryAction != nil || transition.expanded ? 1 : 0)
-				.allowsHitTesting(secondaryAction != nil || transition.expanded)
-				.accessibilityHidden(secondaryAction == nil && !transition.expanded)
-				.highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-					guard !transition.expanded, let secondaryURLAction else { return }
-					HapticManager.shared.impact()
-					secondaryURLAction()
-				}, including: secondaryURLAction == nil || transition.expanded ? .none : .all)
+		Group {
+			if hasTitleSearchMenu && usesTitleSearch && !transition.expanded {
+				Menu { titleMenu() } label: { Image(systemName: secondarySymbol) }
+					.accessibilityLabel(secondaryLabel)
+			} else {
+				Button {
+					if transition.expanded { closeSearch() }
+					else { secondaryAction?() }
+				} label: { Image(systemName: transition.expanded ? "xmark" : secondarySymbol) }
+					.accessibilityLabel(transition.expanded ? .localized("Cancel") : secondaryLabel)
+					.opacity(secondaryAction != nil || transition.expanded ? 1 : 0)
+					.allowsHitTesting(secondaryAction != nil || transition.expanded)
+					.accessibilityHidden(secondaryAction == nil && !transition.expanded)
+					.highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+						guard !transition.expanded, let secondaryURLAction else { return }
+						HapticManager.shared.impact()
+						secondaryURLAction()
+					}, including: secondaryURLAction == nil || transition.expanded ? .none : .all)
+			}
+		}
+		.background {
+			WindowFrameReader { anchor in
+				guard isScreenActive, secondaryButtonAnchor != anchor else { return }
+				secondaryButtonAnchor = anchor
+			}
 		}
 	}
 
