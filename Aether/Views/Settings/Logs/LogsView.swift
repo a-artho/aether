@@ -19,7 +19,6 @@ struct LogsView: View {
 	@State private var copyFeedbackGeneration = UUID()
 	@State private var searchPresented = !DebugLogManager.shared.searchText.isEmpty
 	@State private var searchFocused = false
-	@State private var searchWidth: CGFloat = 320
 	@State private var isVisible = false
 
 	var body: some View {
@@ -197,9 +196,8 @@ struct LogsView: View {
 				}
 			}
 		}
-		.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { searchWidth = $0 }
 		.modifier(SearchToolbarModifier(text: $_logManager.searchText, isPresented: $searchPresented,
-			focus: $searchFocused, title: .localized("Logs"), width: searchWidth,
+			focus: $searchFocused, title: .localized("Logs"),
 			isScreenActive: isVisible && _selectedItemForDetail == nil, hasTitleMenu: false) { EmptyView() })
 		.onAppear { isVisible = true }
 		.onDisappear { isVisible = false; searchFocused = false }

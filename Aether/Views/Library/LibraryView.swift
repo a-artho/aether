@@ -23,7 +23,6 @@ struct LibraryView: View {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@State private var searchText = ""
 	@State private var searchFocused = false
-	@State private var toolbarWidth: CGFloat = 320
 	@State private var appNavigationPath: [InstalledAppsRoute] = []
 	@State private var isRootListVisible = false
 	@State private var hasLoadedInitialContent = false
@@ -178,10 +177,9 @@ struct LibraryView: View {
 				}
 			}
 			.task { hasLoadedInitialContent = true }
-			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { toolbarWidth = $0 }
 			.modifier(SearchToolbarModifier(
 				text: $searchText, isPresented: $tabManager.isLibrarySearchPresented,
-				focus: $searchFocused, title: libraryTitle, width: toolbarWidth,
+				focus: $searchFocused, title: libraryTitle,
 				isScreenActive: isRootListVisible && appNavigationPath.isEmpty
 					&& imports.infoApp == nil && imports.signingApp == nil
 					&& !imports.importing && !imports.importingURL,

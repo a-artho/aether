@@ -15,13 +15,8 @@ enum SearchPlacement: String, CaseIterable, Identifiable {
 
 /// Applies the native iOS 26 soft scroll-edge treatment to a navigation stack.
 struct FloatingNavigationAppearance: ViewModifier {
-	@ViewBuilder
 	func body(content: Content) -> some View {
-		if #available(iOS 26.0, *) {
-			content.scrollEdgeEffectStyle(.soft, for: .top)
-		} else {
-			content
-		}
+		content.scrollEdgeEffectStyle(.soft, for: .top)
 	}
 }
 
@@ -32,7 +27,6 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	@Binding var isPresented: Bool
 	var focus: Binding<Bool>
 	let title: String
-	let width: CGFloat
 	var enabled = true
 	var isScreenActive = true
 	var isTabRoot = false
@@ -44,7 +38,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	var secondaryURLAction: (() -> Void)? = nil
 	@ViewBuilder var titleMenu: () -> MenuContent
 	@StateObject private var transition = SearchToolbarTransition()
-	@State private var searchButtonFrame: CGRect = .zero
+	@State private var searchButtonAnchor: WindowFrameAnchor?
 	@AppStorage("Aether.searchPlacement") private var searchPlacement: SearchPlacement = .right
 	@AppStorage("Aether.leadingPageTitles") private var leadingPageTitles = false
 
@@ -102,16 +96,21 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			.background {
 				if enabled {
 					SearchHeaderOverlay(text: $text, focus: focus, title: title,
-						transition: transition, sourceFrame: searchButtonFrame,
-						searchInTitle: usesTitleSearch, titleIsLeading: usesLeadingTitle, isScreenActive: isScreenActive)
+					transition: transition, sourceAnchor: searchButtonAnchor,
+					searchInTitle: usesTitleSearch, titleIsLeading: usesLeadingTitle,
+					isScreenActive: isScreenActive)
 				}
 			}
 			.onAppear { transition.restore(isPresented: isPresented) }
 			.onChange(of: isScreenActive) { _, active in
-				if !active { focus.wrappedValue = false }
+				if active { transition.restore(isPresented: isPresented) }
+				else {
+					focus.wrappedValue = false
+					transition.cancelPendingKeyboardTransition()
+				}
 			}
-			.onChange(of: searchPlacement) { _, _ in searchButtonFrame = .zero }
-			.onChange(of: leadingPageTitles) { _, _ in searchButtonFrame = .zero }
+			.onChange(of: searchPlacement) { _, _ in searchButtonAnchor = nil }
+			.onChange(of: leadingPageTitles) { _, _ in searchButtonAnchor = nil }
 			.onChange(of: isPresented) { _, presented in transition.setPresented(presented, keyboardExpected: focus.wrappedValue) }
 			.onScrollPhaseChange { _, phase in
 				if phase == .interacting { focus.wrappedValue = false }
@@ -124,12 +123,15 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 					Text(title).font(.headline).foregroundStyle(.primary).lineLimit(1)
 					.frame(minHeight: 44)
 					.contentShape(Rectangle())
+					.background {
+						WindowFrameReader { anchor in
+							guard isScreenActive, !transition.requested, !transition.expanded else { return }
+							searchButtonAnchor = anchor
+						}
+					}
 				}
 				.buttonStyle(.plain)
 				.accessibilityLabel(String.localized("Search %@", arguments: title))
-				.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-					if !transition.requested && !transition.expanded { searchButtonFrame = frame }
-				}
 			} else if hasTitleMenu {
 				Menu { titleMenu() } label: {
 					HStack(spacing: 8) {
@@ -167,8 +169,11 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			Image(systemName: transition.expanded ? "xmark" : "magnifyingglass")
 		}
 		.accessibilityLabel(transition.expanded ? String.localized("Cancel") : String.localized("Search"))
-		.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-			if !transition.expanded { searchButtonFrame = frame }
+		.background {
+			WindowFrameReader { anchor in
+				guard isScreenActive, !transition.expanded else { return }
+				searchButtonAnchor = anchor
+			}
 		}
 	}
 
@@ -241,6 +246,13 @@ final class SearchToolbarTransition: ObservableObject {
 		}
 	}
 
+	func cancelPendingKeyboardTransition() {
+		generation += 1
+		waitingForKeyboard = false
+	}
+
+	var isWaitingForKeyboard: Bool { waitingForKeyboard }
+
 	func keyboardWillChange(duration: Double, curve: UInt) {
 		guard waitingForKeyboard else { return }
 		waitingForKeyboard = false
@@ -276,6 +288,7 @@ struct KeyboardSearchField: UIViewRepresentable {
 	var focus: Binding<Bool>
 	let prompt: String
 	@ObservedObject var transition: SearchToolbarTransition
+	let isScreenActive: Bool
 
 	func makeUIView(context: Context) -> SearchTextField {
 		let field = SearchTextField()
@@ -291,9 +304,13 @@ struct KeyboardSearchField: UIViewRepresentable {
 	}
 
 	func updateUIView(_ field: SearchTextField, context: Context) {
+		field.setScreenActive(isScreenActive)
 		field.textChanged = { text = $0 }
 		field.focusChanged = { focus.wrappedValue = $0 }
-		field.keyboardChanged = { [weak transition] duration, curve in
+		field.keyboardChanged = { [weak transition, weak field] duration, curve in
+			guard let field, field.isScreenActive,
+				field.isFirstResponder || field.hasKeyboardSession,
+				transition?.isWaitingForKeyboard == true else { return }
 			transition?.keyboardWillChange(duration: duration, curve: curve)
 		}
 		if field.text != text { field.text = text }
@@ -309,9 +326,7 @@ struct KeyboardSearchField: UIViewRepresentable {
 	}
 
 	static func dismantleUIView(_ field: SearchTextField, coordinator: ()) {
-		field.focusChanged = nil
-		field.keyboardChanged = nil
-		field.resignFirstResponder()
+		field.prepareForRemoval()
 	}
 }
 
@@ -321,31 +336,74 @@ final class SearchTextField: UITextField, UITextFieldDelegate {
 	var focusChanged: ((Bool) -> Void)?
 	var keyboardChanged: ((Double, UInt) -> Void)?
 	private var keyboardObserver: NSObjectProtocol?
+	private(set) var isScreenActive = false
+	private(set) var hasKeyboardSession = false
 
 	override init(frame: CGRect) {
 		super.init(frame: frame)
 		delegate = self
 		addTarget(self, action: #selector(editingChanged), for: .editingChanged)
+	}
+	required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+	isolated deinit { removeKeyboardObserver() }
+	override func didMoveToWindow() {
+		super.didMoveToWindow()
+		updateKeyboardObserver()
+		updateFocus()
+	}
+	func setScreenActive(_ active: Bool) {
+		guard isScreenActive != active else { return }
+		isScreenActive = active
+		if !active {
+			hasKeyboardSession = false
+			if isFirstResponder { resignFirstResponder() }
+		}
+		updateKeyboardObserver()
+	}
+	func prepareForRemoval() {
+		setScreenActive(false)
+		focusChanged = nil
+		keyboardChanged = nil
+		textChanged = nil
+		if isFirstResponder { resignFirstResponder() }
+		removeKeyboardObserver()
+	}
+	func updateFocus() {
+		guard window != nil else { return }
+		if wantsFocus && isScreenActive && !isFirstResponder { becomeFirstResponder() }
+		else if !wantsFocus && isFirstResponder { resignFirstResponder() }
+	}
+	@objc private func editingChanged() { textChanged?(text ?? "") }
+	func textFieldShouldReturn(_ textField: UITextField) -> Bool { resignFirstResponder(); return true }
+	func textFieldDidBeginEditing(_ textField: UITextField) { hasKeyboardSession = true; publishFocus() }
+	func textFieldDidEndEditing(_ textField: UITextField) {
+		if isScreenActive { hasKeyboardSession = true }
+		publishFocus()
+	}
+	private func updateKeyboardObserver() {
+		guard isScreenActive, window != nil else {
+			removeKeyboardObserver()
+			return
+		}
+		guard keyboardObserver == nil else { return }
 		keyboardObserver = NotificationCenter.default.addObserver(
 			forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
 		) { [weak self] notification in
 			let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
 			let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 0
-			MainActor.assumeIsolated { self?.keyboardChanged?(duration, curve) }
+			MainActor.assumeIsolated {
+				guard let self, self.isScreenActive,
+					self.isFirstResponder || self.hasKeyboardSession else { return }
+				self.keyboardChanged?(duration, curve)
+				self.hasKeyboardSession = false
+			}
 		}
 	}
-	required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-	isolated deinit { if let keyboardObserver { NotificationCenter.default.removeObserver(keyboardObserver) } }
-	override func didMoveToWindow() { super.didMoveToWindow(); updateFocus() }
-	func updateFocus() {
-		guard window != nil else { return }
-		if wantsFocus && !isFirstResponder { becomeFirstResponder() }
-		else if !wantsFocus && isFirstResponder { resignFirstResponder() }
+	private func removeKeyboardObserver() {
+		guard let keyboardObserver else { return }
+		NotificationCenter.default.removeObserver(keyboardObserver)
+		self.keyboardObserver = nil
 	}
-	@objc private func editingChanged() { textChanged?(text ?? "") }
-	func textFieldShouldReturn(_ textField: UITextField) -> Bool { resignFirstResponder(); return true }
-	func textFieldDidBeginEditing(_ textField: UITextField) { publishFocus() }
-	func textFieldDidEndEditing(_ textField: UITextField) { publishFocus() }
 	private func publishFocus() {
 		DispatchQueue.main.async { [weak self] in
 			guard let self else { return }

@@ -38,7 +38,6 @@ struct SourceAppsView: View {
 	@State var isLoading = true
 	@State var hasLoadedOnce = false
 	@State private var _searchText = ""
-	@State private var _toolbarWidth: CGFloat = 320
 	@ObservedObject private var router = SourcesRouter.shared
 
 	private var _isSearchPresented: Bool {
@@ -105,10 +104,9 @@ struct SourceAppsView: View {
 			}
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
-		.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _toolbarWidth = $0 }
 		.modifier(SearchToolbarModifier(
 			text: $_searchText, isPresented: _collectionSearchPresented,
-			focus: searchFocus, title: _navigationTitle, width: _toolbarWidth,
+			focus: searchFocus, title: _navigationTitle,
 			isScreenActive: router.path.last == .collection(collectionRoute),
 			hasTitleSearchMenu: true,
 			secondarySymbol: "line.3.horizontal.decrease", secondaryLabel: .localized("Filter")
@@ -166,7 +164,9 @@ struct SourceAppsView: View {
 		isLoading = true
 
 		let loadedSources = object.compactMap { source -> SourceRepositoryContext? in
-			guard let repository = viewModel.repository(for: source) else { return nil }
+			guard var repository = viewModel.repository(for: source) else { return nil }
+			// The catalog screen renders app rows only; don't retain the manifest's news payload here.
+			repository.news = nil
 			return SourceRepositoryContext(
 				sourceObjectURI: source.objectID.uriRepresentation().absoluteString,
 				sourceURL: source.sourceURL,

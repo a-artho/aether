@@ -103,9 +103,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		let tableView = UITableView(frame: .zero, style: .plain)
 		// Native plain-table headers remain pinned until the next section replaces them.
 		tableView.backgroundColor = .systemBackground
-		if #available(iOS 26.0, *) {
-			tableView.topEdgeEffect.style = .soft
-		}
+		tableView.topEdgeEffect.style = .soft
 		tableView.sectionFooterHeight = .leastNormalMagnitude
 		tableView.estimatedSectionFooterHeight = .leastNormalMagnitude
 		tableView.delegate = context.coordinator
@@ -146,7 +144,6 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		context.coordinator.showsDownloadButtons = showsDownloadButtons
 		context.coordinator.themeHex = themeHex
 		context.coordinator.horizontalInset = horizontalInset
-		context.coordinator.updateNewsHeader(for: tableView)
 		if accessoryChanged { context.coordinator.refreshVisibleAccessories() }
 		
 		if sourcesChanged || loadingChanged || searchChanged || sortOptionChanged || sortDirectionChanged || badgeChanged {
@@ -171,6 +168,10 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 			listStore: listStore,
 			onSelect: onSelect
 		)
+	}
+
+	static func dismantleUIView(_ tableView: UITableView, coordinator: Coordinator) {
+		coordinator.shutdown(from: tableView)
 	}
 }
 
@@ -201,11 +202,9 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	private var _loadingDeadline: ContinuousClock.Instant?
 	private static let loadingSection = "aether-loading"
 	private var _loadingSections: [PreparedSourceAppList.Section] = []
-	private var _newsHeaderController: UIHostingController<SourceNewsView>?
-	private var _newsHeaderSignature: String?
-	private var _newsHeaderWidth: CGFloat = 0
 	private var _dateObservers: [NSObjectProtocol] = []
 	private var _dateContextSignature = Locale.current.identifier + "|" + TimeZone.current.identifier
+	private var _isShutdown = false
 	weak var uiTableView: UITableView?
 
 	private class DataSource: UITableViewDiffableDataSource<String, SourceAppRowID> {
@@ -248,6 +247,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	}
 
 	func attach(to tableView: UITableView) {
+		guard !_isShutdown else { return }
 		uiTableView = tableView
 		_dataSource = DataSource(tableView: tableView) { [weak self] table, indexPath, id in
 			let cell = table.dequeueReusableCell(withIdentifier: "AppCell", for: indexPath)
@@ -302,15 +302,22 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		let showBadge = showSourceBadge
 		let showDownload = showsDownloadButtons
 		cell.selectionStyle = .default
-		cell.isAccessibilityElement = true
+		cell.isAccessibilityElement = false
 		cell.accessoryType = showDownload ? .none : .disclosureIndicator
-		// A cell needs repository metadata, not its entire app/news catalog.
-		var source = row.source
-		source.apps = []
-		source.news = nil
+		// SourceAppListStore has already reduced this to repository metadata.
+		let source = row.source
+		let selection = SourceAppsView.SourceAppSelection(
+			sourceObjectURI: row.sourceObjectURI,
+			appLocator: .locator(for: row.app)
+		)
 		cell.backgroundConfiguration = .listCell()
 		var configuration = UIHostingConfiguration {
-			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app, showSourceBadge: showBadge, showsDownloadButton: showDownload)
+			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app,
+				showSourceBadge: showBadge, showsDownloadButton: showDownload,
+				onSelect: { [weak self] in
+					guard let self, !self._isShutdown else { return }
+					self.onSelect(selection)
+				})
 				.tint(Color(hex: UserDefaults.standard.string(forKey: "Aether.userTintColor") ?? "#848ef9"))
 		}
 		if let inset = horizontalInset.points { configuration = configuration.margins(.horizontal, inset) }
@@ -320,7 +327,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	// Update only visible controls; changing appearance must not rebuild the
 	// catalog projection or reset its search, grouping, or scroll position.
 	func refreshVisibleAccessories() {
-		guard let table = uiTableView else { return }
+		guard !_isShutdown, let table = uiTableView else { return }
 		for indexPath in table.indexPathsForVisibleRows ?? [] {
 			guard let cell = table.cellForRow(at: indexPath) else { continue }
 			if let row = row(at: indexPath) {
@@ -332,6 +339,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	}
 
 	func prepareList(debouncingSearch: Bool = false, preserveScroll: Bool = false, refreshVisibleRows: Bool = false, fadeSearchResults: Bool = false) {
+		guard !_isShutdown else { return }
 		_prepareTask?.cancel()
 		guard !isCatalogLoading || !sourceContexts.isEmpty else { return }
 		_generation += 1
@@ -364,7 +372,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	}
 
 	private func apply(_ list: PreparedSourceAppList, changed: [SourceAppRowID], preserveScroll: Bool, refreshVisibleRows: Bool, fadeSearchResults: Bool) {
-		guard let table = uiTableView, let dataSource = _dataSource else { return }
+		guard !_isShutdown, let table = uiTableView, let dataSource = _dataSource else { return }
 		let isFirst = !_hasAppliedList
 		let loadingSnapshot = isFirst && !UIAccessibility.isReduceMotionEnabled
 			? table.snapshotView(afterScreenUpdates: false) : nil
@@ -440,53 +448,23 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		return _displayed?.rows[id]
 	}
 
-	func updateNewsHeader(for tableView: UITableView) {
-		guard
-			sourceContexts.count == 1,
-			let news = sourceContexts[0].repository.news,
-			!news.isEmpty
-		else {
-			_newsHeaderController = nil
-			_newsHeaderSignature = nil
-			_newsHeaderWidth = 0
-			tableView.tableHeaderView = nil
-			return
+	func shutdown(from tableView: UITableView) {
+		guard !_isShutdown else { return }
+		_isShutdown = true
+		_generation += 1
+		_prepareTask?.cancel()
+		_prepareTask = nil
+		for observer in _dateObservers { NotificationCenter.default.removeObserver(observer) }
+		_dateObservers.removeAll(keepingCapacity: false)
+		if tableView.delegate === self { tableView.delegate = nil }
+		if let dataSource = _dataSource, tableView.dataSource === dataSource {
+			tableView.dataSource = nil
 		}
-
-		let width = tableView.bounds.width
-		guard width > 0 else { return }
-		let signature = news.map { "\($0.id)|\($0.title)|\($0.caption)|\(String(describing: $0.date))" }
-			.joined(separator: "\n")
-
-		if _newsHeaderSignature == signature, _newsHeaderWidth == width, _newsHeaderController != nil { return }
-
-		let headerController: UIHostingController<SourceNewsView>
-		if let _newsHeaderController {
-			headerController = _newsHeaderController
-			if _newsHeaderSignature != signature {
-				headerController.rootView = SourceNewsView(news: news)
-			}
-		} else {
-			headerController = UIHostingController(rootView: SourceNewsView(news: news))
-			headerController.view.backgroundColor = .clear
-			headerController.view.translatesAutoresizingMaskIntoConstraints = true
-			_newsHeaderController = headerController
-		}
-
-		_newsHeaderSignature = signature
-		headerController.view.frame = CGRect(x: 0, y: 0, width: width, height: 1)
-		let fittingSize = headerController.sizeThatFits(in:
-			CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
-		)
-		let height = max(0, ceil(fittingSize.height))
-		let needsReplacement = tableView.tableHeaderView !== headerController.view ||
-			_newsHeaderWidth != width ||
-			headerController.view.bounds.height != height
-		guard needsReplacement else { return }
-
-		_newsHeaderWidth = width
-		headerController.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
-		tableView.tableHeaderView = headerController.view
+		uiTableView = nil
+		_dataSource = nil
+		_displayed = nil
+		_previousDisplay = nil
+		_loadingSections.removeAll(keepingCapacity: false)
 	}
 	
 	// MARK: TableView
@@ -494,7 +472,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
 		tableView.deselectRow(at: indexPath, animated: true)
 
-		guard let entry = row(at: indexPath) else { return }
+		guard !_isShutdown, let entry = row(at: indexPath) else { return }
 
 		onSelect(
 			SourceAppsView.SourceAppSelection(
@@ -521,6 +499,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	}
 
 	private func updateDateContext() {
+		guard !_isShutdown else { return }
 		let signature = Locale.current.identifier + "|" + TimeZone.current.identifier
 		if signature != _dateContextSignature {
 			_dateContextSignature = signature

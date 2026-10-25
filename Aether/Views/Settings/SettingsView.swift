@@ -19,7 +19,6 @@ struct SettingsView: View {
 	@AppStorage("Aether.deviceControlsStyle") private var controlsStyle: DeviceControlsStyle = .standard
 	@State private var searchText = ""
 	@State private var searchFocused = false
-	@State private var searchWidth: CGFloat = 320
 	@State private var rootVisible = false
 	@State private var _currentIcon: String? = UIApplication.shared.alternateIconName
 	@State private var _settingsPath: [AppTabManager.SettingsPage] = []
@@ -91,10 +90,9 @@ struct SettingsView: View {
 					}
 				}
 			}
-			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { searchWidth = $0 }
 			.modifier(SearchToolbarModifier(
 				text: $searchText, isPresented: $_tabManager.isSettingsSearchPresented,
-				focus: $searchFocused, title: .localized("Settings"), width: searchWidth,
+				focus: $searchFocused, title: .localized("Settings"),
 				isScreenActive: rootVisible && _settingsPath.isEmpty && !isSpoofingPresented,
 				isTabRoot: true, hasTitleMenu: false
 			) { EmptyView() })

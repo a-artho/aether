@@ -39,13 +39,11 @@ struct SourceAppsCellView: View {
 				_storeCellAppearance != 0,
 				let desc = SourceAppBodyText.body(in: app.localizedDescription)
 			{
-				_selectableContent {
-					Text(desc)
-						.frame(maxWidth: .infinity, alignment: .leading)
-						.nbRowSubtitle()
-						.foregroundStyle(.secondary)
-						.padding(.top, 2)
-				}
+				Text(desc)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.nbRowSubtitle()
+					.foregroundStyle(.secondary)
+					.padding(.top, 2)
 			}
 		}
 	}
@@ -56,9 +54,12 @@ struct SourceAppsCellView: View {
 	private func _selectableContent<Content: View>(@ViewBuilder content: () -> Content) -> some View {
 		if let onSelect {
 			Button(action: onSelect) {
-				content().contentShape(Rectangle())
+				content()
+					.accessibilityElement(children: .combine)
+					.contentShape(Rectangle())
 			}
 			.buttonStyle(.plain)
+			.accessibilityHint(String.localized("Opens app details"))
 		} else {
 			content()
 		}

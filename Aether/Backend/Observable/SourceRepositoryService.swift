@@ -289,12 +289,6 @@ actor SourceRepositoryService {
 			}
 		}
 		root["apps"] = apps
-		if var news = root["news"] as? [[String: Any]], let parsed = repository.news, news.count == parsed.count {
-			for index in news.indices {
-				if let date = parsed[index].date { news[index]["date"] = date.date.timeIntervalSince1970 }
-			}
-			root["news"] = news
-		}
 		return (try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])) ?? data
 	}
 

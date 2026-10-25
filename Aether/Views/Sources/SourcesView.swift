@@ -13,7 +13,6 @@ struct SourcesView: View {
 	@State private var _searchText = ""
 	@State private var _refreshErrorMessage: String?
 	@State private var _reportRefreshFailures = false
-	@State private var _toolbarWidth: CGFloat = 320
 	@State private var _isSearchFocused = false
 	// Keep the collection keyboard state outside the pushed destination.
 	@State private var _isCollectionSearchFocused = false
@@ -114,10 +113,9 @@ struct SourcesView: View {
 				}
 			}
 			.navigationBarTitleDisplayMode(.inline)
-			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { _toolbarWidth = $0 }
 			.modifier(SearchToolbarModifier(
 				text: $_searchText, isPresented: _rootSearchPresented,
-				focus: $_isSearchFocused, title: .localized("Sources"), width: _toolbarWidth, isScreenActive: router.path.isEmpty && router.addSourceRequest == nil, isTabRoot: true, hasTitleMenu: false,
+				focus: $_isSearchFocused, title: .localized("Sources"), isScreenActive: router.path.isEmpty && router.addSourceRequest == nil, isTabRoot: true, hasTitleMenu: false,
 				secondaryLabel: .localized("Add Source"),
 				secondaryAction: { router.presentAddSource() }
 			) { EmptyView() })

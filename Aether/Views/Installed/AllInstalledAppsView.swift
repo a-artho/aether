@@ -18,7 +18,6 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 	@State private var searchText: String
 	@State private var searchPresented: Bool
 	@State private var searchFocused = false
-	@State private var width: CGFloat = 320
 	@State private var isVisible = false
 	@State private var selectedInfoApp: InstalledApp?
 	@State private var infoDetent: PresentationDetent = .height(370)
@@ -86,9 +85,8 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 		.refreshable { LibraryUpdatesStore.shared.startRefresh() }
 		.onAppear { isVisible = true }
 		.onDisappear { isVisible = false; searchFocused = false }
-		.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
 		.modifier(SearchToolbarModifier(text: $searchText, isPresented: $searchPresented,
-			focus: $searchFocused, title: .localized("All Apps"), width: width,
+			focus: $searchFocused, title: .localized("All Apps"),
 			isScreenActive: isVisible && selectedInfoApp == nil && pendingUninstall == nil, hasTitleMenu: false) { EmptyView() })
 		.onChange(of: searchPresented) { _, presented in
 			if !presented { searchText = ""; searchFocused = false }

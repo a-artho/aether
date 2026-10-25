@@ -41,6 +41,9 @@ struct DownloadProgressButton: View {
 		.buttonStyle(.borderless)
 		.disabled(!_isActionable)
 		.accessibilityLabel(_accessibilityLabel)
+		.accessibilityValue(_showsProgress
+			? String.localized("%lld%% complete", arguments: Int((download.overallProgress * 100).rounded()))
+			: "")
 	}
 
 	private var _showsProgress: Bool {
