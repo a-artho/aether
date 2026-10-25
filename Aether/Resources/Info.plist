@@ -52,37 +52,66 @@
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
-			<key>AetherGlassGold</key>
+			<key>AetherGlassMutedReference</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
-				<array><string>AetherGlassGold</string></array>
+				<array><string>AetherGlassMutedReference</string></array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
-			<key>AetherDark</key>
+			<key>AetherGlassMutedSmokedSteel</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
-				<array>
-					<string>AetherDark</string>
-				</array>
+				<array><string>AetherGlassMutedSmokedSteel</string></array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
-			<key>Donor</key>
+			<key>AetherGlassFrostedTitanium</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
-				<array>
-					<string>Donor</string>
-				</array>
+				<array><string>AetherGlassFrostedTitanium</string></array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
-			<key>V0</key>
+			<key>AetherGlassSmokedAcrylic</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
-				<array>
-					<string>V0</string>
-				</array>
+				<array><string>AetherGlassSmokedAcrylic</string></array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+			<key>AetherGlassWhiteViolet</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array><string>AetherGlassWhiteViolet</string></array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+			<key>AetherGlassPlum</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array><string>AetherGlassPlum</string></array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+			<key>AetherGlassClearCrystal</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array><string>AetherGlassClearCrystal</string></array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+			<key>AetherGlassEdgeSpark</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array><string>AetherGlassEdgeSpark</string></array>
+				<key>UIPrerenderedIcon</key>
+				<false/>
+			</dict>
+			<key>AetherGlassForestObsidian</key>
+			<dict>
+				<key>CFBundleIconFiles</key>
+				<array><string>AetherGlassForestObsidian</string></array>
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
@@ -95,29 +124,11 @@
 				<key>UIPrerenderedIcon</key>
 				<false/>
 			</dict>
-			<key>V1Mac</key>
-			<dict>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>V1Mac</string>
-				</array>
-				<key>UIPrerenderedIcon</key>
-				<false/>
-			</dict>
 			<key>V2Mac</key>
 			<dict>
 				<key>CFBundleIconFiles</key>
 				<array>
 					<string>V2Mac</string>
-				</array>
-				<key>UIPrerenderedIcon</key>
-				<false/>
-			</dict>
-			<key>Wing</key>
-			<dict>
-				<key>CFBundleIconFiles</key>
-				<array>
-					<string>Wing</string>
 				</array>
 				<key>UIPrerenderedIcon</key>
 				<false/>

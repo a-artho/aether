@@ -8,19 +8,21 @@
 import SwiftUI
 
 enum SettingsRowIconStyle: String, CaseIterable, Identifiable {
-	case colored, monochrome, muted
+	case colored, monochrome, muted, theme
 	var id: Self { self }
 	var title: String {
 		switch self {
 		case .colored: .localized("Colored")
 		case .monochrome: .localized("Monochrome")
 		case .muted: .localized("Muted")
+		case .theme: .localized("Theme")
 		}
 	}
 }
 
 struct SettingsIconBadge: View {
 	@AppStorage("Aether.settingsRowIconStyle") private var iconStyle: SettingsRowIconStyle = .colored
+	@AppStorage("Aether.userTintColor") private var themeHex = "#848ef9"
 	let systemImage: String
 	var backgroundColor: Color = .blue
 	var iconSize: CGFloat = 15
@@ -30,6 +32,7 @@ struct SettingsIconBadge: View {
 		case .colored: backgroundColor
 		case .monochrome: .primary
 		case .muted: .secondary
+		case .theme: Color(hex: themeHex)
 		}
 	}
 

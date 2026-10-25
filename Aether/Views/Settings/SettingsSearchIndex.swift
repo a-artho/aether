@@ -46,7 +46,7 @@ enum SettingsSearchIndex {
 		add(.appearance, "Appearance", [
 			("Appearance", "light dark system theme"), ("Theme", "color tint"), ("Custom Theme Color", "colour tint"),
 			("Card Style", "settings device controls tunnel pairing certificate default liquid glass native raised card tiles background"),
-			("Row Icons", "settings flat colored monochrome white muted gray grey icons"),
+			("Row Icons", "settings flat colored monochrome white muted theme tint custom color icons"),
 			("Overview Icons", "all apps all repos standalone glass frame border individual repo artwork icons"),
 			("All Repos Icon", "app store globe books collection symbol"),
 			("Row Icon Size", "apps repos artwork default medium large 50 54 58"),

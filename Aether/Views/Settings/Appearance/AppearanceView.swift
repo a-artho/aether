@@ -93,7 +93,7 @@ struct AppearanceView: View {
 						Text(style.title).tag(style)
 					}
 				} label: {
-					SettingsRowLabel(.localized("Row Icons"), systemImage: "square.grid.2x2", backgroundColor: .gray)
+					SettingsRowLabel(.localized("Row Icons"), systemImage: "square.grid.2x2", backgroundColor: .blue)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
@@ -102,40 +102,43 @@ struct AppearanceView: View {
 						Text(style.title).tag(style)
 					}
 				} label: {
-					SettingsRowLabel(.localized("Card Style"), systemImage: "rectangle.on.rectangle", backgroundColor: .gray)
+					SettingsRowLabel(.localized("Card Style"), systemImage: "rectangle.on.rectangle", backgroundColor: .purple)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
 			}
 
-			Section {
+			NBSection(.localized("App Rows")) {
 				Picker(selection: $_rowIconSize) {
 					ForEach(RowIconSize.allCases) { size in
 						Text(size.title).tag(size)
 					}
 				} label: {
-					SettingsRowLabel(.localized("Row Icon Size"), systemImage: "square.resize", backgroundColor: .gray)
-				}
-				.pickerStyle(.menu)
-				.tint(.secondary)
-				Picker(selection: $_rowHorizontalInset) {
-					ForEach(RowHorizontalInset.allCases) { inset in
-						Text(inset.title).tag(inset)
-					}
-				} label: {
-					SettingsRowLabel(.localized("Horizontal Inset"), systemImage: "arrow.left.and.right", backgroundColor: .gray)
+					SettingsRowLabel(.localized("Row Icon Size"), systemImage: "square.resize", backgroundColor: .orange)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
 			}
 
-			Section {
+			NBSection(.localized("App Lists & Details")) {
+				Picker(selection: $_rowHorizontalInset) {
+					ForEach(RowHorizontalInset.allCases) { inset in
+						Text(inset.title).tag(inset)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Horizontal Inset"), systemImage: "arrow.left.and.right", backgroundColor: .teal)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+			}
+
+			NBSection(.localized("Overview Rows")) {
 				Picker(selection: $_overviewIconStyle) {
 					ForEach(OverviewIconStyle.allCases) { style in
 						Text(style.title).tag(style)
 					}
 				} label: {
-					SettingsRowLabel(.localized("Overview Icons"), systemImage: "square.stack.3d.up", backgroundColor: .gray)
+					SettingsRowLabel(.localized("Overview Icons"), systemImage: "square.stack.3d.up", backgroundColor: .indigo)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
@@ -146,7 +149,7 @@ struct AppearanceView: View {
 							.tag(icon)
 					}
 				} label: {
-					SettingsRowLabel(.localized("All Repos Icon"), systemImage: "appstore", backgroundColor: .gray)
+					SettingsRowLabel(.localized("All Repos Icon"), systemImage: "appstore", backgroundColor: .cyan)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
@@ -159,12 +162,12 @@ struct AppearanceView: View {
 					Text(.localized("Default")).tag(false)
 					Text(.localized("Page Title")).tag(true)
 				} label: {
-					SettingsRowLabel(.localized("Section Header Size"), systemImage: "textformat.size", backgroundColor: .gray)
+					SettingsRowLabel(.localized("Section Header Size"), systemImage: "textformat.size", backgroundColor: .purple)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
 				Toggle(isOn: $_mutedSectionHeaders) {
-					SettingsRowLabel(.localized("Muted Section Headers"), systemImage: "textformat", backgroundColor: .gray)
+					SettingsRowLabel(.localized("Muted Section Headers"), systemImage: "textformat", backgroundColor: .teal)
 				}
 			}
 
@@ -236,7 +239,7 @@ struct AppearanceView: View {
 				.pickerStyle(.inline)
 			}
 
-			Section {
+			NBSection(.localized("Feedback")) {
 				Picker(selection: Binding(
 					get: { HapticManager.shared.currentStrength },
 					set: { newValue in

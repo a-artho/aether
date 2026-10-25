@@ -40,26 +40,42 @@ struct AppIconView: View {
 	
 	// dont translate
 	@MainActor private static let sections: [String: [AltIcon]] = [
-		"Main": [
+		"Aether": [
 			AltIcon(displayName: "Aether", author: "Artho", key: nil),
-			AltIcon(displayName: "Aether Dark", author: "Artho", key: "AetherDark", previewImageName: "AetherDarkPreview"),
-			AltIcon(displayName: "Aether Glass", author: "Artho", key: "AetherGlassMuted", previewImageName: "AetherGlassMutedPreview"),
-			AltIcon(displayName: "Aether Gold Glass", author: "Artho", key: "AetherGlassGold", previewImageName: "AetherGlassGoldPreview"),
-			AltIcon(displayName: "Feather (macOS)", author: "Samara", key: "V2Mac"),
-			AltIcon(displayName: "Feather v1", author: "Samara", key: "V1"),
-			AltIcon(displayName: "Feather v1 (macOS)", author: "Samara", key: "V1Mac"),
-			AltIcon(displayName: "Feather v0", author: "Samara", key: "V0"),
-			AltIcon(displayName: "Feather Donor", author: "Samara", key: "Donor")
+			AltIcon(displayName: "Aether Glass", author: "Artho", key: "AetherGlassMuted", previewImageName: "AetherGlassMutedPreview")
 		],
-		"Wingio": [
-			AltIcon(displayName: "Feather", author: "Wingio", key: "Wing"),
+		"Glass — Neutral": [
+			AltIcon(displayName: "Muted Reference", author: "Artho", key: "AetherGlassMutedReference", previewImageName: "AetherGlassMutedReferencePreview"),
+			AltIcon(displayName: "Muted Smoked Steel", author: "Artho", key: "AetherGlassMutedSmokedSteel", previewImageName: "AetherGlassMutedSmokedSteelPreview"),
+			AltIcon(displayName: "Frosted Titanium", author: "Artho", key: "AetherGlassFrostedTitanium", previewImageName: "AetherGlassFrostedTitaniumPreview"),
+			AltIcon(displayName: "Smoked Acrylic", author: "Artho", key: "AetherGlassSmokedAcrylic", previewImageName: "AetherGlassSmokedAcrylicPreview")
+		],
+		"Glass — Violet": [
+			AltIcon(displayName: "White Violet", author: "Artho", key: "AetherGlassWhiteViolet", previewImageName: "AetherGlassWhiteVioletPreview"),
+			AltIcon(displayName: "Plum Glass", author: "Artho", key: "AetherGlassPlum", previewImageName: "AetherGlassPlumPreview")
+		],
+		"Glass — Cool": [
+			AltIcon(displayName: "Clear Crystal", author: "Artho", key: "AetherGlassClearCrystal", previewImageName: "AetherGlassClearCrystalPreview"),
+			AltIcon(displayName: "Edge Spark", author: "Artho", key: "AetherGlassEdgeSpark", previewImageName: "AetherGlassEdgeSparkPreview"),
+			AltIcon(displayName: "Forest Obsidian", author: "Artho", key: "AetherGlassForestObsidian", previewImageName: "AetherGlassForestObsidianPreview")
+		],
+		"Feather": [
+			AltIcon(displayName: "Feather (macOS)", author: "Samara", key: "V2Mac"),
+			AltIcon(displayName: "Feather v1", author: "Samara", key: "V1")
 		]
+	]
+	@MainActor private static let sectionOrder = ["Aether", "Glass — Neutral", "Glass — Violet", "Glass — Cool", "Feather"]
+	@MainActor private static let supportedAlternateIconNames: Set<String> = [
+		"AetherGlassMuted", "AetherGlassMutedReference", "AetherGlassMutedSmokedSteel",
+		"AetherGlassFrostedTitanium", "AetherGlassSmokedAcrylic", "AetherGlassWhiteViolet",
+		"AetherGlassPlum", "AetherGlassClearCrystal", "AetherGlassEdgeSpark",
+		"AetherGlassForestObsidian", "V2Mac", "V1"
 	]
 	
 	// MARK: Body
 	var body: some View {
 		NBList(.localized("App Icon")) {
-			ForEach(Self.sections.keys.sorted(), id: \.self) { section in
+			ForEach(Self.sectionOrder, id: \.self) { section in
 				if let icons = Self.sections[section] {
 					NBSection(section) {
 						ForEach(icons) { icon in
@@ -73,7 +89,26 @@ struct AppIconView: View {
 			Button(String.localized("OK"), role: .cancel) {}
 		} message: { Text(iconError ?? "") }
 		.onAppear {
-			currentIcon = UIApplication.shared.alternateIconName
+			let activeIcon = UIApplication.shared.alternateIconName
+			guard let activeIcon, !Self.supportedAlternateIconNames.contains(activeIcon) else {
+				currentIcon = activeIcon
+				return
+			}
+
+			// If an older build left a now-removed alternate icon active, return to
+			// the primary Aether icon when the user opens this picker.
+			changingIcon = true
+			UIApplication.shared.setAlternateIconName(nil) { error in
+				DispatchQueue.main.async {
+					changingIcon = false
+					if let error {
+						iconError = error.localizedDescription
+						DebugLogManager.shared.log("Removed app icon reset failed: \(error.localizedDescription)", category: "Appearance", level: .error)
+					} else {
+						currentIcon = nil
+					}
+				}
+			}
 		}
 	}
 }
