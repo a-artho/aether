@@ -560,8 +560,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		_hasAppliedList = true
 		_didShowLoadingList = false
 		_loadingDeadline = nil
-		// On iOS 15+, a nonanimated diff still inserts/deletes/reconfigures individual rows.
-		// Search result changes retain this behavior; complete repositories reload without diffing.
+		// Search results are prepared off-main; avoid diffing them against a large catalog on the main thread.
 		let update = {
 			let applySignpostID = OSSignpostID(log: sourceAppsTableSignpostLog)
 			os_signpost(.begin, log: sourceAppsTableSignpostLog, name: "UIKit snapshot application", signpostID: applySignpostID,
@@ -594,7 +593,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 					table.setContentOffset(CGPoint(x: table.contentOffset.x, y: y), animated: false)
 				}
 			}
-			if isFirst || reloadData {
+			if isFirst || reloadData || !query.isEmpty {
 				dataSource.applySnapshotUsingReloadData(snapshot, completion: completion)
 			} else {
 				dataSource.apply(snapshot, animatingDifferences: false, completion: completion)
