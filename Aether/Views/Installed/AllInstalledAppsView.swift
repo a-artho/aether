@@ -89,7 +89,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 			focus: $searchFocused, title: .localized("All Apps"),
 			isScreenActive: isVisible && selectedInfoApp == nil && pendingUninstall == nil, hasTitleMenu: false) { EmptyView() })
 		.onChange(of: searchPresented) { _, presented in
-			if !presented { searchText = ""; searchFocused = false }
+			if !presented { searchFocused = false }
 		}
 		.sheet(item: $selectedInfoApp) { app in
 			NBNavigationView(app.displayName, displayMode: .inline) {

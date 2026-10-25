@@ -115,7 +115,7 @@ struct SourceAppsView: View {
 		.onChange(of: router.searchTarget) { _, target in
 			if target != .collection(collectionRoute) {
 				searchFocus.wrappedValue = false
-				_searchText = ""
+				if target != nil { _searchText = "" }
 			}
 		}
 		.onAppear {

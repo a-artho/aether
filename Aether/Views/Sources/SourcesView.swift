@@ -128,7 +128,7 @@ struct SourcesView: View {
 				}
 				if target != .root {
 					_isSearchFocused = false
-					_searchText = ""
+					if target != nil { _searchText = "" }
 				}
 			}
 			.onChange(of: viewModel.isRefreshRequested) { old, requested in

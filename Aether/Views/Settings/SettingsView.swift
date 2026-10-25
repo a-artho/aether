@@ -102,7 +102,7 @@ struct SettingsView: View {
 				}
 			}
 			.onChange(of: _tabManager.isSettingsSearchPresented) { _, presented in
-				if !presented { searchText = ""; searchFocused = false }
+				if !presented { searchFocused = false }
 				else { searchFocused = true }
 			}
 			.onDisappear { rootVisible = false; searchFocused = false }

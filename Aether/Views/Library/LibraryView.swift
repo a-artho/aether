@@ -188,7 +188,7 @@ struct LibraryView: View {
 				secondaryURLAction: { imports.urlText = ""; imports.importingURL = true }
 			) { EmptyView() })
 			.onChange(of: tabManager.isLibrarySearchPresented) { _, presented in
-				if !presented { searchFocused = false; searchText = "" }
+				if !presented { searchFocused = false }
 			}
 			.onChange(of: appNavigationPath) { _, path in
 				if !path.isEmpty { searchFocused = false }

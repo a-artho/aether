@@ -111,7 +111,17 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			}
 			.onChange(of: searchPlacement) { _, _ in searchButtonAnchor = nil }
 			.onChange(of: leadingPageTitles) { _, _ in searchButtonAnchor = nil }
-			.onChange(of: isPresented) { _, presented in transition.setPresented(presented, keyboardExpected: focus.wrappedValue) }
+			.onChange(of: isPresented) { _, presented in
+				transition.setPresented(presented, keyboardExpected: focus.wrappedValue)
+				guard !presented else { return }
+				focus.wrappedValue = false
+				let text = $text
+				let isPresented = $isPresented
+				transition.afterCollapse {
+					guard !isPresented.wrappedValue else { return }
+					text.wrappedValue = ""
+				}
+			}
 			.onScrollPhaseChange { _, phase in
 				if phase == .interacting { focus.wrappedValue = false }
 			}
@@ -220,10 +230,12 @@ final class SearchToolbarTransition: ObservableObject {
 	private(set) var animation: Animation? = .easeInOut(duration: 0.25)
 	private var waitingForKeyboard = false
 	private var generation = 0
+	private var collapseCompletion: (() -> Void)?
 
 	func restore(isPresented: Bool) {
 		// Returning from details retains search without requesting the keyboard again.
 		generation += 1
+		collapseCompletion = nil
 		requested = isPresented
 		expanded = isPresented
 		waitingForKeyboard = false
@@ -231,6 +243,7 @@ final class SearchToolbarTransition: ObservableObject {
 
 	func setPresented(_ presented: Bool, keyboardExpected: Bool = true) {
 		guard requested != presented else { return }
+		if presented { collapseCompletion = nil }
 		generation += 1
 		requested = presented
 		waitingForKeyboard = true
@@ -244,6 +257,15 @@ final class SearchToolbarTransition: ObservableObject {
 			guard let self, self.generation == token, self.waitingForKeyboard else { return }
 			self.animate(duration: 0.25, curve: 0)
 		}
+	}
+
+	func afterCollapse(_ completion: @escaping () -> Void) {
+		guard !requested else { return }
+		guard expanded || waitingForKeyboard else {
+			completion()
+			return
+		}
+		collapseCompletion = completion
 	}
 
 	func cancelPendingKeyboardTransition() {
@@ -268,6 +290,7 @@ final class SearchToolbarTransition: ObservableObject {
 	private func animate(duration: Double, curve: UInt) {
 		animationDuration = duration
 		waitingForKeyboard = false
+		let token = generation
 		let animation: Animation
 		switch curve {
 		case 1: animation = .easeIn(duration: duration)
@@ -277,8 +300,13 @@ final class SearchToolbarTransition: ObservableObject {
 		default: animation = .easeInOut(duration: duration)
 		}
 		self.animation = UIAccessibility.isReduceMotionEnabled ? nil : animation
-		withAnimation(self.animation) {
+		withAnimation(self.animation, completionCriteria: .removed) {
 			expanded = requested
+		} completion: { [weak self] in
+			guard let self, self.generation == token, !self.requested, !self.expanded else { return }
+			let completion = self.collapseCompletion
+			self.collapseCompletion = nil
+			completion?()
 		}
 	}
 }

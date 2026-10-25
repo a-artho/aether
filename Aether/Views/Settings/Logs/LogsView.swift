@@ -202,7 +202,7 @@ struct LogsView: View {
 		.onAppear { isVisible = true }
 		.onDisappear { isVisible = false; searchFocused = false }
 		.onChange(of: searchPresented) { _, presented in
-			if !presented { _logManager.searchText = ""; searchFocused = false }
+			if !presented { searchFocused = false }
 		}
 		.refreshable {
 			await _logManager.fetchLogs()
