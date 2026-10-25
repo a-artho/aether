@@ -288,6 +288,7 @@ struct KeyboardSearchField: UIViewRepresentable {
 	var focus: Binding<Bool>
 	let prompt: String
 	@ObservedObject var transition: SearchToolbarTransition
+	let fieldOwner: SearchTextFieldOwner
 	let isScreenActive: Bool
 
 	func makeUIView(context: Context) -> SearchTextField {
@@ -304,6 +305,7 @@ struct KeyboardSearchField: UIViewRepresentable {
 	}
 
 	func updateUIView(_ field: SearchTextField, context: Context) {
+		fieldOwner.register(field)
 		field.setScreenActive(isScreenActive)
 		field.textChanged = { text = $0 }
 		field.focusChanged = { focus.wrappedValue = $0 }
@@ -330,12 +332,44 @@ struct KeyboardSearchField: UIViewRepresentable {
 	}
 }
 
+/// Explicitly coordinates the bridged text field's active lifecycle without
+/// depending on UIHostingConfiguration's private subview hierarchy.
+@MainActor
+final class SearchTextFieldOwner {
+	private weak var field: SearchTextField?
+	private var isScreenActive = true
+
+	func register(_ field: SearchTextField) {
+		self.field = field
+		field.fieldOwner = self
+		field.setScreenActive(isScreenActive)
+	}
+
+	func setScreenActive(_ active: Bool) {
+		isScreenActive = active
+		field?.setScreenActive(active)
+	}
+
+	func unregister(_ field: SearchTextField) {
+		guard self.field === field else { return }
+		self.field = nil
+	}
+
+	func prepareForRemoval() {
+		isScreenActive = false
+		let field = self.field
+		self.field = nil
+		field?.prepareForRemoval()
+	}
+}
+
 final class SearchTextField: UITextField, UITextFieldDelegate {
 	var wantsFocus = false
 	var textChanged: ((String) -> Void)?
 	var focusChanged: ((Bool) -> Void)?
 	var keyboardChanged: ((Double, UInt) -> Void)?
 	private var keyboardObserver: NSObjectProtocol?
+	weak var fieldOwner: SearchTextFieldOwner?
 	private(set) var isScreenActive = false
 	private(set) var hasKeyboardSession = false
 
@@ -361,6 +395,8 @@ final class SearchTextField: UITextField, UITextFieldDelegate {
 		updateKeyboardObserver()
 	}
 	func prepareForRemoval() {
+		fieldOwner?.unregister(self)
+		fieldOwner = nil
 		setScreenActive(false)
 		focusChanged = nil
 		keyboardChanged = nil

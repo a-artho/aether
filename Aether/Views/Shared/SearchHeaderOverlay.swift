@@ -23,6 +23,7 @@ struct SearchHeaderOverlay: UIViewRepresentable {
 		view.surface = SearchOverlaySurface(text: $text, focus: Binding(get: { isScreenActive && focus.wrappedValue },
 			set: { focus.wrappedValue = $0 }), title: title,
 			transition: transition, layout: view.layout, sourceAnchor: sourceAnchor,
+			searchFieldOwner: view.searchFieldOwner,
 			searchInTitle: searchInTitle, titleIsLeading: titleIsLeading,
 			rightToLeft: layoutDirection == .rightToLeft,
 			isScreenActive: isScreenActive)
@@ -94,7 +95,11 @@ final class WindowFrameReportingView: UIView {
 		}
 		let frame = convert(bounds, to: window)
 		guard frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite,
-			frame.height.isFinite, !frame.isNull, !frame.isEmpty else { return }
+			frame.height.isFinite, !frame.isNull, !frame.isEmpty else {
+			// Invalidate the previous measurement while layout/window changes settle.
+			publish(nil)
+			return
+		}
 		publish(WindowFrameAnchor(frame: frame, windowID: ObjectIdentifier(window)))
 	}
 
@@ -130,6 +135,7 @@ struct SearchOverlaySurface: View {
 	@ObservedObject var transition: SearchToolbarTransition
 	@ObservedObject var layout: SearchOverlayLayout
 	let sourceAnchor: WindowFrameAnchor?
+	let searchFieldOwner: SearchTextFieldOwner
 	let searchInTitle: Bool
 	var titleIsLeading = false
 	let rightToLeft: Bool
@@ -156,7 +162,7 @@ struct SearchOverlaySurface: View {
 					.font(.system(size: 16)).foregroundStyle(.secondary)
 				KeyboardSearchField(text: $text, focus: focus,
 					prompt: .localized("Search %@", arguments: title), transition: transition,
-					isScreenActive: isScreenActive)
+					fieldOwner: searchFieldOwner, isScreenActive: isScreenActive)
 					.tint(.primary)
 			}
 			.padding(.horizontal, 12)
@@ -176,6 +182,7 @@ struct SearchOverlaySurface: View {
 @MainActor
 final class SearchOverlayAttachmentView: UIView {
 	let layout = SearchOverlayLayout()
+	let searchFieldOwner = SearchTextFieldOwner()
 	private var host: UIView?
 	private weak var bar: UINavigationBar?
 	private let touchContainer = SearchOverlayTouchView()
@@ -185,6 +192,7 @@ final class SearchOverlayAttachmentView: UIView {
 		didSet {
 			guard oldValue != isScreenActive else { return }
 			if isScreenActive {
+				searchFieldOwner.setScreenActive(true)
 				touchContainer.isHidden = false
 				attachIfNeeded()
 			} else {
@@ -273,7 +281,7 @@ final class SearchOverlayAttachmentView: UIView {
 		acceptsSearchTouches = false
 		touchContainer.acceptsSearchTouches = false
 		touchContainer.isHidden = true
-		firstSearchTextField(in: host)?.setScreenActive(false)
+		searchFieldOwner.setScreenActive(false)
 		detachFromNavigationBar()
 	}
 
@@ -288,19 +296,10 @@ final class SearchOverlayAttachmentView: UIView {
 	func tearDown() {
 		isScreenActive = false
 		deactivateAndDetach()
-		firstSearchTextField(in: host)?.prepareForRemoval()
+		searchFieldOwner.prepareForRemoval()
 		host?.removeFromSuperview()
 		host = nil
 		surface = nil
-	}
-
-	private func firstSearchTextField(in view: UIView?) -> SearchTextField? {
-		guard let view else { return nil }
-		if let field = view as? SearchTextField { return field }
-		for child in view.subviews {
-			if let field = firstSearchTextField(in: child) { return field }
-		}
-		return nil
 	}
 }
 

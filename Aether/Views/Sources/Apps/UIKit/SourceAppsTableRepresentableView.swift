@@ -314,7 +314,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		var configuration = UIHostingConfiguration {
 			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app,
 				showSourceBadge: showBadge, showsDownloadButton: showDownload,
-				onSelect: { [weak self] in
+				selectionOwner: .tableView, onSelect: { [weak self] in
 					guard let self, !self._isShutdown else { return }
 					self.onSelect(selection)
 				})
@@ -407,7 +407,12 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		// Applying consistently on main keeps UIKit cell providers and model reads synchronized.
 		let update = {
 			let completion: () -> Void = { [weak self, weak table] in
-				guard let self, let table else { loadingSnapshot?.removeFromSuperview(); return }
+				guard let self, let table,
+					!self._isShutdown, self.uiTableView === table,
+					self._generation == generation else {
+					loadingSnapshot?.removeFromSuperview()
+					return
+				}
 				if let loadingSnapshot {
 					table.layoutIfNeeded()
 					table.bringSubviewToFront(loadingSnapshot)
@@ -415,11 +420,9 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 						loadingSnapshot.removeFromSuperview()
 					}
 				}
-				if self._generation == generation {
-					self._previousDisplay = nil
-					self.refreshVisibleHeaders()
-				}
-				if self._generation == generation, let (id, distance) = anchor, let indexPath = dataSource.indexPath(for: id), !table.isDragging && !table.isDecelerating {
+				self._previousDisplay = nil
+				self.refreshVisibleHeaders()
+				if let (id, distance) = anchor, let indexPath = dataSource.indexPath(for: id), !table.isDragging && !table.isDecelerating {
 					table.layoutIfNeeded()
 					let minimum = -table.adjustedContentInset.top
 					let maximum = max(minimum, table.contentSize.height - table.bounds.height + table.adjustedContentInset.bottom)
@@ -465,6 +468,9 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		_displayed = nil
 		_previousDisplay = nil
 		_loadingSections.removeAll(keepingCapacity: false)
+		_loadingDeadline = nil
+		sourceContexts.removeAll(keepingCapacity: false)
+		onSelect = { _ in }
 	}
 	
 	// MARK: TableView

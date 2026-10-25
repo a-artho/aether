@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: xcode-27
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -24,8 +24,11 @@ jobs:
         with:
           submodules: true
 
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.3.0.app
+      - name: Verify Apple toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          swift --version
 
       - name: Regression checks
         run: |

@@ -14,6 +14,11 @@ import NukeUI
 
 // thats a whole pharaghraph of codes
 struct SourceAppsCellView: View {
+	enum SelectionOwner {
+		case swiftUIButton
+		case tableView
+	}
+
 	@Environment(\.displayScale) private var displayScale
 	@AppStorage("Aether.storeCellAppearance") private var _storeCellAppearance: Int = 0
 	
@@ -22,6 +27,7 @@ struct SourceAppsCellView: View {
 	let app: ASRepository.App
 	var showSourceBadge: Bool = false
 	var showsDownloadButton: Bool = true
+	var selectionOwner: SelectionOwner = .swiftUIButton
 	var onSelect: (() -> Void)? = nil
 	
 	var body: some View {
@@ -52,16 +58,27 @@ struct SourceAppsCellView: View {
 	/// in large-description mode.
 	@ViewBuilder
 	private func _selectableContent<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-		if let onSelect {
-			Button(action: onSelect) {
+		switch selectionOwner {
+		case .swiftUIButton:
+			if let onSelect {
+				Button(action: onSelect) {
+					content()
+						.accessibilityElement(children: .combine)
+						.contentShape(Rectangle())
+				}
+				.buttonStyle(.plain)
+				.accessibilityHint(String.localized("Opens app details"))
+			} else {
 				content()
-					.accessibilityElement(children: .combine)
-					.contentShape(Rectangle())
 			}
-			.buttonStyle(.plain)
-			.accessibilityHint(String.localized("Opens app details"))
-		} else {
+		case .tableView:
+			// Touch navigation is owned by UITableViewDelegate; this default action
+			// keeps the hosted app details accessible without a competing Button.
 			content()
+				.contentShape(Rectangle())
+				.accessibilityElement(children: .combine)
+				.accessibilityHint(String.localized("Opens app details"))
+				.accessibilityAction(.default) { onSelect?() }
 		}
 	}
 

@@ -112,17 +112,19 @@ final class SourcesRouter: ObservableObject {
 	) {
 		pendingAppRequest = nil
 
-		let parentRoute = Route.collection(parent)
-		if path.last != parentRoute {
-			path = [parentRoute]
-		}
-
 		let appRoute = Route.app(
 			parent: parent,
 			sourceObjectURI: sourceObjectURI,
 			appLocator: appLocator
 		)
+		// Check before changing the path: resetting to the parent first makes this
+		// guard ineffective when the same detail route is already visible.
 		guard path.last != appRoute else { return }
+
+		let parentRoute = Route.collection(parent)
+		if path.last != parentRoute {
+			path = [parentRoute]
+		}
 		path.append(appRoute)
 	}
 

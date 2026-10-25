@@ -73,3 +73,4 @@ python3 "$test_dir/run-download-recovery-checks.py"
 python3 "$test_dir/run-sign-only-handoff-checks.py"
 
 python3 "$test_dir/run-library-presentation-checks.py"
+python3 "$test_dir/run-navigation-hardening-checks.py"
