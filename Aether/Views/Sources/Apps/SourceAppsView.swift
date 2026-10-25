@@ -36,7 +36,6 @@ struct SourceAppsView: View {
 		return raw == "date" ? .latest : SortOption(rawValue: raw) ?? .latest
 	}()
 	@State var isLoading = true
-	@State var hasLoadedOnce = false
 	@State private var _searchText = ""
 	@ObservedObject private var router = SourcesRouter.shared
 
@@ -81,6 +80,7 @@ struct SourceAppsView: View {
 				SourceAppsTableRepresentableView(
 					sourceContexts: _sourceContexts ?? [],
 					isCatalogLoading: isLoading,
+					isSearchPresented: _isSearchPresented,
 					searchText: $_searchText,
 					sortOption: $_sortOption,
 					sortAscending: _sortOption == .name,
@@ -119,9 +119,8 @@ struct SourceAppsView: View {
 			}
 		}
 		.onAppear {
-			if !hasLoadedOnce, viewModel.isFinished || object.contains(where: { viewModel.repository(for: $0) != nil }) {
+			if viewModel.isFinished || object.contains(where: { viewModel.repository(for: $0) != nil }) {
 				_load()
-				hasLoadedOnce = true
 			}
 			_sortOption = _sortOptionRawValue == "date"
 				? .latest
@@ -130,9 +129,6 @@ struct SourceAppsView: View {
 		.task {
 			await viewModel.ensureSourcesLoaded(object)
 			_load()
-		}
-		.onChange(of: viewModel.isFinished) { _, finished in
-			if finished { _load() }
 		}
 		.onChange(of: viewModel.catalogRevision) { _, _ in
 			if object.contains(where: { viewModel.repository(for: $0) != nil }) { _load() }
@@ -161,8 +157,6 @@ struct SourceAppsView: View {
 			_consumePendingAppRequestIfPossible()
 			return
 		}
-		isLoading = true
-
 		let loadedSources = object.compactMap { source -> SourceRepositoryContext? in
 			guard var repository = viewModel.repository(for: source) else { return nil }
 			// The catalog screen renders app rows only; don't retain the manifest's news payload here.
@@ -174,7 +168,7 @@ struct SourceAppsView: View {
 				revision: viewModel.revision(for: source)
 			)
 		}
-		_sourceContexts = loadedSources
+		if _sourceContexts != loadedSources { _sourceContexts = loadedSources }
 		_loadedCatalogRevision = viewModel.catalogRevision
 		isLoading = false
 		_consumePendingAppRequestIfPossible()

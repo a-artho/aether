@@ -178,7 +178,7 @@ struct SourcesAddView: View {
 						)
 						return
 					}
-					SourcesViewModel.shared.cache(dict)
+						Task { await SourcesViewModel.shared.cache(dict) }
 					completion()
 				}
 			}

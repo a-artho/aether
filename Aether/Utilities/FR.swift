@@ -340,7 +340,7 @@ enum FR {
 								completion?(false)
 							} else {
 								Task { @MainActor in
-									SourcesViewModel.shared.cache(data, forIdentifier: id)
+									await SourcesViewModel.shared.cache(data, forIdentifier: id)
 									completion?(true)
 								}
 							}

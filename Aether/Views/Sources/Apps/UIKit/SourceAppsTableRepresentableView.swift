@@ -9,6 +9,9 @@ import SwiftUI
 import AltSourceKit
 import UIKit
 import NimbleViews
+import os
+
+private let sourceAppsTableSignpostLog = OSLog(subsystem: Bundle.main.bundleIdentifier ?? "Aether", category: "SourceAppsTable")
 
 private final class SourceAppTableCell: UITableViewCell {
 	// These rows have no responder editing actions. Their copy/download menus are
@@ -92,6 +95,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	@AppStorage("Aether.userTintColor") private var themeHex = "#848ef9"
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
 	var isCatalogLoading = false
+	var isSearchPresented = false
 	@Binding var searchText: String
 	@Binding var sortOption: SourceAppsView.SortOption
 	var sortAscending: Bool
@@ -127,9 +131,11 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		context.coordinator.uiTableView = tableView
 		context.coordinator.onSelect = onSelect
 		
+		let searchWasPresented = context.coordinator.isSearchPresented
 		let sourcesChanged = context.coordinator.sourceContexts != sourceContexts
 		let loadingChanged = context.coordinator.isCatalogLoading != isCatalogLoading
 		let searchChanged = context.coordinator.searchText != searchText
+		let searchPresentationChanged = searchWasPresented != isSearchPresented
 		let sortOptionChanged = context.coordinator.sortOption != sortOption
 		let sortDirectionChanged = context.coordinator.sortAscending != sortAscending
 		let badgeChanged = context.coordinator.showSourceBadge != showSourceBadge
@@ -137,6 +143,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		
 		context.coordinator.sourceContexts = sourceContexts
 		context.coordinator.isCatalogLoading = isCatalogLoading
+		context.coordinator.isSearchPresented = isSearchPresented
 		context.coordinator.searchText = searchText
 		context.coordinator.sortOption = sortOption
 		context.coordinator.sortAscending = sortAscending
@@ -146,12 +153,17 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		context.coordinator.horizontalInset = horizontalInset
 		if accessoryChanged { context.coordinator.refreshVisibleAccessories() }
 		
-		if sourcesChanged || loadingChanged || searchChanged || sortOptionChanged || sortDirectionChanged || badgeChanged {
+		if searchPresentationChanged && searchWasPresented && !isSearchPresented {
+			context.coordinator.endSearch()
+		} else if searchChanged && searchText.isEmpty && isSearchPresented {
+			context.coordinator.restoreBaseForEmptyQuery()
+		} else if sourcesChanged || loadingChanged || searchChanged || sortOptionChanged || sortDirectionChanged || badgeChanged {
 			context.coordinator.prepareList(
 				debouncingSearch: searchChanged && !sourcesChanged && !sortOptionChanged && !sortDirectionChanged && !badgeChanged,
 				preserveScroll: sourcesChanged && !searchChanged && !sortOptionChanged && !sortDirectionChanged,
 				refreshVisibleRows: badgeChanged,
-				fadeSearchResults: searchChanged
+				fadeSearchResults: searchChanged && !searchText.isEmpty,
+				reloadData: sourcesChanged || sortOptionChanged || sortDirectionChanged || badgeChanged
 			)
 		}
 	}
@@ -160,6 +172,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		Coordinator(
 			sourceContexts: sourceContexts,
 			isCatalogLoading: isCatalogLoading,
+			isSearchPresented: isSearchPresented,
 			searchText: searchText,
 			sortOption: sortOption,
 			sortAscending: sortAscending,
@@ -183,6 +196,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	}
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
 	var isCatalogLoading: Bool
+	var isSearchPresented: Bool
 	var searchText: String
 	var sortOption: SourceAppsView.SortOption
 	var sortAscending: Bool
@@ -196,9 +210,14 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	private var _dataSource: DataSource?
 	private var _displayed: PreparedSourceAppList?
 	private var _previousDisplay: PreparedSourceAppList?
+	private var _basePresentation: SourceAppPresentation?
+	private var _basePresentationKey: PresentationKey?
+	private var _displayedPresentationKey: PresentationKey?
+	private var _displayedQuery = ""
 	private var _prepareTask: Task<Void, Never>?
 	private var _generation = 0
 	private var _hasAppliedList = false
+	private var _didShowLoadingList = false
 	private var _loadingDeadline: ContinuousClock.Instant?
 	private static let loadingSection = "aether-loading"
 	private var _loadingSections: [PreparedSourceAppList.Section] = []
@@ -206,6 +225,18 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	private var _dateContextSignature = Locale.current.identifier + "|" + TimeZone.current.identifier
 	private var _isShutdown = false
 	weak var uiTableView: UITableView?
+	private var _openSignpostID: OSSignpostID?
+	private var _searchRestoreSignpostID: OSSignpostID?
+	private var _didSignpostFirstVisibleCell = false
+
+	private struct PresentationKey: Equatable {
+		let contexts: [SourceAppCatalogContext]
+		let sort: String
+		let ascending: Bool
+		let unknownDate: String
+		let locale: String
+		let timeZone: String
+	}
 
 	private class DataSource: UITableViewDiffableDataSource<String, SourceAppRowID> {
 		var showsAlphabeticalIndex = false
@@ -220,6 +251,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	init(
 		sourceContexts: [SourceAppsView.SourceRepositoryContext],
 		isCatalogLoading: Bool,
+		isSearchPresented: Bool,
 		searchText: String,
 		sortOption: SourceAppsView.SortOption,
 		sortAscending: Bool,
@@ -230,6 +262,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	) {
 		self.sourceContexts = sourceContexts
 		self.isCatalogLoading = isCatalogLoading
+		self.isSearchPresented = isSearchPresented
 		self.searchText = searchText
 		self.sortOption = sortOption
 		self.sortAscending = sortAscending
@@ -249,6 +282,9 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	func attach(to tableView: UITableView) {
 		guard !_isShutdown else { return }
 		uiTableView = tableView
+		let openSignpostID = OSSignpostID(log: sourceAppsTableSignpostLog)
+		_openSignpostID = openSignpostID
+		os_signpost(.begin, log: sourceAppsTableSignpostLog, name: "Repository table opening", signpostID: openSignpostID)
 		_dataSource = DataSource(tableView: tableView) { [weak self] table, indexPath, id in
 			let cell = table.dequeueReusableCell(withIdentifier: "AppCell", for: indexPath)
 			guard let self else { return cell }
@@ -259,7 +295,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 			}
 			return cell
 		}
-		showLoadingList()
+		if shouldShowLoadingList { showLoadingList() }
 		// Relative labels update on midnight/foreground without a repeating timer.
 		for name in [UIApplication.significantTimeChangeNotification, UIApplication.willEnterForegroundNotification,
 			NSLocale.currentLocaleDidChangeNotification] {
@@ -268,6 +304,14 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 			})
 		}
 		prepareList()
+	}
+
+	private var shouldShowLoadingList: Bool { isCatalogLoading && sourceContexts.isEmpty }
+
+	private func presentationKey(unknownDate: String) -> PresentationKey {
+		PresentationKey(contexts: sourceContexts, sort: sortOption.rawValue,
+			ascending: sortAscending, unknownDate: unknownDate,
+			locale: Locale.current.identifier, timeZone: TimeZone.current.identifier)
 	}
 
 	private func showLoadingList() {
@@ -284,6 +328,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 			loading.appendItems(section.rows, toSection: section.title)
 		}
 		_dataSource?.apply(loading, animatingDifferences: false)
+		_didShowLoadingList = true
 	}
 
 
@@ -338,44 +383,152 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		}
 	}
 
-	func prepareList(debouncingSearch: Bool = false, preserveScroll: Bool = false, refreshVisibleRows: Bool = false, fadeSearchResults: Bool = false) {
+	func prepareList(
+		debouncingSearch: Bool = false, preserveScroll: Bool = false,
+		refreshVisibleRows: Bool = false, fadeSearchResults: Bool = false,
+		reloadData: Bool = false
+	) {
 		guard !_isShutdown else { return }
 		_prepareTask?.cancel()
+		if !searchText.isEmpty { finishSearchRestoreSignpost() }
 		guard !isCatalogLoading || !sourceContexts.isEmpty else { return }
 		_generation += 1
 		let generation = _generation
-		if !_hasAppliedList { showLoadingList() }
 		let contexts = sourceContexts
 		let query = searchText
+		let sort = sortOption.rawValue
+		let ascending = sortAscending
+		let unknownDate = String.localized("Unknown Date")
+		let key = presentationKey(unknownDate: unknownDate)
+
+		if query.isEmpty, let base = _basePresentation, _basePresentationKey == key {
+			restore(base, key: key)
+			return
+		}
+
+		if shouldShowLoadingList && !_hasAppliedList { showLoadingList() }
+		let previous = _displayed
+		let store = listStore
+		let includeBase = query.isEmpty || _basePresentationKey != key
+		_prepareTask = Task { [weak self] in
+			let signpostID = OSSignpostID(log: sourceAppsTableSignpostLog)
+			os_signpost(.begin, log: sourceAppsTableSignpostLog, name: "Coordinator list request", signpostID: signpostID,
+				"queryLength=%{public}d", query.count)
+			defer { os_signpost(.end, log: sourceAppsTableSignpostLog, name: "Coordinator list request", signpostID: signpostID) }
+			do {
+				if debouncingSearch { try await Task.sleep(for: .milliseconds(120)) }
+				let result = try await store.presentation(contexts: contexts, sort: sort,
+					ascending: ascending, query: query, unknownDate: unknownDate,
+					includeBase: includeBase, comparedTo: previous)
+				guard !Task.isCancelled, let self, self._generation == generation else { return }
+				if !self._hasAppliedList, let deadline = self._loadingDeadline {
+					try await Task.sleep(until: deadline, clock: .continuous)
+				}
+				guard !Task.isCancelled, self._generation == generation else { return }
+				if let base = result.base {
+					self._basePresentation = base
+					self._basePresentationKey = key
+				}
+				self.apply(result.current, key: key, query: query, preserveScroll: preserveScroll,
+					refreshVisibleRows: refreshVisibleRows, fadeSearchResults: fadeSearchResults,
+					reloadData: reloadData)
+			} catch is CancellationError {
+				// A newer query/catalog owns the next update.
+			} catch {
+				// Projection preparation only throws cancellation; leave the displayed snapshot intact.
+				self?.finishSearchRestoreSignpost()
+			}
+		}
+	}
+
+	/// Search dismissal and an empty query restore the active screen's base snapshot.
+	/// The generation changes synchronously so no older filtered result can be applied.
+	func endSearch() { restoreBaseForEmptyQuery() }
+
+	func restoreBaseForEmptyQuery() {
+		guard !_isShutdown else { return }
+		if _searchRestoreSignpostID == nil {
+			let signpostID = OSSignpostID(log: sourceAppsTableSignpostLog)
+			_searchRestoreSignpostID = signpostID
+			os_signpost(.begin, log: sourceAppsTableSignpostLog, name: "Repository search dismissal", signpostID: signpostID)
+		}
+		_prepareTask?.cancel()
+		_prepareTask = nil
+		_generation += 1
+		let generation = _generation
+		let unknownDate = String.localized("Unknown Date")
+		let key = presentationKey(unknownDate: unknownDate)
+		if let base = _basePresentation, _basePresentationKey == key {
+			restore(base, key: key)
+			return
+		}
+
+		let contexts = sourceContexts
 		let sort = sortOption.rawValue
 		let ascending = sortAscending
 		let previous = _displayed
 		let store = listStore
 		_prepareTask = Task { [weak self] in
 			do {
-				if debouncingSearch { try await Task.sleep(for: .milliseconds(120)) }
-				let list = try await store.list(contexts: contexts, sort: sort, ascending: ascending,
-					query: query, unknownDate: .localized("Unknown Date"))
-				guard !Task.isCancelled, let self, self._generation == generation else { return }
-				let changed = await store.changedRows(in: list, comparedTo: previous)
-				if !self._hasAppliedList, let deadline = self._loadingDeadline {
-					try await Task.sleep(until: deadline, clock: .continuous)
-				}
-				guard !Task.isCancelled, self._generation == generation else { return }
-				self.apply(list, changed: changed, preserveScroll: preserveScroll, refreshVisibleRows: refreshVisibleRows, fadeSearchResults: fadeSearchResults)
+				let result = try await store.presentation(contexts: contexts, sort: sort,
+					ascending: ascending, query: "", unknownDate: unknownDate,
+					includeBase: true, comparedTo: previous)
+				guard !Task.isCancelled, let self, self._generation == generation,
+					!self._isShutdown else { return }
+				self._basePresentation = result.current
+				self._basePresentationKey = key
+				self.restore(result.current, key: key)
 			} catch is CancellationError {
-				// A newer query/catalog owns the next update.
+				// A subsequent query or catalog revision owns the next presentation.
 			} catch {
-				// Projection preparation only throws cancellation; leave the displayed snapshot intact.
+				// Keep the current table intact if preparation fails.
 			}
 		}
 	}
 
-	private func apply(_ list: PreparedSourceAppList, changed: [SourceAppRowID], preserveScroll: Bool, refreshVisibleRows: Bool, fadeSearchResults: Bool) {
+	private func restore(_ presentation: SourceAppPresentation, key: PresentationKey) {
+		guard !_isShutdown, let table = uiTableView, let dataSource = _dataSource else { return }
+		if _displayedQuery.isEmpty, _displayedPresentationKey == key {
+			finishSearchRestoreSignpost()
+			return
+		}
+		_prepareTask?.cancel()
+		_prepareTask = nil
+		_generation += 1
+		let generation = _generation
+		_previousDisplay = _displayed
+		_displayed = presentation.list
+		_displayedPresentationKey = key
+		_displayedQuery = ""
+		dataSource.showsAlphabeticalIndex = sortOption == .name
+		_hasAppliedList = true
+		_didShowLoadingList = false
+		_loadingDeadline = nil
+		let applySignpostID = OSSignpostID(log: sourceAppsTableSignpostLog)
+		os_signpost(.begin, log: sourceAppsTableSignpostLog, name: "Restore base repository snapshot", signpostID: applySignpostID,
+			"rows=%{public}d", presentation.list.rows.count)
+		dataSource.applySnapshotUsingReloadData(presentation.snapshot) { [weak self, weak table] in
+			os_signpost(.end, log: sourceAppsTableSignpostLog, name: "Restore base repository snapshot", signpostID: applySignpostID)
+			guard let self else { return }
+			self.finishSearchRestoreSignpost()
+			guard let table, !self._isShutdown,
+				self.uiTableView === table, self._generation == generation else { return }
+			self._previousDisplay = nil
+			self.refreshVisibleHeaders()
+		}
+	}
+
+	private func apply(
+		_ presentation: SourceAppPresentation, key: PresentationKey, query: String,
+		preserveScroll: Bool, refreshVisibleRows: Bool, fadeSearchResults: Bool, reloadData: Bool
+	) {
 		guard !_isShutdown, let table = uiTableView, let dataSource = _dataSource else { return }
 		let isFirst = !_hasAppliedList
-		let loadingSnapshot = isFirst && !UIAccessibility.isReduceMotionEnabled
+		let loadingSnapshot = isFirst && _didShowLoadingList && !UIAccessibility.isReduceMotionEnabled
 			? table.snapshotView(afterScreenUpdates: false) : nil
+		if loadingSnapshot != nil {
+			os_signpost(.event, log: sourceAppsTableSignpostLog, name: "Capture loading transition image")
+		}
 		if let loadingSnapshot {
 			loadingSnapshot.frame = table.bounds
 			loadingSnapshot.isUserInteractionEnabled = false
@@ -384,29 +537,37 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		let generation = _generation
 		let anchor: (SourceAppRowID, CGFloat)? = preserveScroll && !table.isDragging && !table.isDecelerating
 			? table.indexPathsForVisibleRows?.sorted().compactMap { indexPath in
-				guard let id = dataSource.itemIdentifier(for: indexPath), list.rows[id] != nil else { return nil }
+				guard let id = dataSource.itemIdentifier(for: indexPath), presentation.list.rows[id] != nil else { return nil }
 				return (id, table.rectForRow(at: indexPath).minY - table.contentOffset.y)
 			}.first : nil
 		_previousDisplay = _displayed
-		_displayed = list
+		_displayed = presentation.list
+		_displayedPresentationKey = key
+		_displayedQuery = query
+		if query.isEmpty {
+			_basePresentation = presentation
+			_basePresentationKey = key
+		}
 		dataSource.showsAlphabeticalIndex = sortOption == .name
-		var snapshot = NSDiffableDataSourceSnapshot<String, SourceAppRowID>()
-		for section in list.sections {
-			snapshot.appendSections([section.title])
-			snapshot.appendItems(section.rows, toSection: section.title)
-		}
-		var reconfigure = Set(changed)
+		var snapshot = presentation.snapshot
 		if refreshVisibleRows {
+			var reconfigure = Set<SourceAppRowID>()
 			for indexPath in table.indexPathsForVisibleRows ?? [] {
-				if let id = dataSource.itemIdentifier(for: indexPath), list.rows[id] != nil { reconfigure.insert(id) }
+				if let id = dataSource.itemIdentifier(for: indexPath), presentation.list.rows[id] != nil { reconfigure.insert(id) }
 			}
+			if !reconfigure.isEmpty { snapshot.reconfigureItems(Array(reconfigure)) }
 		}
-		snapshot.reconfigureItems(Array(reconfigure))
 		_hasAppliedList = true
+		_didShowLoadingList = false
+		_loadingDeadline = nil
 		// On iOS 15+, a nonanimated diff still inserts/deletes/reconfigures individual rows.
-		// Applying consistently on main keeps UIKit cell providers and model reads synchronized.
+		// Search result changes retain this behavior; complete repositories reload without diffing.
 		let update = {
+			let applySignpostID = OSSignpostID(log: sourceAppsTableSignpostLog)
+			os_signpost(.begin, log: sourceAppsTableSignpostLog, name: "UIKit snapshot application", signpostID: applySignpostID,
+				"rows=%{public}d", presentation.list.rows.count)
 			let completion: () -> Void = { [weak self, weak table] in
+				os_signpost(.end, log: sourceAppsTableSignpostLog, name: "UIKit snapshot application", signpostID: applySignpostID)
 				guard let self, let table,
 					!self._isShutdown, self.uiTableView === table,
 					self._generation == generation else {
@@ -414,13 +575,16 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 					return
 				}
 				if let loadingSnapshot {
-					table.layoutIfNeeded()
 					table.bringSubviewToFront(loadingSnapshot)
 					UIView.animate(withDuration: 0.2, animations: { loadingSnapshot.alpha = 0 }) { _ in
 						loadingSnapshot.removeFromSuperview()
 					}
 				}
 				self._previousDisplay = nil
+				if isFirst, let openSignpostID = self._openSignpostID {
+					os_signpost(.end, log: sourceAppsTableSignpostLog, name: "Repository table opening", signpostID: openSignpostID)
+					self._openSignpostID = nil
+				}
 				self.refreshVisibleHeaders()
 				if let (id, distance) = anchor, let indexPath = dataSource.indexPath(for: id), !table.isDragging && !table.isDecelerating {
 					table.layoutIfNeeded()
@@ -430,7 +594,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 					table.setContentOffset(CGPoint(x: table.contentOffset.x, y: y), animated: false)
 				}
 			}
-			if isFirst {
+			if isFirst || reloadData {
 				dataSource.applySnapshotUsingReloadData(snapshot, completion: completion)
 			} else {
 				dataSource.apply(snapshot, animatingDifferences: false, completion: completion)
@@ -440,7 +604,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 			// Crossfade the visible viewport; never animate thousands of row deletions.
 			UIView.transition(with: table, duration: 0.2,
 				options: [.transitionCrossDissolve, .beginFromCurrentState, .allowUserInteraction],
-				animations: { update(); table.layoutIfNeeded() })
+				animations: update)
 		} else {
 			update()
 		}
@@ -457,6 +621,11 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		_generation += 1
 		_prepareTask?.cancel()
 		_prepareTask = nil
+		finishSearchRestoreSignpost()
+		if let openSignpostID = _openSignpostID {
+			os_signpost(.end, log: sourceAppsTableSignpostLog, name: "Repository table opening", signpostID: openSignpostID)
+			_openSignpostID = nil
+		}
 		for observer in _dateObservers { NotificationCenter.default.removeObserver(observer) }
 		_dateObservers.removeAll(keepingCapacity: false)
 		if tableView.delegate === self { tableView.delegate = nil }
@@ -467,10 +636,17 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 		_dataSource = nil
 		_displayed = nil
 		_previousDisplay = nil
+		_basePresentation = nil
 		_loadingSections.removeAll(keepingCapacity: false)
 		_loadingDeadline = nil
 		sourceContexts.removeAll(keepingCapacity: false)
 		onSelect = { _ in }
+	}
+
+	private func finishSearchRestoreSignpost() {
+		guard let signpostID = _searchRestoreSignpostID else { return }
+		os_signpost(.end, log: sourceAppsTableSignpostLog, name: "Repository search dismissal", signpostID: signpostID)
+		_searchRestoreSignpostID = nil
 	}
 	
 	// MARK: TableView
@@ -486,6 +662,14 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 				appLocator: .locator(for: entry.app)
 			)
 		)
+	}
+
+	func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+		guard !_isShutdown, !_didSignpostFirstVisibleCell,
+			_dataSource?.itemIdentifier(for: indexPath)?.source != Self.loadingSection else { return }
+		_didSignpostFirstVisibleCell = true
+		os_signpost(.event, log: sourceAppsTableSignpostLog, name: "First repository app row displayed",
+			signpostID: _openSignpostID ?? .exclusive)
 	}
 	
 	private func sectionTitle(at section: Int) -> String {

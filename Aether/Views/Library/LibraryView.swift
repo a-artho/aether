@@ -201,6 +201,11 @@ struct LibraryView: View {
 			.onChange(of: installationMethod) { _, mode in
 				if mode == 0 { appNavigationPath.removeAll() }
 			}
+			.onChange(of: showsDevicePlaceholder) { _, shouldShowPlaceholder in
+				guard shouldShowPlaceholder,
+					appNavigationPath.contains(.allApps) else { return }
+				appNavigationPath.removeAll()
+			}
 		}
 		.modifier(FloatingNavigationAppearance())
 	}
@@ -210,11 +215,11 @@ struct LibraryView: View {
 	}
 
 	private var showsDevicePlaceholder: Bool {
-		installationMethod == 0 || (store.apps.isEmpty && (
-			!connection.hasPairingFile || connection.requiresInAppTunnelSetup
-			|| (_showsCellularConnectionGuidance && _needsManualCellularRefresh)
-			|| (!connection.isConnected && !isConnectingTunnel && !cellularAssist.isBusy)
-		))
+		installationMethod == 0 || !connection.hasPairingFile || connection.requiresInAppTunnelSetup
+			|| (store.apps.isEmpty && (
+				(_showsCellularConnectionGuidance && _needsManualCellularRefresh)
+				|| (!connection.isConnected && !isConnectingTunnel && !cellularAssist.isBusy)
+			))
 	}
 
 	private var isLoadingInstalledApps: Bool {
@@ -330,9 +335,9 @@ struct LibraryView: View {
 	}
 
 	private var deviceStatus: DeviceStatus {
-		if !connection.hasPairingFile && store.apps.isEmpty {
+		if !connection.hasPairingFile {
 			return DeviceStatus(title: .localized("Pairing File Missing"), description: .localized("Add a pairing file to view sideloaded apps or spoof device location."), icon: "key.slash", action: .pair, buttonTitle: .localized("Pair"))
-		} else if connection.requiresInAppTunnelSetup && store.apps.isEmpty {
+		} else if connection.requiresInAppTunnelSetup {
 			return DeviceStatus(title: .localized("VPN Setup Required"), description: .localized("Set up Aether’s VPN profile to connect to your device."), icon: "network.badge.shield.half.filled", action: .setupVPN, buttonTitle: .localized("Set Up"))
 		} else if _showsCellularConnectionGuidance && store.apps.isEmpty {
 			return DeviceStatus(title: _needsManualCellularRefresh ? .localized("Refresh Cellular Connection") : .localized("Connecting on Cellular"), description: _needsManualCellularRefresh ? .localized("Turn off Mobile Data or briefly enable Airplane Mode. Switch it back on once Aether connects.") : .localized("Aether is refreshing the cellular connection to reach your device."), icon: "antenna.radiowaves.left.and.right", busy: true)

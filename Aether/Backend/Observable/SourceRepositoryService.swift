@@ -1,6 +1,11 @@
 import Foundation
 import CryptoKit
 import AltSourceKit
+import os
+
+private let sourceRepositorySignpostLog = OSLog(
+	subsystem: Bundle.main.bundleIdentifier ?? "Aether", category: "SourceRepository"
+)
 
 /// Shares decoded catalogs and HTTP validators across browsing, imports and update checks.
 /// This actor keeps JSON decoding and disk work off the main actor.
@@ -170,7 +175,7 @@ actor SourceRepositoryService {
 			}
 		}
 
-		var (data, response) = try await session.data(for: request)
+		var (data, response) = try await _loadResponse(for: request, url: url)
 		guard var http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
 		if http.statusCode == 304, conditional, var entry = previous {
 			entry.stored.checkedAt = Date()
@@ -187,7 +192,7 @@ actor SourceRepositoryService {
 		if http.statusCode == 304 || (conditional && [400, 412, 428].contains(http.statusCode)) {
 			request.setValue(nil, forHTTPHeaderField: "If-None-Match")
 			request.setValue(nil, forHTTPHeaderField: "If-Modified-Since")
-			(data, response) = try await session.data(for: request)
+			(data, response) = try await _loadResponse(for: request, url: url)
 			guard let retryHTTP = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
 			http = retryHTTP
 		}
@@ -198,17 +203,19 @@ actor SourceRepositoryService {
 		}
 
 		// Compare bytes before decoding: identical catalogs preserve model identities and UI state.
-		let revision = Self.digest(data)
-		let snapshot: Snapshot
-		let diskData: Data
-		if let previous, previous.snapshot.revision == revision {
-			snapshot = previous.snapshot
-			diskData = previous.stored.data
-		} else {
+		let (revision, snapshot, diskData): (String, Snapshot, Data) = try {
+			let signpostID = OSSignpostID(log: sourceRepositorySignpostLog)
+			os_signpost(.begin, log: sourceRepositorySignpostLog, name: "Digest, decode, and normalize catalog", signpostID: signpostID,
+				"bytes=%{public}d", data.count)
+			defer { os_signpost(.end, log: sourceRepositorySignpostLog, name: "Digest, decode, and normalize catalog", signpostID: signpostID) }
+			let revision = Self.digest(data)
+			if let previous, previous.snapshot.revision == revision {
+				return (revision, previous.snapshot, previous.stored.data)
+			}
 			let repository = try Self.decodeRepository(data)
-			snapshot = Snapshot(repository: repository, revision: revision)
-			diskData = normalizedCacheData(data, repository: repository)
-		}
+			let snapshot = Snapshot(repository: repository, revision: revision)
+			return (revision, snapshot, normalizedCacheData(data, repository: repository))
+		}()
 		// Commit validators only after the body has been validated successfully.
 		let stored = StoredCatalog(
 			url: url, data: diskData, revision: revision, etag: validETag(http), lastModified: validLastModified(http),
@@ -220,9 +227,21 @@ actor SourceRepositoryService {
 		// Persist changed validators and the daily full-fetch checkpoint as well.
 		if previous?.snapshot.revision != revision || previous?.stored.etag != stored.etag
 			|| previous?.stored.lastModified != stored.lastModified || fullFetchDue {
+			let signpostID = OSSignpostID(log: sourceRepositorySignpostLog)
+			os_signpost(.begin, log: sourceRepositorySignpostLog, name: "Persist repository catalog", signpostID: signpostID,
+				"bytes=%{public}d", stored.data.count)
 			persist(stored)
+			os_signpost(.end, log: sourceRepositorySignpostLog, name: "Persist repository catalog", signpostID: signpostID)
 		}
 		return snapshot
+	}
+
+	private func _loadResponse(for request: URLRequest, url: URL) async throws -> (Data, URLResponse) {
+		let signpostID = OSSignpostID(log: sourceRepositorySignpostLog)
+		os_signpost(.begin, log: sourceRepositorySignpostLog, name: "Repository HTTP download", signpostID: signpostID,
+			"host=%{public}s", url.host ?? "unknown")
+		defer { os_signpost(.end, log: sourceRepositorySignpostLog, name: "Repository HTTP download", signpostID: signpostID) }
+		return try await session.data(for: request)
 	}
 
 	private func validETag(_ response: HTTPURLResponse) -> String? {

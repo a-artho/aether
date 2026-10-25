@@ -1,6 +1,10 @@
 import Foundation
 import CryptoKit
 import AltSourceKit
+import UIKit
+import os
+
+private let sourceAppListSignpostLog = OSLog(subsystem: Bundle.main.bundleIdentifier ?? "Aether", category: "SourceAppList")
 
 struct SourceAppCatalogContext: Sendable, Equatable {
 	let sourceObjectURI: String
@@ -62,6 +66,17 @@ struct PreparedSourceAppList: Sendable {
 	}
 }
 
+struct SourceAppPresentation: Sendable {
+	let list: PreparedSourceAppList
+	let snapshot: NSDiffableDataSourceSnapshot<String, SourceAppRowID>
+	let changedRows: [SourceAppRowID]
+}
+
+struct SourceAppPresentationResult: Sendable {
+	let current: SourceAppPresentation
+	let base: SourceAppPresentation?
+}
+
 /// Reuses catalog projections and sorted section indexes across navigation and app launches.
 /// Filtering, sorting, hashing, grouping and disk access all run on this actor, away from UI work.
 actor SourceAppListStore {
@@ -115,10 +130,14 @@ actor SourceAppListStore {
 			locale: Locale.current.identifier, timeZone: TimeZone.current.identifier, unknownDate: unknownDate)
 		let base: PreparedSourceAppList
 		if let cached = prepared[key] {
+			os_signpost(.event, log: sourceAppListSignpostLog, name: "Prepared list cache hit", "%{public}d", cached.rows.count)
 			base = cached
 		} else {
+			os_signpost(.event, log: sourceAppListSignpostLog, name: "Prepared list cache miss", "%{public}d", contexts.reduce(0) { $0 + $1.repository.apps.count })
 			let rows = try contexts.flatMap { try projection(for: $0) }
 			let storedOrder = loadOrder(key: key, count: rows.count)
+			os_signpost(.event, log: sourceAppListSignpostLog,
+				name: storedOrder == nil ? "Sort index cache miss" : "Sort index cache hit", "%{public}d", rows.count)
 			let order = storedOrder ?? makeOrder(rows: rows, key: key)
 			try Task.checkCancellation()
 			base = PreparedSourceAppList(
@@ -160,6 +179,61 @@ actor SourceAppListStore {
 		return PreparedSourceAppList(sections: sections, rows: matches, catalogRevisions: base.catalogRevisions)
 	}
 
+	/// Prepare the selected full-list ordering before its repository is published as ready.
+	/// Existing projections, ordering indexes, and bounded prepared-list caches are reused.
+	func warm(
+		contexts: [SourceAppCatalogContext], sort: String, ascending: Bool, unknownDate: String
+	) throws {
+		let signpostID = OSSignpostID(log: sourceAppListSignpostLog)
+		os_signpost(.begin, log: sourceAppListSignpostLog, name: "Warm repository catalog", signpostID: signpostID,
+			"sources=%{public}d", contexts.count)
+		defer { os_signpost(.end, log: sourceAppListSignpostLog, name: "Warm repository catalog", signpostID: signpostID) }
+		_ = try list(contexts: contexts, sort: sort, ascending: ascending, query: "", unknownDate: unknownDate)
+	}
+
+	/// Prepare a presentation and its UIKit snapshot off the main actor. When the coordinator
+	/// has no valid base ordering (such as after a sort or catalog change during search),
+	/// include that unfiltered presentation in the same actor request.
+	func presentation(
+		contexts: [SourceAppCatalogContext], sort: String, ascending: Bool,
+		query: String, unknownDate: String, includeBase: Bool,
+		comparedTo previous: PreparedSourceAppList?
+	) throws -> SourceAppPresentationResult {
+		let signpostID = OSSignpostID(log: sourceAppListSignpostLog)
+		os_signpost(.begin, log: sourceAppListSignpostLog, name: "Prepare source app presentation", signpostID: signpostID,
+			"queryLength=%{public}d", query.count)
+		defer { os_signpost(.end, log: sourceAppListSignpostLog, name: "Prepare source app presentation", signpostID: signpostID) }
+		try Task.checkCancellation()
+		let baseList = try list(contexts: contexts, sort: sort, ascending: ascending,
+			query: "", unknownDate: unknownDate)
+		if query.isEmpty {
+			let presentation = makePresentation(baseList, comparedTo: previous)
+			return SourceAppPresentationResult(current: presentation, base: presentation)
+		}
+		let currentList = try list(contexts: contexts, sort: sort, ascending: ascending,
+			query: query, unknownDate: unknownDate)
+		let basePresentation = includeBase ? makePresentation(baseList, comparedTo: nil) : nil
+		let currentPresentation = makePresentation(currentList, comparedTo: previous)
+		return SourceAppPresentationResult(current: currentPresentation, base: basePresentation)
+	}
+
+	private func makePresentation(
+		_ list: PreparedSourceAppList, comparedTo previous: PreparedSourceAppList?
+	) -> SourceAppPresentation {
+		let signpostID = OSSignpostID(log: sourceAppListSignpostLog)
+		os_signpost(.begin, log: sourceAppListSignpostLog, name: "Build diffable snapshot", signpostID: signpostID,
+			"rows=%{public}d", list.rows.count)
+		defer { os_signpost(.end, log: sourceAppListSignpostLog, name: "Build diffable snapshot", signpostID: signpostID) }
+		var snapshot = NSDiffableDataSourceSnapshot<String, SourceAppRowID>()
+		for section in list.sections {
+			snapshot.appendSections([section.title])
+			snapshot.appendItems(section.rows, toSection: section.title)
+		}
+		let changedRows = list.changedRows(comparedTo: previous)
+		if !changedRows.isEmpty { snapshot.reconfigureItems(changedRows) }
+		return SourceAppPresentation(list: list, snapshot: snapshot, changedRows: changedRows)
+	}
+
 	func removeSource(_ source: String) {
 		removedSources.insert(source)
 		projections[source] = nil
@@ -172,7 +246,11 @@ actor SourceAppListStore {
 
 	private func projection(for context: SourceAppCatalogContext) throws -> [SourceAppRow] {
 		let key = [context.revision, context.sourceURL?.absoluteString ?? ""]
-		if let cached = projections[context.sourceObjectURI], cached.key == key { return cached.rows }
+		if let cached = projections[context.sourceObjectURI], cached.key == key {
+			os_signpost(.event, log: sourceAppListSignpostLog, name: "Projection cache hit", "%{public}d", cached.rows.count)
+			return cached.rows
+		}
+		os_signpost(.event, log: sourceAppListSignpostLog, name: "Projection cache miss", "%{public}d", context.repository.apps.count)
 		var repository = context.repository
 		repository.apps = []
 		repository.news = nil

@@ -110,27 +110,47 @@ final class SourcesViewModel: ObservableObject {
 
 	/// Keeps the manifest fetched while adding a source so the Sources view does
 	/// not immediately download that exact document a second time.
-	func cache(_ repository: ASRepository, forIdentifier identifier: String) {
+	func cache(_ repository: ASRepository, forIdentifier identifier: String) async {
 		guard let source = Storage.shared.getSources().first(where: { $0.identifier == identifier }) else {
 			return
 		}
 		let key = source.objectID.uriRepresentation().absoluteString
 		guard !removedSourceKeys.contains(key) else { return }
-		_revisions[key] = UUID().uuidString
+		let revision = UUID().uuidString
+		do {
+			try await _warm(repository, sourceKey: key, sourceURL: source.sourceURL, revision: revision)
+		} catch is CancellationError {
+			return
+		} catch {
+			refreshErrors[key] = error.localizedDescription
+			return
+		}
+		guard !removedSourceKeys.contains(key) else { return }
+		_revisions[key] = revision
 		sources[key] = repository
 		catalogRevision += 1
 	}
 
-	func cache(_ repositories: [URL: ASRepository]) {
+	func cache(_ repositories: [URL: ASRepository]) async {
 		for (url, repository) in repositories {
-			cache(repository, forIdentifier: repository.id ?? url.absoluteString)
+			await cache(repository, forIdentifier: repository.id ?? url.absoluteString)
 		}
 	}
 	
-	func cache(_ snapshot: SourceRepositoryService.Snapshot, for source: AltSource) {
+	func cache(_ snapshot: SourceRepositoryService.Snapshot, for source: AltSource) async {
 		let key = source.objectID.uriRepresentation().absoluteString
 		guard !removedSourceKeys.contains(key) else { return }
 		guard _revisions[key] != snapshot.revision else { return }
+		do {
+			try await _warm(snapshot.repository, sourceKey: key, sourceURL: source.sourceURL,
+				revision: snapshot.revision)
+		} catch is CancellationError {
+			return
+		} catch {
+			refreshErrors[key] = error.localizedDescription
+			return
+		}
+		guard !removedSourceKeys.contains(key) else { return }
 		_revisions[key] = snapshot.revision
 		sources[key] = snapshot.repository
 		catalogRevision += 1
@@ -197,6 +217,7 @@ final class SourcesViewModel: ObservableObject {
 		let generation = cacheResetGeneration
 		guard !Task.isCancelled else { return }
 		let service = _repositoryService
+		let requestsByKey = Dictionary(uniqueKeysWithValues: requests.map { ($0.key, $0) })
 		await withTaskGroup(of: (String, SourceRepositoryService.Snapshot?).self) { group in
 			for request in requests where self.sources[request.key] == nil {
 				guard !Task.isCancelled else { break }
@@ -208,6 +229,18 @@ final class SourcesViewModel: ObservableObject {
 			for await (key, snapshot) in group {
 				guard !Task.isCancelled, generation == cacheResetGeneration else { group.cancelAll(); break }
 				if let snapshot, !removedSourceKeys.contains(key), self.sources[key] == nil {
+					guard let request = requestsByKey[key] else { continue }
+					do {
+						try await _warm(snapshot.repository, sourceKey: key, sourceURL: request.sourceURL,
+							revision: snapshot.revision)
+					} catch is CancellationError {
+						continue
+					} catch {
+						refreshErrors[key] = error.localizedDescription
+						continue
+					}
+					guard !Task.isCancelled, generation == cacheResetGeneration,
+						!removedSourceKeys.contains(key), self.sources[key] == nil else { continue }
 					_revisions[key] = snapshot.revision
 					self.sources[key] = snapshot.repository
 					catalogRevision += 1
@@ -231,6 +264,7 @@ final class SourcesViewModel: ObservableObject {
 		guard generation == cacheResetGeneration else { return }
 		let service = _repositoryService
 		let size = max(1, batchSize)
+		let requestsByKey = Dictionary(uniqueKeysWithValues: requests.map { ($0.key, $0) })
 		let fetch: @Sendable (SourceRequest) async -> (String, SourceRepositoryService.Snapshot?, String?) = { request in
 			guard !Task.isCancelled else { return (request.key, nil, nil) }
 			guard let url = request.sourceURL else { return (request.key, nil, "Invalid source URL.") }
@@ -251,8 +285,6 @@ final class SourcesViewModel: ObservableObject {
 				nextIndex += 1
 			}
 			for await (key, snapshot, error) in group {
-				sourceRefreshOwners[key]?.remove(owner)
-				if sourceRefreshOwners[key]?.isEmpty == true { sourceRefreshOwners[key] = nil }
 				guard !Task.isCancelled, generation == cacheResetGeneration else { group.cancelAll(); break }
 				if nextIndex < requests.count {
 					let request = requests[nextIndex]
@@ -260,13 +292,40 @@ final class SourcesViewModel: ObservableObject {
 					group.addTask { await fetch(request) }
 				}
 				guard !removedSourceKeys.contains(key) else { continue }
-				refreshErrors[key] = error
-				if let snapshot, _revisions[key] != snapshot.revision {
+				if let snapshot, (_revisions[key] != snapshot.revision || self.sources[key] == nil) {
+					do {
+						try await _warm(snapshot.repository, sourceKey: key, sourceURL: requestsByKey[key]?.sourceURL,
+							revision: snapshot.revision)
+					} catch is CancellationError {
+						continue
+					} catch {
+						refreshErrors[key] = error.localizedDescription
+						continue
+					}
+					guard !Task.isCancelled, generation == cacheResetGeneration,
+						!removedSourceKeys.contains(key) else { group.cancelAll(); break }
 					_revisions[key] = snapshot.revision
 					self.sources[key] = snapshot.repository
+					refreshErrors[key] = nil
 					catalogRevision += 1
+				} else {
+					refreshErrors[key] = error
 				}
 			}
 		}
+	}
+
+	private func _warm(
+		_ repository: ASRepository, sourceKey: String, sourceURL: URL?, revision: String
+	) async throws {
+		let storedSort = _defaults.string(forKey: "Aether.sortOptionRawValue") ?? "latest"
+		let sort = storedSort == "date" ? "latest" : storedSort
+		let context = SourceAppCatalogContext(
+			sourceObjectURI: sourceKey, sourceURL: sourceURL, repository: repository, revision: revision
+		)
+		try await SourceAppListStore.shared.warm(
+			contexts: [context], sort: sort, ascending: sort == "name",
+			unknownDate: .localized("Unknown Date")
+		)
 	}
 }
