@@ -13,12 +13,12 @@ private struct NBRowText: ViewModifier {
 
 	init(title: Bool) {
 		self.title = title
-		_size = ScaledMetric(wrappedValue: title ? 16 : 14,
-			relativeTo: title ? .headline : .subheadline)
+		_size = ScaledMetric(wrappedValue: title ? 16 : 13,
+			relativeTo: title ? .headline : .footnote)
 	}
 
 	func body(content: Content) -> some View {
-		content.font(.system(size: size, weight: title ? .semibold : .regular))
+		content.font(.system(size: size, weight: title ? .semibold : .medium))
 	}
 }
 

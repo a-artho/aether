@@ -94,5 +94,6 @@ struct SourceNewsCardInfoView: View {
 				NBToolbarButton(role: .close)
 			}
 		}
+		.modifier(FloatingNavigationAppearance())
 	}
 }

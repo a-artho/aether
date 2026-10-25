@@ -13,6 +13,21 @@ enum SearchPlacement: String, CaseIterable, Identifiable {
 	}
 }
 
+/// Applies the native iOS 26 floating navigation and scroll-edge appearance to
+/// a NavigationStack so its root and pushed scroll views share one treatment.
+struct FloatingNavigationAppearance: ViewModifier {
+	@ViewBuilder
+	func body(content: Content) -> some View {
+		if #available(iOS 26.0, *) {
+			content
+				.toolbarBackgroundVisibility(.hidden, for: .navigationBar)
+				.scrollEdgeEffectStyle(.soft, for: .top)
+		} else {
+				content
+			}
+	}
+}
+
 /// Native navigation items when idle; SwiftUI owns the expanding search surface.
 /// The text-field bridge supplies the keyboard's timing and reliable responder focus.
 struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
@@ -35,7 +50,6 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	@State private var searchButtonFrame: CGRect = .zero
 	@AppStorage("Aether.searchPlacement") private var searchPlacement: SearchPlacement = .right
 	@AppStorage("Aether.leadingPageTitles") private var leadingPageTitles = false
-	@AppStorage("Aether.hideTitleSearchIcon") private var hideTitleSearchIcon = false
 
 	private var usesTitleSearch: Bool { searchPlacement == .pageTitle }
 	private var hidesTitle: Bool { isTabRoot && !usesTitleSearch }
@@ -101,7 +115,6 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			}
 			.onChange(of: searchPlacement) { _, _ in searchButtonFrame = .zero }
 			.onChange(of: leadingPageTitles) { _, _ in searchButtonFrame = .zero }
-			.onChange(of: hideTitleSearchIcon) { _, _ in searchButtonFrame = .zero }
 			.onChange(of: isPresented) { _, presented in transition.setPresented(presented, keyboardExpected: focus.wrappedValue) }
 			.onScrollPhaseChange { _, phase in
 				if phase == .interacting { focus.wrappedValue = false }
@@ -111,15 +124,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 		Group {
 			if usesTitleSearch {
 				Button(action: openSearch) {
-					HStack(spacing: 8) {
-						if !hideTitleSearchIcon {
-							Image(systemName: "magnifyingglass")
-								.font(.system(size: 10, weight: .regular))
-								.foregroundStyle(.secondary)
-								.opacity(0.6)
-						}
-						Text(title).font(.headline).foregroundStyle(.primary).lineLimit(1)
-					}
+					Text(title).font(.headline).foregroundStyle(.primary).lineLimit(1)
 					.frame(minHeight: 44)
 					.contentShape(Rectangle())
 				}

@@ -178,6 +178,7 @@ enum FR {
 		using options: Options,
 		iconData: Data?,
 		certificate: SigningCertificateSnapshot?,
+		resultRowID: String? = nil,
 		progress: @escaping @MainActor @Sendable (Double) -> Void,
 		completion: @escaping @MainActor @Sendable (Result<String, Error>) -> Void
 	) -> Task<Void, Never> {
@@ -205,7 +206,7 @@ enum FR {
 					try await handler.modify(progress: progressPublisher.submit)
 					try Task.checkCancellation()
 					try? await handler.clean()
-					try await handler.addToDatabase {
+					try await handler.addToDatabase(rowID: resultRowID) {
 						progressPublisher.cancel()
 						progress(1)
 						DebugLogManager.shared.log("Signing completed elapsed=\(Date().timeIntervalSince(signingStartedAt)) state=\(UIApplication.shared.applicationState.rawValue).", category: "Signing", level: .info)

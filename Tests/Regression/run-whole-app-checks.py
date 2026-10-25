@@ -111,9 +111,9 @@ prelude = library[library.index('let sections: [LibrarySection] ='):library.inde
 s += r'''
 struct LibrarySearchFixture {
  struct Updates { var hasVerifiedUpdates = true }; var updates = Updates()
- enum LibrarySection {case allApps,status,imports,updates}
+	enum LibrarySection {case allApps,status,imports,updates}
  var searchText="query";var showAllApps=false;var installationMethod=1;var showsDevicePlaceholder=true
- var importRows:[Int]=[];var appsWithUpdates:[Int]=[]
+	var libraryRows:[Int]=[];var importRows:[Int]=[];var splitGroups:[Int]=[];var appsWithUpdates:[Int]=[]
  func results()->(Int,Bool) {
 ''' + prelude + 'return (sections.count,!searchText.isEmpty && sections.isEmpty)\n}\n}\n'
 s += r'''

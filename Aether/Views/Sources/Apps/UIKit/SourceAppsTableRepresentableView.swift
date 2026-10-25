@@ -103,6 +103,9 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 		let tableView = UITableView(frame: .zero, style: .plain)
 		// Native plain-table headers remain pinned until the next section replaces them.
 		tableView.backgroundColor = .systemBackground
+		if #available(iOS 26.0, *) {
+			tableView.topEdgeEffect.style = .soft
+		}
 		tableView.sectionFooterHeight = .leastNormalMagnitude
 		tableView.estimatedSectionFooterHeight = .leastNormalMagnitude
 		tableView.delegate = context.coordinator

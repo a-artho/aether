@@ -75,18 +75,20 @@ struct SettingsView: View {
 			.scrollContentBackground(.visible)
 			.background(Color(uiColor: .systemGroupedBackground))
 			.navigationDestination(for: AppTabManager.SettingsPage.self) { page in
-				switch page {
-				case .appearance: AppearanceView()
-				case .appIcon: AppIconView(currentIcon: $_currentIcon)
-				case .certificates: CertificatesView()
-				case .signing: ConfigurationView()
-				case .archive: ArchiveView()
-				case .installation: InstallationView()
-				case .pairingFile: PairingFileView()
-				case .tunnel: TunnelView()
-				case .logs: LogsView()
-				case .reset: ResetView()
-				case .root, .spoofing: EmptyView()
+				Group {
+					switch page {
+					case .appearance: AppearanceView()
+					case .appIcon: AppIconView(currentIcon: $_currentIcon)
+					case .certificates: CertificatesView()
+					case .signing: ConfigurationView()
+					case .archive: ArchiveView()
+					case .installation: InstallationView()
+					case .pairingFile: PairingFileView()
+					case .tunnel: TunnelView()
+					case .logs: LogsView()
+					case .reset: ResetView()
+					case .root, .spoofing: EmptyView()
+					}
 				}
 			}
 			.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { searchWidth = $0 }
@@ -117,6 +119,7 @@ struct SettingsView: View {
 				_presentRequestedPageIfNeeded()
 			}
 		}
+		.modifier(FloatingNavigationAppearance())
 		.sheet(isPresented: $isSpoofingPresented) { SpoofingEntryView() }
 	}
 

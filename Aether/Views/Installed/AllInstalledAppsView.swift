@@ -5,6 +5,7 @@ import NimbleViews
 enum InstalledAppsRoute: Hashable {
 	case allApps
 	case updates(String)
+	case splitArtifacts(String)
 }
 
 @MainActor

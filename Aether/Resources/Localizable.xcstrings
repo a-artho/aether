@@ -112,9 +112,6 @@
     "Show Download Buttons" : {
       "extractionState" : "manual"
     },
-    "Hide Search Icon" : {
-      "extractionState" : "manual"
-    },
     "iOS interrupted background installation" : {
       "extractionState" : "manual"
     },
@@ -127,7 +124,13 @@
     "Imports" : {
       "extractionState" : "manual"
     },
-    "Show Unsigned IPA" : {
+    "Split" : {
+      "extractionState" : "manual"
+    },
+    "split view parent" : {
+      "extractionState" : "manual"
+    },
+    "Split View" : {
       "extractionState" : "manual"
     },
     "This removes downloads and signed and unsigned imports. Sideloaded apps are kept." : {
@@ -15216,6 +15219,9 @@
           }
         }
       }
+    },
+    "Unsigned" : {
+      "extractionState" : "manual"
     },
     "Signing" : {
       "extractionState" : "manual",

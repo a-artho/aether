@@ -187,7 +187,7 @@ final class SigningHandler: NSObject {
 		try? _fileManager.removeItem(at: _uniqueWorkDir)
 	}
 	
-	func addToDatabase(onCommitted: @MainActor @Sendable () -> Void) async throws {
+	func addToDatabase(rowID: String? = nil, onCommitted: @MainActor @Sendable () -> Void) async throws {
 		try Task.checkCancellation()
 		let app = try await _directory()
 		
@@ -210,7 +210,8 @@ final class SigningHandler: NSObject {
 		let signedUUID = _uuid
 		try await MainActor.run {
 			try Task.checkCancellation()
-			try LibraryArtifactIndex.shared.publishSigned(uuid: signedUUID, sourceUUID: sourceUUID, sourceIsSigned: sourceIsSigned) {
+			try LibraryArtifactIndex.shared.publishSigned(uuid: signedUUID, sourceUUID: sourceUUID,
+				sourceIsSigned: sourceIsSigned, rowID: rowID) {
 			try Storage.shared.addSigned(
 				uuid: signedUUID,
 				source: sourceURL,

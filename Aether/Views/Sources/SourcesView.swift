@@ -178,6 +178,7 @@ struct SourcesView: View {
 				}
 			}
 		}
+		.modifier(FloatingNavigationAppearance())
 		.sheet(item: $router.addSourceRequest) { request in
 			SourcesAddView(initialURL: request.initialURL)
 				.id(request.id)

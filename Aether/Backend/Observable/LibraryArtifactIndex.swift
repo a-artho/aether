@@ -11,23 +11,27 @@ struct LibraryArtifactLineage: Codable, Equatable, Sendable {
 	var revealedOriginals: Set<String> = []
 	var originalDates: [String: Date] = [:]
 
-	mutating func recordSigned(uuid: String, sourceUUID: String?, sourceIsSigned: Bool) {
+	static func signedResultRowID(for requestID: UUID) -> String {
+		"signed-operation:" + requestID.uuidString
+	}
+
+	mutating func recordSigned(uuid: String, sourceUUID: String?, sourceIsSigned: Bool, rowID: String? = nil) {
 		guard let sourceUUID else {
-			signedOrigins[uuid] = Origin(rowID: "app:" + uuid)
+			signedOrigins[uuid] = Origin(rowID: rowID ?? "app:" + uuid)
 			return
 		}
 		if sourceIsSigned {
 			let previous = signedOrigins[sourceUUID] ?? Origin(rowID: "app:" + sourceUUID)
 			// The new variant inherits the signing row; the previous variant survives separately.
 			signedOrigins[sourceUUID] = Origin(originalUUID: previous.originalUUID, rowID: "variant:" + UUID().uuidString)
-			signedOrigins[uuid] = previous
+			signedOrigins[uuid] = Origin(originalUUID: previous.originalUUID, rowID: rowID ?? previous.rowID)
 		} else {
 			let existing = signedOrigins.filter { $0.value.originalUUID == sourceUUID }
 			for (key, origin) in existing where origin.rowID == "app:" + sourceUUID {
 				signedOrigins[key] = Origin(originalUUID: sourceUUID, rowID: "variant:" + UUID().uuidString)
 			}
 			signedOrigins[uuid] = Origin(originalUUID: sourceUUID,
-				rowID: revealedOriginals.contains(sourceUUID) ? "app:" + uuid : "app:" + sourceUUID)
+				rowID: rowID ?? (revealedOriginals.contains(sourceUUID) ? "app:" + uuid : "app:" + sourceUUID))
 		}
 	}
 
@@ -36,7 +40,7 @@ struct LibraryArtifactLineage: Codable, Equatable, Sendable {
 	}
 
 	mutating func reveal(originalUUID: String) {
-		guard revealedOriginals.insert(originalUUID).inserted else { return }
+		revealedOriginals.insert(originalUUID)
 		for (uuid, origin) in signedOrigins where origin.originalUUID == originalUUID {
 			signedOrigins[uuid] = Origin(originalUUID: originalUUID, rowID: "app:" + uuid)
 		}
@@ -55,12 +59,12 @@ struct LibraryArtifactLineage: Codable, Equatable, Sendable {
 	mutating func remove(uuid: String, isSigned: Bool) {
 		if isSigned { signedOrigins.removeValue(forKey: uuid) }
 		else {
-			revealedOriginals.remove(uuid)
 			originalDates.removeValue(forKey: uuid)
-			for (key, origin) in signedOrigins where origin.originalUUID == uuid {
-				var updated = origin
-				updated.originalUUID = nil
-				signedOrigins[key] = updated
+			// Keep the split relationship after either copy is deleted. The
+			// remaining artifact stays in its grouped detail page and remains an
+			// independent file; it is never deleted as a side effect.
+			if !signedOrigins.values.contains(where: { $0.originalUUID == uuid }) {
+				revealedOriginals.remove(uuid)
 			}
 		}
 	}
@@ -80,10 +84,10 @@ final class LibraryArtifactIndex: ObservableObject {
 
 	/// Install the UI identity before Core Data announces the new signed artifact.
 	/// A failed database commit restores the previous mapping, including variants.
-	func publishSigned(uuid: String, sourceUUID: String?, sourceIsSigned: Bool,
+	func publishSigned(uuid: String, sourceUUID: String?, sourceIsSigned: Bool, rowID: String? = nil,
 		commit: () throws -> Void) throws {
 		let previous = lineage
-		lineage.recordSigned(uuid: uuid, sourceUUID: sourceUUID, sourceIsSigned: sourceIsSigned)
+		lineage.recordSigned(uuid: uuid, sourceUUID: sourceUUID, sourceIsSigned: sourceIsSigned, rowID: rowID)
 		do {
 			try commit()
 			save()
@@ -111,6 +115,7 @@ final class LibraryArtifactIndex: ObservableObject {
 
 	func resetSigned() {
 		lineage.signedOrigins.removeAll()
+		lineage.revealedOriginals.removeAll()
 		save()
 	}
 

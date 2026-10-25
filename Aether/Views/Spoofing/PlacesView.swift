@@ -75,6 +75,7 @@ struct PlacesView: View {
                 Text("Choose a name you’ll recognize later.")
             }
         }
+		.modifier(FloatingNavigationAppearance())
     }
 
     private func placeButton(_ place: SavedPlace) -> some View {

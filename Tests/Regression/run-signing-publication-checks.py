@@ -85,7 +85,7 @@ s += '''
 '''
 fr = (repo / 'Aether/Utilities/FR.swift').read_text()
 signing = fr[fr.index('static func signPackageFile('):fr.index('static func handleCertificateFiles(')]
-assert signing.index('try? await handler.clean()') < signing.index('try await handler.addToDatabase {') < signing.index('completion(.success(')
+assert signing.index('try? await handler.clean()') < signing.index('try await handler.addToDatabase(rowID: resultRowID) {') < signing.index('completion(.success(')
 assert 'addToDatabase' not in method(handler, 'func modify(progress:')
 with tempfile.TemporaryDirectory(prefix='aether-signing-publication-') as d:
     p=pathlib.Path(d)/'Checks.swift';p.write_text(s)

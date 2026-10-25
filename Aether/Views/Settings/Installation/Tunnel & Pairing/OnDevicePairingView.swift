@@ -61,6 +61,7 @@ struct OnDevicePairingView: View {
 				}
 			}
 		}
+		.modifier(FloatingNavigationAppearance())
 	}
 
 	private var _waitingContent: some View {

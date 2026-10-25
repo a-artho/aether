@@ -33,8 +33,6 @@ struct AppearanceView: View {
 	@AppStorage("Aether.searchPlacement")
 	private var _searchPlacement: SearchPlacement = .right
 	@AppStorage("Aether.leadingPageTitles") private var _leadingPageTitles = false
-	@AppStorage("Aether.hideTitleSearchIcon")
-	private var _hideTitleSearchIcon = false
 
 	@AppStorage("Aether.shouldChangeIconsBasedOffStyle")
 	private var _shouldChangeIconsBasedOffStyle: Bool = false
@@ -198,9 +196,6 @@ struct AppearanceView: View {
 				if _searchPlacement == .pageTitle {
 					Toggle(isOn: $_leadingPageTitles) {
 						SettingsRowLabel(.localized("Left-Aligned Page Titles"), systemImage: "text.alignleft", backgroundColor: .blue)
-					}
-					Toggle(isOn: $_hideTitleSearchIcon) {
-						SettingsRowLabel(.localized("Hide Search Icon"), systemImage: "magnifyingglass", backgroundColor: .blue)
 					}
 				}
 			} footer: {

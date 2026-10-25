@@ -370,6 +370,10 @@ final class AppInstallationManager: ObservableObject {
 
 		if let signing = request.signing {
 			statusVM.status = .signing
+			let preservesUnsignedRow = request.installRequested
+				&& request.app.uuid.map(LibraryArtifactIndex.shared.lineage.revealedOriginals.contains) == true
+			let resultRowID = preservesUnsignedRow
+				? LibraryArtifactLineage.signedResultRowID(for: request.id) : nil
 			let certificate = signing.certificateUUID.flatMap { uuid in Storage.shared.getAllCertificates().first { $0.uuid == uuid } }
 			let snapshot = SigningCertificateSnapshot(certificate)
 			if signing.certificateUUID != nil, snapshot == nil {
@@ -378,7 +382,7 @@ final class AppInstallationManager: ObservableObject {
 				return
 			}
 			installTask = FR.signPackageFile(request.app, using: signing.options,
-				iconData: signing.iconData, certificate: snapshot,
+				iconData: signing.iconData, certificate: snapshot, resultRowID: resultRowID,
 				progress: { [weak self, weak statusVM] progress in
 					guard let self, self.installGeneration == generation else { return }
 					statusVM?.signingProgress = progress

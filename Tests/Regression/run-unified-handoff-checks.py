@@ -20,7 +20,8 @@ final class AppSnapshot:App {init(_ uuid:String,_ signed:Bool=true){super.init(u
 final class Signed:App {init(_ uuid:String){super.init(uuid,true)}}
 enum AppInstallationManager {
  struct InstallationRequest {
-  let id=UUID();let app:App
+  let id=UUID();let app:App;let signing:Bool?;let installRequested:Bool
+  init(app:App,signing:Bool?=nil,installRequested:Bool=false){self.app=app;self.signing=signing;self.installRequested=installRequested}
   var appKey:String{Self.appKey(for:app)}
   static func appKey(for app:AppInfoPresentable)->String{"\(app.isSigned)|\(app.uuid ?? "")"}
  }
@@ -148,6 +149,26 @@ struct Controller {var rows=[UnifiedImportEntry]()}
   late.imported=[];late.downloads.committedImports["late"] = AppSnapshot("late",false)
   late.index.lineage.remove(uuid:"late",isSigned:false)
   precondition(late.projectedRows.isEmpty,"Deleted imports must not be resurrected by a delayed handoff")
+
+  // Install-after-sign from an explicitly revealed unsigned artifact owns a
+  // distinct Signed row throughout the operation; the source remains Unsigned.
+  var combined=Projection();combined.imported=[Imported("original")]
+  combined.index.lineage.reveal(originalUUID:"original")
+  let source=combined.imported[0]
+  let request=AppInstallationManager.InstallationRequest(app:source,signing:true,installRequested:true)
+  combined.installations.installationCards=[request]
+  let signingRows=combined.projectedRows
+  let signedOperationID=LibraryArtifactLineage.signedResultRowID(for:request.id)
+  precondition(Set(signingRows.map(\.id))==["app:original",signedOperationID])
+  precondition(signingRows.first{$0.id==signedOperationID}?.operation?.id==request.id)
+  combined.controller.rows=signingRows
+  combined.index.lineage.recordSigned(uuid:"result",sourceUUID:"original",sourceIsSigned:false,rowID:signedOperationID)
+  combined.signed=[Signed("result")]
+  combined.installations.installationCards=[.init(app:AppSnapshot("result"))]
+  let installingRows=combined.projectedRows
+  precondition(Set(installingRows.map(\.id))==["app:original",signedOperationID])
+  precondition(installingRows.first{$0.id==signedOperationID}?.app?.uuid=="result")
+  precondition(installingRows.first{$0.id==signedOperationID}?.operation != nil)
   print("Unified import-to-signed handoff checks passed")
  }
 }

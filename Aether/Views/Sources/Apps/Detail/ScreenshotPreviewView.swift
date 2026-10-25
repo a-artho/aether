@@ -38,6 +38,7 @@ struct ScreenshotPreviewView: View {
 					}
 				}
 		}
+		.modifier(FloatingNavigationAppearance())
 	}
 }
 

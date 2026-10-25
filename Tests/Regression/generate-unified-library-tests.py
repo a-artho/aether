@@ -64,15 +64,15 @@ final class UnifiedLibraryLineageTests: XCTestCase {
   lineage.recordSigned(uuid:"c",sourceUUID:"original",sourceIsSigned:false)
   XCTAssertNotEqual(lineage.rowID(forSigned:"c"),"app:original")
  }
- func testDeletingUnsignedCopyPreservesSignedRowsAndRemovesStaleLinks() {
+ func testDeletingUnsignedCopyPreservesSignedRowsAndSplitLink() {
   var lineage = LibraryArtifactLineage()
   lineage.recordSigned(uuid:"signed",sourceUUID:"original",sourceIsSigned:false)
   lineage.reveal(originalUUID:"original")
   let previousID=lineage.rowID(forSigned:"signed")
   lineage.remove(uuid:"original",isSigned:false)
   XCTAssertEqual(lineage.rowID(forSigned:"signed"),previousID)
-  XCTAssertNil(lineage.signedOrigins["signed"]?.originalUUID)
-  XCTAssertFalse(lineage.revealedOriginals.contains("original"))
+  XCTAssertEqual(lineage.signedOrigins["signed"]?.originalUUID,"original")
+  XCTAssertTrue(lineage.revealedOriginals.contains("original"))
   XCTAssertTrue(lineage.originalUUIDsToDelete(deletingSigned:["signed"],existingSigned:["signed"]).isEmpty)
  }
  func testUnlinkedSignedAppsRemainIndependent() {
@@ -81,6 +81,31 @@ final class UnifiedLibraryLineageTests: XCTestCase {
   XCTAssertEqual(lineage.rowID(forSigned:"signed"),"app:signed")
   XCTAssertEqual(lineage.rowID(forSigned:"legacy"),"app:legacy")
   XCTAssertNil(lineage.signedOrigins["signed"]?.originalUUID)
+ }
+ func testSignAfterRevealUsesStableSignedOperationRow() {
+  var lineage = LibraryArtifactLineage()
+  lineage.reveal(originalUUID:"original")
+  let requestID=UUID(), rowID=LibraryArtifactLineage.signedResultRowID(for:requestID)
+  lineage.recordSigned(uuid:"signed",sourceUUID:"original",sourceIsSigned:false,rowID:rowID)
+  XCTAssertEqual(lineage.rowID(forSigned:"signed"),rowID)
+  XCTAssertTrue(lineage.revealedOriginals.contains("original"))
+ }
+ func testDeletingEitherSplitCopyLeavesTheOtherIndependent() {
+  var lineage = LibraryArtifactLineage()
+  lineage.recordSigned(uuid:"signed",sourceUUID:"original",sourceIsSigned:false)
+  lineage.reveal(originalUUID:"original")
+  XCTAssertTrue(lineage.originalUUIDsToDelete(deletingSigned:["signed"],existingSigned:["signed"]).isEmpty)
+  lineage.remove(uuid:"signed",isSigned:true)
+  lineage.recordSigned(uuid:"signed-again",sourceUUID:"original",sourceIsSigned:false)
+  lineage.reveal(originalUUID:"original")
+  lineage.remove(uuid:"original",isSigned:false)
+  XCTAssertEqual(lineage.signedOrigins["signed-again"]?.originalUUID,"original")
+  XCTAssertTrue(lineage.revealedOriginals.contains("original"))
+ }
+ func testLegacyLineageDecodesAndPreservesSplitLink() throws {
+  let data = #"{"signedOrigins":{"signed":{"originalUUID":"original","rowID":"app:original"}},"revealedOriginals":["original"],"originalDates":{}}"#.data(using:.utf8)!
+  let lineage=try JSONDecoder().decode(LibraryArtifactLineage.self,from:data)
+  XCTAssertEqual(lineage.signedOrigins["signed"]?.originalUUID,"original")
  }
 }
 '''

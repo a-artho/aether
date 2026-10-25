@@ -80,6 +80,7 @@ struct RoutePlannerSheet: View {
                 }
             }
         }
+		.modifier(FloatingNavigationAppearance())
         .fileImporter(isPresented: $showGPXImporter, allowedContentTypes: [.xml, .data], allowsMultipleSelection: false) { result in
             if case .success(let urls) = result, let url = urls.first {
                 onImportGPX(url)

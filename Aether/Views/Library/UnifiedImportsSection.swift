@@ -53,6 +53,68 @@ struct UnifiedImportEntry: Identifiable {
 	}
 }
 
+/// A split keeps its source and signed output as separate artifacts, but gives
+/// them one stable parent in the Library. The parent remains meaningful when
+/// either copy is independently removed.
+@MainActor
+struct SplitArtifactGroup: Identifiable {
+	nonisolated let originalUUID: String
+	let entries: [UnifiedImportEntry]
+	// Reuse the former combined signed row's identity through the Split action.
+	nonisolated var id: String { "app:" + originalUUID }
+
+	var unsignedEntries: [UnifiedImportEntry] {
+		entries.filter { entry in
+			let isSigningToSignedCopy = entry.operation?.app.uuid == originalUUID
+				&& entry.operation?.signing != nil && entry.operation?.installRequested == true
+			return !isSigningToSignedCopy && entry.app?.isSigned != true
+				&& (entry.app?.uuid == originalUUID || entry.operation?.app.uuid == originalUUID)
+		}
+	}
+	var signedEntries: [UnifiedImportEntry] {
+		entries.filter { entry in
+			if entry.app?.isSigned == true { return true }
+			return entry.operation?.app.uuid == originalUUID && entry.operation?.signing != nil && entry.operation?.installRequested == true
+		}
+	}
+	var representative: UnifiedImportEntry {
+		entries.first(where: { $0.app?.isSigned == true })
+			?? entries.first(where: { $0.app?.uuid == originalUUID }) ?? entries.first!
+	}
+	var activeEntry: UnifiedImportEntry? {
+		entries.first(where: { $0.operation != nil })
+	}
+	var copyCount: Int { signedEntries.count + unsignedEntries.count }
+
+	static func makeGroups(from rows: [UnifiedImportEntry], lineage: LibraryArtifactLineage) -> [SplitArtifactGroup] {
+		lineage.revealedOriginals.compactMap { originalUUID in
+			let members = rows.filter { entry in
+				if entry.app?.uuid == originalUUID && entry.app?.isSigned != true { return true }
+				if entry.operation?.app.uuid == originalUUID && entry.operation?.signing != nil && entry.operation?.installRequested == true { return true }
+				guard entry.app?.isSigned == true, let signedUUID = entry.app?.uuid else { return false }
+				return lineage.signedOrigins[signedUUID]?.originalUUID == originalUUID
+			}
+			guard !members.isEmpty else { return nil }
+			return SplitArtifactGroup(originalUUID: originalUUID, entries: members)
+		}.sorted {
+			let left = $0.representative.date ?? .distantFuture
+			let right = $1.representative.date ?? .distantFuture
+			return left == right ? $0.id < $1.id : left > right
+		}
+	}
+}
+
+@MainActor
+struct UnifiedLibraryImportItem: Identifiable {
+	enum Content {
+		case entry(UnifiedImportEntry)
+		case split(SplitArtifactGroup)
+	}
+	let id: String
+	let date: Date?
+	let content: Content
+}
+
 @MainActor
 final class UnifiedImportsController: ObservableObject {
 	@Published var infoApp: AnyApp?
@@ -250,6 +312,16 @@ struct UnifiedImportsDataSource: ViewModifier {
 				date: lineage.originalDates[download.importIdentifier]))
 		}
 		for request in installations.installationCards {
+			let startsSeparateSignedRow = request.signing != nil && request.installRequested
+				&& request.app.uuid.map(lineage.revealedOriginals.contains) == true
+			if startsSeparateSignedRow {
+				let rowID = LibraryArtifactLineage.signedResultRowID(for: request.id)
+				let sourceDate = rows.first(where: { $0.app?.uuid == request.app.uuid && $0.app?.isSigned == false })?.date
+					?? controller.rows.first(where: { $0.app?.uuid == request.app.uuid && $0.app?.isSigned == false })?.date
+				rows.append(UnifiedImportEntry(id: rowID, app: request.app, operation: request,
+					date: sourceDate ?? request.app.date))
+				continue
+			}
 			let exact = rows.firstIndex { row in
 				guard let app = row.app else { return false }
 				return AppInstallationManager.InstallationRequest.appKey(for: app) == request.appKey
@@ -308,6 +380,150 @@ struct UnifiedImportsRows: View {
 			UnifiedImportRow(entry: entry, controller: controller)
 				.id(entry.id)
 		}
+	}
+}
+
+/// Keeps ordinary imports and split parents in one chronological list.
+struct UnifiedLibraryImportRows: View {
+	let entries: [UnifiedImportEntry]
+	let groups: [SplitArtifactGroup]
+	let controller: UnifiedImportsController
+	let openSplit: (String) -> Void
+
+	private var items: [UnifiedLibraryImportItem] {
+		let groupedIDs = Set(groups.flatMap { $0.entries.map(\.id) })
+		let ordinary = entries.filter { !groupedIDs.contains($0.id) }.map {
+			UnifiedLibraryImportItem(id: $0.id, date: $0.date, content: .entry($0))
+		}
+		let parents = groups.map {
+			UnifiedLibraryImportItem(id: $0.id, date: $0.representative.date, content: .split($0))
+		}
+		return (ordinary + parents).sorted {
+			let left = $0.date ?? .distantFuture, right = $1.date ?? .distantFuture
+			return left == right ? $0.id < $1.id : left > right
+		}
+	}
+
+	var body: some View {
+		ForEach(items) { item in
+			switch item.content {
+			case let .entry(entry):
+				UnifiedImportRow(entry: entry, controller: controller).id(entry.id)
+			case let .split(group):
+				NavigationLink(value: InstalledAppsRoute.splitArtifacts(group.originalUUID)) {
+					SplitArtifactParentRow(group: group)
+				}
+				.buttonStyle(.plain)
+				.id(group.id)
+				.swipeActions(edge: .trailing, allowsFullSwipe: true) {
+					SplitArtifactGroupDeleteAction(group: group, controller: controller)
+				}
+				.contextMenu {
+					Button(.localized("Split View"), systemImage: "rectangle.split.2x1") {
+						openSplit(group.originalUUID)
+					}
+					SplitArtifactGroupDeleteAction(group: group, controller: controller)
+				}
+			}
+		}
+	}
+}
+
+private struct SplitArtifactGroupDeleteAction: View {
+	let group: SplitArtifactGroup
+	@ObservedObject var controller: UnifiedImportsController
+
+	private var isProtected: Bool {
+		group.entries.contains { controller.isProtected($0) }
+	}
+
+	var body: some View {
+		Button(.localized("Delete"), systemImage: "trash") {
+			controller.delete(group.entries)
+		}
+		.tint(.red)
+		.disabled(isProtected)
+	}
+}
+
+private struct SplitArtifactParentRow: View {
+	let group: SplitArtifactGroup
+	@ObservedObject private var installations = AppInstallationManager.shared
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
+	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+	private var entry: UnifiedImportEntry {
+		let currentID = installations.currentRequest?.id
+		var value = group.entries.first(where: { $0.operation?.id == currentID })
+			?? group.activeEntry ?? group.representative
+		if value.operation == nil { value.app = group.representative.app ?? value.app }
+		return value.reconciled(with: installations.installationCards)
+	}
+	private var activeModel: InstallerStatusViewModel? {
+		installations.currentRequest?.id == entry.operation?.id ? installations.viewModel : nil
+	}
+
+	var body: some View {
+		HStack(spacing: NBRowMetrics.contentSpacing) {
+			FRAppIconView(app: group.representative.app, size: rowIconSize.points,
+				usesDefaultApp: false, retainsPreviousImage: true)
+				.transition(.identity)
+				.transaction { $0.animation = nil; $0.disablesAnimations = true }
+			UnifiedImportMetadata(entry: entry, model: activeModel, splitParent: true)
+			Text(group.copyCount, format: .number)
+				.font(.footnote)
+				.foregroundStyle(.secondary)
+				.monospacedDigit()
+				.fixedSize(horizontal: true, vertical: false)
+				.frame(minWidth: 20, minHeight: 20)
+		}
+		.padding(horizontalSizeClass == .compact ? 0 : 12)
+		.background {
+			if horizontalSizeClass != .compact {
+				RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(.quaternarySystemFill))
+			}
+		}
+		.contentShape(Rectangle())
+	}
+}
+
+@MainActor
+struct SplitArtifactsView: View {
+	let originalUUID: String
+	@ObservedObject var controller: UnifiedImportsController
+	@ObservedObject private var index = LibraryArtifactIndex.shared
+
+	private var group: SplitArtifactGroup? {
+		SplitArtifactGroup.makeGroups(from: controller.visibleRows, lineage: index.lineage)
+			.first { $0.originalUUID == originalUUID }
+	}
+	private var title: String {
+		group?.representative.displayName ?? .localized("Split App")
+	}
+
+	var body: some View {
+		List {
+			if let group {
+				if !group.signedEntries.isEmpty {
+					NBSection(.localized("Signed")) {
+						UnifiedImportsRows(entries: group.signedEntries, controller: controller)
+					}
+					.listSectionSeparator(.hidden)
+				}
+				if !group.unsignedEntries.isEmpty {
+					NBSection(.localized("Unsigned")) {
+						UnifiedImportsRows(entries: group.unsignedEntries, controller: controller)
+					}
+					.listSectionSeparator(.hidden)
+				}
+			} else {
+				TabPlaceholderView(title: .localized("No App Copies"), description: .localized("The signed and unsigned copies are no longer available."), systemImage: "doc.on.doc")
+					.listRowSeparator(.hidden)
+			}
+		}
+		.listStyle(.plain)
+		.navigationTitle(title)
+		.navigationBarTitleDisplayMode(.inline)
 	}
 }
 
@@ -455,15 +671,14 @@ struct UnifiedImportActions: View {
 
 	var body: some View {
 		if forSwipe {
-            removalAction(forSwipe: true)
-            if entry.app?.isSigned == true, let original = entry.original, let uuid = original.uuid,
-                !LibraryArtifactIndex.shared.lineage.revealedOriginals.contains(uuid) {
-                Button(.localized("Unsign"), systemImage: "doc.on.doc") {
-                    LibraryArtifactIndex.shared.reveal(originalUUID: uuid)
-                }.tint(.orange).disabled(protected)
-            }
-        }
-		else { contextActions }
+			removalAction(forSwipe: true)
+			if entry.app?.isSigned == true, let original = entry.original, let uuid = original.uuid,
+				!LibraryArtifactIndex.shared.lineage.revealedOriginals.contains(uuid) {
+				Button(.localized("Split"), systemImage: "doc.on.doc") {
+					LibraryArtifactIndex.shared.reveal(originalUUID: uuid)
+				}.tint(.orange).disabled(protected)
+			}
+		} else { contextActions }
 	}
 
 	@ViewBuilder private var contextActions: some View {
@@ -481,7 +696,7 @@ struct UnifiedImportActions: View {
 			if app.isSigned {
 				Button(.localized("Export"), systemImage: "square.and.arrow.up") { ExportManager.shared.startExport(app: app) }.disabled(protected)
 				if let original = entry.original, let uuid = original.uuid {
-					Button(.localized("Show Unsigned IPA"), systemImage: "doc.on.doc") { LibraryArtifactIndex.shared.reveal(originalUUID: uuid) }
+					Button(.localized("Split View"), systemImage: "rectangle.split.2x1") { LibraryArtifactIndex.shared.reveal(originalUUID: uuid) }
 						.disabled(protected || LibraryArtifactIndex.shared.lineage.revealedOriginals.contains(uuid))
 				}
 			}
@@ -552,12 +767,14 @@ private extension UnifiedImportEntry {
 private struct UnifiedImportMetadata: View {
 	let entry: UnifiedImportEntry
 	let model: InstallerStatusViewModel?
+	var splitParent = false
 	@StateObject private var activity: UnifiedImportActivity
 	@State private var showsErrorDetails = false
 
-	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?) {
+	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?, splitParent: Bool = false) {
 		self.entry = entry
 		self.model = model
+		self.splitParent = splitParent
 		_activity = StateObject(wrappedValue: UnifiedImportActivity(entry: entry, model: model))
 	}
 
@@ -623,21 +840,28 @@ private struct UnifiedImportMetadata: View {
 		(entry.operation != nil && !entry.signOnlyCompleted(model: model)) || entry.download != nil || entry.export != nil
 	}
 
-
 	var body: some View {
 		let status = status
-		LibraryRowDetails(
+		let details = LibraryRowDetails(
 			name: entry.displayName,
 			version: app?.version ?? entry.download?.sourceProvenance?.sourceAppVersion,
-			identifier: app?.identifier ?? entry.download?.sourceProvenance?.sourceAppIdentifier,
+			identifier: splitParent ? nil : (app?.identifier ?? entry.download?.sourceProvenance?.sourceAppIdentifier),
 			secondaryStatus: showsTaskStatus ? nil : status.text,
 			isFailed: !showsTaskStatus && status.failed,
 			animatesStatus: true,
-			thirdLineStatus: showsTaskStatus ? status.text : nil,
-			thirdLineAnimationKey: numericProgressPhase ?? status.text,
+			thirdLineStatus: splitParent ? (showsTaskStatus ? status.text : .localized("split view parent")) : (showsTaskStatus ? status.text : nil),
+			thirdLineAnimationKey: (splitParent && !showsTaskStatus) ? "split" : (numericProgressPhase ?? status.text),
 			showsNumericProgress: numericProgressPhase != nil
 		)
-		.onTapGesture { if failureDetails != nil { showsErrorDetails = true } }
+		Group {
+			if splitParent {
+				// The parent is inside a NavigationLink. An empty tap recognizer on
+				// its metadata can win the gesture arena and swallow link activation.
+				details
+			} else {
+				details.onTapGesture { if failureDetails != nil { showsErrorDetails = true } }
+			}
+		}
 		.alert(String.localized("Error Details"), isPresented: $showsErrorDetails) {
 			Button(String.localized("OK"), role: .cancel) {}
 		} message: { Text(failureDetails ?? "") }
