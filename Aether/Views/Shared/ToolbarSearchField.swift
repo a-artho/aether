@@ -13,18 +13,15 @@ enum SearchPlacement: String, CaseIterable, Identifiable {
 	}
 }
 
-/// Applies the native iOS 26 floating navigation and scroll-edge appearance to
-/// a NavigationStack so its root and pushed scroll views share one treatment.
+/// Applies the native iOS 26 soft scroll-edge treatment to a navigation stack.
 struct FloatingNavigationAppearance: ViewModifier {
 	@ViewBuilder
 	func body(content: Content) -> some View {
 		if #available(iOS 26.0, *) {
-			content
-				.toolbarBackgroundVisibility(.hidden, for: .navigationBar)
-				.scrollEdgeEffectStyle(.soft, for: .top)
+			content.scrollEdgeEffectStyle(.soft, for: .top)
 		} else {
-				content
-			}
+			content
+		}
 	}
 }
 
