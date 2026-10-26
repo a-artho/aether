@@ -6,9 +6,6 @@ struct ExportProgressButton: View {
 	var body: some View {
 		Button(action: _performAction) {
 			ZStack {
-				Circle()
-					.stroke(_tint.opacity(0.2), lineWidth: 2.3)
-
 				if case .exporting = export.state {
 					Circle()
 						.trim(from: 0, to: export.progress)
@@ -21,8 +18,8 @@ struct ExportProgressButton: View {
 					.foregroundStyle(_tint)
 					.font(.footnote.bold())
 			}
-			.frame(width: 31, height: 31)
-			.frame(width: 44, height: 44)
+			.frame(width: 35, height: 35)
+			.frame(width: 44, height: 44, alignment: .trailing)
 			.contentShape(Rectangle())
 		}
 		.buttonStyle(.borderless)

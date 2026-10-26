@@ -8,12 +8,22 @@ import SwiftUI
 struct DownloadProgressButton: View {
 	@ObservedObject var download: Download
 	@ObservedObject private var downloadManager = DownloadManager.shared
+	var visualSize: CGFloat = 31
+	var showsTrack = true
+
+	init(download: Download, visualSize: CGFloat = 31, showsTrack: Bool = true) {
+		self.download = download
+		self.visualSize = visualSize
+		self.showsTrack = showsTrack
+	}
 
 	var body: some View {
 		Button(action: _performAction) {
 			ZStack {
-				Circle()
-					.stroke(Color.accentColor.opacity(0.2), lineWidth: 2.3)
+				if showsTrack {
+					Circle()
+						.stroke(Color.accentColor.opacity(0.2), lineWidth: 2.3)
+				}
 
 				if _showsProgress {
 					Circle()
@@ -34,8 +44,8 @@ struct DownloadProgressButton: View {
 						.font(.footnote.bold())
 				}
 			}
-			.frame(width: 31, height: 31)
-			.frame(width: 44, height: 44)
+			.frame(width: visualSize, height: visualSize)
+			.frame(width: 44, height: 44, alignment: showsTrack ? .center : .trailing)
 			.contentShape(Rectangle())
 		}
 		.buttonStyle(.borderless)

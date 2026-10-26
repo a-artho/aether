@@ -7,12 +7,11 @@ struct InstallationProgressRing: View {
 
 	var body: some View {
 		ZStack {
-			Circle()
-				.stroke(Color.accentColor.opacity(0.2), lineWidth: 2.3)
 			if let progress {
 				Circle()
 					.trim(from: 0, to: progress)
 					.stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.3, lineCap: .round))
+					.frame(width: 35, height: 35)
 					.rotationEffect(.degrees(-90))
 					.animation(reduceMotion ? nil : .smooth, value: progress)
 			}
@@ -21,8 +20,7 @@ struct InstallationProgressRing: View {
 				.foregroundStyle(Color.accentColor)
 				.font(.footnote.bold())
 		}
-		.frame(width: 31, height: 31)
-		.frame(width: 44, height: 44)
+		.frame(width: 35, height: 35)
 	}
 }
 

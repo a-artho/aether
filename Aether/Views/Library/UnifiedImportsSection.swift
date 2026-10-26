@@ -566,7 +566,6 @@ private struct UnifiedImportRow: View {
 				}
 			UnifiedImportMetadata(entry: entry, model: activeModel)
 			UnifiedImportAccessory(entry: entry, model: activeModel, controller: controller)
-				.transition(.opacity)
 		}
 		.padding(horizontalSizeClass == .compact ? 0 : 12)
 		.background {
@@ -888,18 +887,108 @@ private struct UnifiedImportAccessory: View {
 		_activity = StateObject(wrappedValue: UnifiedImportActivity(entry: entry, model: model))
 	}
 
-	private var stage: String {
-		if let operation = entry.operation, !entry.signOnlyCompleted(model: model) { return operation.id.uuidString }
-		if let export = entry.export { return "export:" + export.id.uuidString }
-		if let download = entry.download { return "download:" + download.id }
-		return entry.app?.isSigned == true ? "signed" : "imported"
+	private var actionTitle: String {
+		guard let app = entry.app ?? entry.operation?.app ?? entry.export?.app else {
+			return .localized("Sign")
+		}
+		return app.isSigned
+			? AppInstallationManager.shared.installActionTitle(for: app)
+			: .localized("Sign")
+	}
+
+	/// Keep the row's trailing column at the widest action-pill width throughout
+	/// progress and completion, so the metadata never shifts during the morph.
+	private var actionWidthReservation: some View {
+		ZStack(alignment: .trailing) {
+			NBButton(.localized("Sign"), style: .text).hidden().allowsHitTesting(false).accessibilityHidden(true)
+			NBButton(.localized("Install"), style: .text).hidden().allowsHitTesting(false).accessibilityHidden(true)
+			NBButton(.localized("Reinstall"), style: .text).hidden().allowsHitTesting(false).accessibilityHidden(true)
+		}
+	}
+
+	private var isProgressStage: Bool {
+		(entry.operation != nil && !entry.signOnlyCompleted(model: model)) || entry.download != nil || entry.export != nil
+	}
+
+	private var isActionStage: Bool {
+		!isProgressStage && entry.app != nil
+	}
+
+	private var ringTint: Color {
+		if let export = entry.export, case .failed = export.state { return .red }
+		return .accentColor
 	}
 
 	var body: some View {
-		ZStack(alignment: .trailing) {
+		let actionStage = isActionStage
+		let progressStage = isProgressStage
+		let pillTitle = actionTitle
+		let morphAnimation: Animation? = reduceMotion ? nil : .easeInOut(duration: 0.35)
+
+		return actionWidthReservation
+			.overlay {
+				GeometryReader { geometry in
+					let slotWidth = geometry.size.width
+					let morphWidth = actionStage ? slotWidth : 35
+					let hasActionVisual = actionStage || progressStage
+
+					ZStack(alignment: .trailing) {
+						Capsule()
+							.fill(actionStage ? Color(uiColor: .quaternarySystemFill) : .clear)
+							.overlay {
+								Capsule()
+									.stroke(ringTint.opacity(progressStage ? 0.2 : 0), lineWidth: 2.3)
+							}
+							.frame(width: morphWidth, height: 35)
+							.opacity(hasActionVisual ? 1 : 0)
+
+						ringAccessory
+							.frame(width: 44, height: 44, alignment: .trailing)
+							.contentShape(Rectangle())
+							.allowsHitTesting(progressStage)
+							.accessibilityHidden(!progressStage)
+
+						Button {
+							guard let app = entry.app else { return }
+							if app.isSigned {
+								if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
+							} else {
+								controller.signingApp = AnyApp(base: app)
+							}
+						} label: {
+							Text(pillTitle)
+								.font(.footnote.bold())
+								.lineLimit(1)
+								.fixedSize(horizontal: true, vertical: false)
+								.foregroundStyle(Color.accentColor)
+								.frame(maxWidth: .infinity)
+								.frame(width: slotWidth, height: 44)
+								.mask(alignment: .trailing) {
+									Capsule()
+										.frame(width: morphWidth, height: 35)
+										.frame(width: slotWidth, height: 44, alignment: .trailing)
+								}
+							.frame(width: slotWidth, height: 44, alignment: .trailing)
+							.contentShape(Capsule())
+						}
+						.buttonStyle(.borderless)
+						.opacity(actionStage ? 1 : 0)
+						.allowsHitTesting(actionStage)
+						.accessibilityHidden(!actionStage)
+						.accessibilityLabel(pillTitle)
+					}
+					.frame(width: geometry.size.width, height: geometry.size.height, alignment: .trailing)
+					.animation(morphAnimation, value: actionStage)
+				}
+			}
+		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
+		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
+	}
+
+	@ViewBuilder private var ringAccessory: some View {
+		if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
 			Group {
-			if entry.operation != nil, !entry.signOnlyCompleted(model: model) {
-				if let model = model {
+				if let model {
 					if case .broken = model.status {
 						Button { AppInstallationManager.shared.retryActiveInstall() } label: {
 							InstallationProgressRing(progress: nil, systemImage: "arrow.clockwise")
@@ -909,26 +998,15 @@ private struct UnifiedImportAccessory: View {
 							.accessibilityLabel(model.statusLabel)
 							.accessibilityValue(Text(progress(model), format: .percent.precision(.fractionLength(0))))
 					}
-				} else { InstallationProgressRing(progress: nil, systemImage: "clock") }
-			} else if let export = entry.export { ExportProgressButton(export: export) }
-			else if let download = entry.download { DownloadProgressButton(download: download) }
-			else if let app = entry.app {
-				Button {
-					if app.isSigned {
-						if AppInstallationManager.shared.startInstall(app: app) { HapticManager.shared.impact() }
-					} else { controller.signingApp = AnyApp(base: app) }
-				} label: {
-				NBButton(app.isSigned ? AppInstallationManager.shared.installActionTitle(for: app) : .localized("Sign"), style: .text)
-					.foregroundStyle(Color.accentColor)
-			}
-				.buttonStyle(.borderless)
-			}
+				} else {
+					InstallationProgressRing(progress: nil, systemImage: "clock")
+				}
+			}.transition(.opacity)
+		} else if let export = entry.export {
+			ExportProgressButton(export: export).transition(.opacity)
+		} else if let download = entry.download {
+			DownloadProgressButton(download: download, visualSize: 35, showsTrack: false).transition(.opacity)
 		}
-			.transition(.opacity)
-		}
-		.animation(reduceMotion ? nil : .smooth(duration: 0.25), value: stage)
-		.onChange(of: entry.signature) { _, _ in activity.bind(entry: entry, model: model) }
-		.onChange(of: model.map { ObjectIdentifier($0) }) { _, _ in activity.bind(entry: entry, model: model) }
 	}
 
 	private func progress(_ model: InstallerStatusViewModel) -> Double { model.operationProgress }
