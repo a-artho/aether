@@ -86,6 +86,9 @@ for forbidden in ("startSigning", "startInstall", "SigningHandler", "FR.signPack
 	assert forbidden not in download_button
 
 release_workflow = (repo / ".github/workflows/release.yml").read_text()
+assert "release:\n    types: [published]" in release_workflow
+assert "group: release-${{ github.ref }}" in release_workflow
+assert "github.event_name == 'release'" in release_workflow
 assert release_workflow.index("- name: Publish release") < release_workflow.index("- name: Update Aether app repository manifest")
 assert "permissions:\n  contents: write" in release_workflow
 assert "gh release view \"$TAG\" --json publishedAt" in release_workflow
