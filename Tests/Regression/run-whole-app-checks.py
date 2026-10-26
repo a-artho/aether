@@ -9,6 +9,7 @@ def declaration(path, start):
     return s[a:b]
 s = r'''
 import Foundation
+import os
 extension String {static func localized(_ s:String)->String {s}}
 final class Download {
  enum State:Equatable {case downloading,pausing,paused,resuming,processing,failed}
@@ -44,8 +45,19 @@ for name in ['private func _getDownload(transferIdentifier:', 'private func _get
 s += r'''
 }
 struct ASRepository:Sendable {let id:Int}
+struct SourceAppCatalogContext:Sendable {
+ let sourceObjectURI:String;let sourceURL:URL?;let repository:ASRepository;let revision:String
+}
+actor SourceAppListStore {
+ static let shared=SourceAppListStore()
+ func warm(contexts:[SourceAppCatalogContext],sort:String,ascending:Bool,unknownDate:String)throws{}
+}
 struct ObjectID {let key:String;func uriRepresentation()->URL {URL(string:key)!}}
 struct AltSource {let objectID:ObjectID;let sourceURL:URL?}
+enum AetherBuiltInRepository {
+ static let key="builtin:aether"
+ static let url=URL(string:"https://fixture.test/aether")!
+}
 actor SourceRepositoryService {
  struct Snapshot:Sendable {let revision:String;let repository:ASRepository}
  var fetches=0;var reads=0
@@ -55,15 +67,20 @@ actor SourceRepositoryService {
   return Snapshot(revision:"one",repository:ASRepository(id:1))
  }
 }
-struct Log {func error(_ s:String){}}
-enum Logger {static let misc=Log()}
+enum Logger {static let misc=os.Logger(subsystem:"AetherRegression",category:"Sources")}
 @MainActor final class VM {
  struct SourceRequest:Sendable {let key:String;let sourceURL:URL?}
  var sourceRefreshOwners:[String:Set<UUID>]=[:]
  let _repositoryService=SourceRepositoryService();var sources:[String:ASRepository]=[:]
  var _revisions:[String:String]=[:];var removedSourceKeys=Set<String>();var cacheResetGeneration=UUID();var catalogRevision=0;var refreshErrors:[String:String]=[:]
+ var builtInAetherSnapshot:SourceRepositoryService.Snapshot?;var _lastBuiltInAttempt:Date?
+ let _defaults=UserDefaults.standard
 '''
-for name in ['func isRefreshing(', 'func ensureSourcesLoaded(', 'private func _restoreCachedSources(', 'private func _fetchRequests(']:
+for name in [
+    'func isRefreshing(', 'func ensureSourcesLoaded(', 'private func _userRequests(',
+    'private func _requests(', 'private func _hasCatalog(', 'private func _publishBuiltInAether(',
+    'private func _restoreCachedSources(', 'private func _fetchRequests(', 'private func _warm(',
+]:
     s += declaration('Aether/Views/Sources/SourcesViewModel.swift', name)+'\n'
 s += '}\n'
 s += r'''
@@ -168,7 +185,7 @@ func check(_ value:@autoclosure ()->Bool,_ message:String){precondition(value(),
   check(count==1,"Cancelled catalog consumer starts no further batches")
   check(vm.sources.isEmpty && vm.refreshErrors.isEmpty,"Cancellation publishes neither stale catalog nor failure")
   let reads=await vm._repositoryService.reads
-  check(reads==8,"Navigation does not repeat cache-miss restoration")
+  check(reads==sources.count+1,"Navigation restores user sources and the built-in Aether feed once")
 
   check(vm.sourceRefreshOwners.isEmpty,"Cancellation releases repository row spinners")
   let independent=VM()

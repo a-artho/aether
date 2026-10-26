@@ -14,6 +14,10 @@ struct Transaction { var disablesAnimations = false; init(animation: Any?) {} }
 @MainActor func withTransaction(_ transaction: Transaction, _ action: () -> Void) { action() }
 struct ObjectID { let id: String; func uriRepresentation() -> URL { URL(string: "source://" + id)! } }
 struct AltSource { let objectID = ObjectID(id: "one"); let sourceURL = URL(string: "https://test.invalid/repo") }
+enum AetherBuiltInRepository {
+ static let key = "builtin:aether"
+ static let url = URL(string: "https://test.invalid/aether")!
+}
 struct Repository {}
 struct SourceAppCatalogContext: Equatable {
  let sourceObjectURI: String; let sourceURL: URL?; let revision: String
@@ -61,9 +65,14 @@ enum DeviceConnectionState { case connected, connecting, disconnecting, disconne
  var lastUpdated: Date?
  var pause = false
  var waiter: CheckedContinuation<Void, Never>?
+ var builtInContext: SourceAppCatalogContext?
  var task: Task<Void, Never>?
  func repository(for source: AltSource) -> Repository? { calls > 0 ? Repository() : nil }
  func revision(for source: AltSource) -> String { String(catalogRevision) }
+ func builtInAetherUpdateContext(installedBundleIdentifier: String?) -> SourceAppCatalogContext? {
+  guard installedBundleIdentifier != nil else { return nil }
+  return builtInContext
+ }
  func startRefresh(_ sources: [AltSource]) -> Task<Void, Never> {
   if let task { return task }
   calls += 1; isRefreshRequested = true; isFinished = false
@@ -142,13 +151,21 @@ checks = r'''
   let coordinator = LibraryUpdatesStore()
   coordinator.setSources([AltSource()])
   let context = SourceAppCatalogContext(sourceObjectURI: "source://one", sourceURL: nil, repository: Repository(), revision: "1")
-  await catalog.configure(["app": [context]])
+  let aetherIdentifier = "com.anfear.aether.fixture"
+  let aetherContext = SourceAppCatalogContext(sourceObjectURI: AetherBuiltInRepository.key,
+   sourceURL: AetherBuiltInRepository.url, repository: Repository(), revision: "1")
+  repositories.builtInContext = aetherContext
+  installed.next = [.init(bundleIdentifier: "app", version: "1"),
+   .init(bundleIdentifier: aetherIdentifier, version: "1")]
+  await catalog.configure(["app": [context], aetherIdentifier: [aetherContext]])
   let start = ContinuousClock.now
   coordinator.activate(); coordinator.activate()
   await idle(coordinator)
   precondition(start.duration(to: .now) >= .seconds(1), "Checking with its spinner has a one-second minimum")
   precondition(repositories.calls == 1 && installed.calls == 1, "Cold launch coalesces activation and service publications")
   precondition(coordinator.phase == .idle && coordinator.hasVerifiedUpdates && coordinator.updateContexts["app"] == [context])
+  precondition(coordinator.updateContexts[aetherIdentifier] == [aetherContext],
+   "Built-in Aether update context participates using the installed bundle identity")
   let firstMatches = await catalog.calls
   coordinator.activate(); await drain()
   precondition(coordinator.refreshTask == nil, "Reappearing tabs cannot start refresh work")

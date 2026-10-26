@@ -316,13 +316,19 @@ final class SourcesViewModel: ObservableObject {
 	private func _fetchRequests(_ requests: [SourceRequest], refresh: Bool, batchSize: Int, restoreCached: Bool = true) async {
 		let generation = cacheResetGeneration
 		guard !Task.isCancelled else { return }
-		let owner = UUID()
-		for request in requests { sourceRefreshOwners[request.key, default: []].insert(owner) }
+		var ownersByKey: [String: UUID] = [:]
+		for request in requests {
+			let owner = UUID()
+			ownersByKey[request.key] = owner
+			sourceRefreshOwners[request.key, default: []].insert(owner)
+		}
+		func finishRefreshOwner(for key: String) {
+			guard let owner = ownersByKey.removeValue(forKey: key) else { return }
+			sourceRefreshOwners[key]?.remove(owner)
+			if sourceRefreshOwners[key]?.isEmpty == true { sourceRefreshOwners[key] = nil }
+		}
 		defer {
-			for request in requests {
-				sourceRefreshOwners[request.key]?.remove(owner)
-				if sourceRefreshOwners[request.key]?.isEmpty == true { sourceRefreshOwners[request.key] = nil }
-			}
+			for key in Array(ownersByKey.keys) { finishRefreshOwner(for: key) }
 		}
 		if restoreCached { await _restoreCachedSources(requests) }
 		guard generation == cacheResetGeneration else { return }
@@ -349,6 +355,7 @@ final class SourcesViewModel: ObservableObject {
 				nextIndex += 1
 			}
 			for await (key, snapshot, error) in group {
+				defer { finishRefreshOwner(for: key) }
 				guard !Task.isCancelled, generation == cacheResetGeneration else { group.cancelAll(); break }
 				if nextIndex < requests.count {
 					let request = requests[nextIndex]

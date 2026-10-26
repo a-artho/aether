@@ -10,13 +10,24 @@ def declaration(path, start):
         depth += (source[end]=='{')-(source[end]=='}'); end += 1
     return source[begin:end]
 source = 'import Foundation\nimport Darwin\nimport CryptoKit\nimport Combine\n'
+source += '''
+struct NSDiffableDataSourceSnapshot<Section: Hashable, Item: Hashable> {
+    mutating func appendSections(_ sections: [Section]) {}
+    mutating func appendItems(_ items: [Item], toSection section: Section? = nil) {}
+    mutating func reconfigureItems(_ items: [Item]) {}
+}
+enum AetherBuiltInRepository {
+    static let key = "builtin:aether"
+    static let canonicalBundleIdentifier = "com.anfear.aether"
+}
+'''
 source += declaration('Aether/Views/Sources/Apps/Detail/ExpandableText.swift', 'enum SourceAppBodyText') + '\n'
 source += (repo/'AltSourceKit/Sources/AltSourceKit/Models/ASRepository.swift').read_text().replace('import SwiftUI','public struct Color: Codable, Hashable, Sendable {}')
 source += (repo/'AltSourceKit/Sources/AltSourceKit/Extensions/Array/Array+safe.swift').read_text()
 source += (repo/'AltSourceKit/Sources/AltSourceKit/Utilities/ASDecrypt.swift').read_text()
 source += (repo/'AltSourceKit/Sources/AltSourceKit/Utilities/Key/EsignSourceKey.swift').read_text()
 for path in ['Aether/Backend/Observable/SourceRepositoryService.swift','Aether/Backend/Observable/SourceAppListStore.swift']:
-    source += (repo/path).read_text().replace('import AltSourceKit','')
+    source += (repo/path).read_text().replace('import AltSourceKit','').replace('import UIKit','')
 source += (repo/'Aether/Backend/Observable/InstalledAppUpdateCatalog.swift').read_text().replace('import AltSourceKit','')
 source += r'''
 enum FRIconAppearance: Int { case light, dark }

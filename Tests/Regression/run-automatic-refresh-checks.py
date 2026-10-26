@@ -13,11 +13,16 @@ import Foundation
 import Combine
 struct ObjectID {let id:String;func uriRepresentation()->URL {URL(string:"source://"+id)!}}
 struct AltSource {let objectID=ObjectID(id:"one");let sourceURL=URL(string:"https://test.invalid/repo.json")}
+enum AetherBuiltInRepository {
+ static let key="builtin:aether"
+ static let url=URL(string:"https://test.invalid/aether")!
+}
 final class Defaults {var date:Date?;func set(_ date:Date?,forKey:String){self.date=date}}
 @MainActor final class Driver {
  @Published var isFinished=true
  var isRefreshRequested=false;var requestedRefreshTask:Task<Void,Never>?
  var _lastGlobalAttempt:Date?;var lastUpdated:Date?
+ var _lastBuiltInAttempt:Date?;var builtInAetherSnapshot:Int?
  static let _lastUpdatedKey="test"
  let _defaults=Defaults();var cacheResetGeneration=UUID()
  var sources:[String:Int]=[:];var _revisions:[String:String]=[:];var refreshErrors:[String:String]=[:];var catalogRevision=0
@@ -37,6 +42,8 @@ final class Defaults {var date:Date?;func set(_ date:Date?,forKey:String){self.d
 '''
 for start in ['func startRefresh(', 'func refreshIfNeeded(', 'func fetchSources(_ sources: [AltSource],']:
  s+=method(start)+'\n'
+for start in ['private func _userRequests(', 'private func _requests(']:
+    s+=method(start)+'\n'
 s+=r'''
 }
 @main struct Checks {
