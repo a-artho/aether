@@ -44,32 +44,14 @@ struct AppIconView: View {
 			AltIcon(displayName: "Aether", author: "Artho", key: nil),
 			AltIcon(displayName: "Aether Glass", author: "Artho", key: "AetherGlassMuted", previewImageName: "AetherGlassMutedPreview")
 		],
-		"Glass — Neutral": [
-			AltIcon(displayName: "Muted Reference", author: "Artho", key: "AetherGlassMutedReference", previewImageName: "AetherGlassMutedReferencePreview"),
-			AltIcon(displayName: "Muted Smoked Steel", author: "Artho", key: "AetherGlassMutedSmokedSteel", previewImageName: "AetherGlassMutedSmokedSteelPreview"),
-			AltIcon(displayName: "Frosted Titanium", author: "Artho", key: "AetherGlassFrostedTitanium", previewImageName: "AetherGlassFrostedTitaniumPreview"),
-			AltIcon(displayName: "Smoked Acrylic", author: "Artho", key: "AetherGlassSmokedAcrylic", previewImageName: "AetherGlassSmokedAcrylicPreview")
-		],
-		"Glass — Violet": [
-			AltIcon(displayName: "White Violet", author: "Artho", key: "AetherGlassWhiteViolet", previewImageName: "AetherGlassWhiteVioletPreview"),
-			AltIcon(displayName: "Plum Glass", author: "Artho", key: "AetherGlassPlum", previewImageName: "AetherGlassPlumPreview")
-		],
-		"Glass — Cool": [
-			AltIcon(displayName: "Clear Crystal", author: "Artho", key: "AetherGlassClearCrystal", previewImageName: "AetherGlassClearCrystalPreview"),
-			AltIcon(displayName: "Edge Spark", author: "Artho", key: "AetherGlassEdgeSpark", previewImageName: "AetherGlassEdgeSparkPreview"),
-			AltIcon(displayName: "Forest Obsidian", author: "Artho", key: "AetherGlassForestObsidian", previewImageName: "AetherGlassForestObsidianPreview")
-		],
 		"Feather": [
 			AltIcon(displayName: "Feather (macOS)", author: "Samara", key: "V2Mac"),
 			AltIcon(displayName: "Feather v1", author: "Samara", key: "V1")
 		]
 	]
-	@MainActor private static let sectionOrder = ["Aether", "Glass — Neutral", "Glass — Violet", "Glass — Cool", "Feather"]
+	@MainActor private static let sectionOrder = ["Aether", "Feather"]
 	@MainActor private static let supportedAlternateIconNames: Set<String> = [
-		"AetherGlassMuted", "AetherGlassMutedReference", "AetherGlassMutedSmokedSteel",
-		"AetherGlassFrostedTitanium", "AetherGlassSmokedAcrylic", "AetherGlassWhiteViolet",
-		"AetherGlassPlum", "AetherGlassClearCrystal", "AetherGlassEdgeSpark",
-		"AetherGlassForestObsidian", "V2Mac", "V1"
+		"AetherGlassMuted", "V2Mac", "V1"
 	]
 	
 	// MARK: Body

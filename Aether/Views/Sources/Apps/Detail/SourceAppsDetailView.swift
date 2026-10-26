@@ -266,7 +266,7 @@ extension SourceAppsDetailView {
 	) -> some View {
 		VStack(alignment: .leading, spacing: 10) {
 			Text(title)
-				.nbSectionHeaderFont(weight: .semibold)
+				.nbSectionHeaderFont()
 				.foregroundStyle(.primary)
 				.padding(.horizontal, horizontalInset.points ?? 20)
 

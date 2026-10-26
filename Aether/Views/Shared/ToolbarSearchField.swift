@@ -28,8 +28,111 @@ enum RootPageTitlePlacement: String, CaseIterable, Identifiable {
 
 /// Applies the native iOS 26 soft scroll-edge treatment to a navigation stack.
 struct FloatingNavigationAppearance: ViewModifier {
+	@AppStorage("Aether.mutedPageTitles") private var mutedPageTitles = false
+	@AppStorage("Aether.boldPageAndSectionTitles") private var boldPageAndSectionTitles = false
+
 	func body(content: Content) -> some View {
-		content.scrollEdgeEffectStyle(.soft, for: .top)
+		content
+			.scrollEdgeEffectStyle(.soft, for: .top)
+			.onAppear { NavigationTitleAppearance.apply(muted: mutedPageTitles, bold: boldPageAndSectionTitles) }
+			.onChange(of: mutedPageTitles) { _, muted in
+				NavigationTitleAppearance.apply(muted: muted, bold: boldPageAndSectionTitles)
+			}
+			.onChange(of: boldPageAndSectionTitles) { _, bold in
+				NavigationTitleAppearance.apply(muted: mutedPageTitles, bold: bold)
+			}
+	}
+}
+
+@MainActor
+private enum NavigationTitleAppearance {
+	private static var configuredState: String?
+
+	static func apply(muted: Bool, bold: Bool) {
+		let titleColor = muted ? UIColor.secondaryLabel : UIColor.label
+		let state = "\(muted)-\(bold)"
+		if configuredState != state {
+			UINavigationBar.appearance().titleTextAttributes = titleAttributes(color: titleColor, font: bold ? boldFont(for: .headline) : nil)
+			UINavigationBar.appearance().largeTitleTextAttributes = titleAttributes(color: titleColor, font: bold ? boldFont(for: .largeTitle) : nil)
+			configuredState = state
+		}
+
+		for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+			for window in scene.windows {
+				apply(muted: muted, bold: bold, in: window)
+			}
+		}
+	}
+
+	private static func titleAttributes(color: UIColor, font: UIFont?) -> [NSAttributedString.Key: Any] {
+		var attributes: [NSAttributedString.Key: Any] = [.foregroundColor: color]
+		if let font { attributes[.font] = font }
+		return attributes
+	}
+
+	private static func boldFont(for textStyle: UIFont.TextStyle) -> UIFont {
+		let preferredFont = UIFont.preferredFont(forTextStyle: textStyle)
+		return .systemFont(ofSize: preferredFont.pointSize, weight: .bold)
+	}
+
+	private static func apply(muted: Bool, bold: Bool, in view: UIView) {
+		if let navigationBar = view as? UINavigationBar {
+			apply(muted: muted, bold: bold, to: navigationBar)
+		}
+		for subview in view.subviews {
+			apply(muted: muted, bold: bold, in: subview)
+		}
+	}
+
+	private static func apply(muted: Bool, bold: Bool, to navigationBar: UINavigationBar) {
+		let titleColor = muted ? UIColor.secondaryLabel : UIColor.label
+		let inlineFont = bold ? boldFont(for: .headline) : nil
+		let largeFont = bold ? boldFont(for: .largeTitle) : nil
+
+		func needsUpdate(_ appearance: UINavigationBarAppearance) -> Bool {
+			func matches(_ attributes: [NSAttributedString.Key: Any], font: UIFont?) -> Bool {
+				let colorMatches = (attributes[.foregroundColor] as? UIColor)?.isEqual(titleColor) ?? false
+				let fontMatches: Bool
+				if let font {
+					fontMatches = (attributes[.font] as? UIFont)?.isEqual(font) ?? false
+				} else {
+					fontMatches = attributes[.font] == nil
+				}
+				return colorMatches && fontMatches
+			}
+			return !matches(appearance.titleTextAttributes, font: inlineFont)
+				|| !matches(appearance.largeTitleTextAttributes, font: largeFont)
+		}
+
+		func applyingTitleStyle(to source: UINavigationBarAppearance) -> UINavigationBarAppearance {
+			let appearance = source.copy() as! UINavigationBarAppearance
+			appearance.titleTextAttributes[.foregroundColor] = titleColor
+			appearance.largeTitleTextAttributes[.foregroundColor] = titleColor
+			if let inlineFont {
+				appearance.titleTextAttributes[.font] = inlineFont
+			} else {
+				appearance.titleTextAttributes.removeValue(forKey: .font)
+			}
+			if let largeFont {
+				appearance.largeTitleTextAttributes[.font] = largeFont
+			} else {
+				appearance.largeTitleTextAttributes.removeValue(forKey: .font)
+			}
+			return appearance
+		}
+
+		if needsUpdate(navigationBar.standardAppearance) {
+			navigationBar.standardAppearance = applyingTitleStyle(to: navigationBar.standardAppearance)
+		}
+		if let compact = navigationBar.compactAppearance, needsUpdate(compact) {
+			navigationBar.compactAppearance = applyingTitleStyle(to: compact)
+		}
+		if let scrollEdge = navigationBar.scrollEdgeAppearance, needsUpdate(scrollEdge) {
+			navigationBar.scrollEdgeAppearance = applyingTitleStyle(to: scrollEdge)
+		}
+		if let compactScrollEdge = navigationBar.compactScrollEdgeAppearance, needsUpdate(compactScrollEdge) {
+			navigationBar.compactScrollEdgeAppearance = applyingTitleStyle(to: compactScrollEdge)
+		}
 	}
 }
 
@@ -56,9 +159,12 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	@State private var secondaryButtonAnchor: WindowFrameAnchor?
 	@AppStorage("Aether.searchPlacement") private var searchPlacement: SearchPlacement = .right
 	@AppStorage("Aether.pageTitlePlacement") private var pageTitlePlacement: RootPageTitlePlacement = .center
+	@AppStorage("Aether.boldPageAndSectionTitles") private var boldPageAndSectionTitles = false
 	@AppStorage("Aether.statusUnderPageTitle") private var statusUnderPageTitle = false
+	@AppStorage("Aether.mutedPageTitles") private var mutedPageTitles = false
 
 	private var usesTitleSearch: Bool { searchPlacement == .pageTitle }
+	private var pageTitleFont: Font { boldPageAndSectionTitles ? .headline.weight(.bold) : .headline }
 	private var hidesTitle: Bool { isTabRoot && pageTitlePlacement == .hidden && !usesTitleSearch }
 	private var usesLeadingTitle: Bool { isTabRoot && pageTitlePlacement == .left && !hidesTitle }
 	private var showsTitleSubtitle: Bool {
@@ -185,7 +291,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 		Group {
 			if usesTitleSearch {
 				Button(action: openSearch) {
-					Text(title).font(.headline).foregroundStyle(.primary).lineLimit(1)
+					Text(title).font(pageTitleFont).foregroundStyle(mutedPageTitles ? Color.secondary : Color.primary).lineLimit(1)
 					.contentShape(Rectangle())
 					.background {
 						WindowFrameReader { anchor in
@@ -199,7 +305,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			} else if hasTitleMenu {
 				Menu { titleMenu() } label: {
 					HStack(spacing: 8) {
-						Text(title).font(.headline).lineLimit(1)
+						Text(title).font(pageTitleFont).foregroundStyle(mutedPageTitles ? Color.secondary : Color.primary).lineLimit(1)
 						Image(systemName: "chevron.down")
 							.font(.system(size: 10, weight: .semibold))
 							.foregroundStyle(.secondary)
@@ -213,7 +319,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 				.accessibilityLabel(title)
 				.accessibilityHidden(transition.expanded)
 			} else {
-				Text(title).font(.headline).lineLimit(1)
+				Text(title).font(pageTitleFont).foregroundStyle(mutedPageTitles ? Color.secondary : Color.primary).lineLimit(1)
 			}
 		}
 		// Preserve the complete title label's width throughout search.

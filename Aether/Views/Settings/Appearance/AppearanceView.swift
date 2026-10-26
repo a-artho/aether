@@ -19,7 +19,6 @@ struct AppearanceView: View {
 	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .sources
 	@AppStorage("Aether.settingsRowIconStyle") private var _settingsRowIconStyle: SettingsRowIconStyle = .colored
 	@AppStorage("Aether.deviceControlsStyle") private var _deviceControlsStyle: DeviceControlsStyle = .standard
-	@AppStorage("Aether.sectionHeaderMatchesPageTitle") private var _sectionHeaderMatchesPageTitle = false
 	@AppStorage("Aether.mutedSectionHeaders") private var _mutedSectionHeaders = false
 	@AppStorage("Aether.userInterfaceStyle")
 	private var _userInterfaceStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
@@ -30,7 +29,9 @@ struct AppearanceView: View {
 	@AppStorage("Aether.searchPlacement")
 	private var _searchPlacement: SearchPlacement = .right
 	@AppStorage("Aether.pageTitlePlacement") private var _pageTitlePlacement: RootPageTitlePlacement = .center
+	@AppStorage("Aether.boldPageAndSectionTitles") private var _boldPageAndSectionTitles = false
 	@AppStorage("Aether.statusUnderPageTitle") private var _statusUnderPageTitle = false
+	@AppStorage("Aether.mutedPageTitles") private var _mutedPageTitles = false
 
 	@AppStorage("Aether.shouldChangeIconsBasedOffStyle")
 	private var _shouldChangeIconsBasedOffStyle: Bool = false
@@ -158,14 +159,6 @@ struct AppearanceView: View {
 			}
 
 			NBSection(.localized("Section Headers")) {
-				Picker(selection: $_sectionHeaderMatchesPageTitle) {
-					Text(.localized("Default")).tag(false)
-					Text(.localized("Page Title")).tag(true)
-				} label: {
-					SettingsRowLabel(.localized("Section Header Size"), systemImage: "textformat.size", backgroundColor: .purple)
-				}
-				.pickerStyle(.menu)
-				.tint(.secondary)
 				Toggle(isOn: $_mutedSectionHeaders) {
 					SettingsRowLabel(.localized("Muted Section Headers"), systemImage: "textformat", backgroundColor: .teal)
 				}
@@ -204,8 +197,21 @@ struct AppearanceView: View {
 				.pickerStyle(.menu)
 				.tint(.secondary)
 
+				Picker(selection: $_boldPageAndSectionTitles) {
+					Text(.localized("Current")).tag(false)
+					Text(.localized("Bold")).tag(true)
+				} label: {
+					SettingsRowLabel(.localized("Title Weight"), systemImage: "textformat", backgroundColor: .gray)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+
 				Toggle(isOn: $_statusUnderPageTitle) {
 					SettingsRowLabel(.localized("Status on Navigation Bar"), systemImage: "textformat", backgroundColor: .blue)
+				}
+
+				Toggle(isOn: $_mutedPageTitles) {
+					SettingsRowLabel(.localized("Muted Page Titles"), systemImage: "textformat.size.smaller", backgroundColor: .gray)
 				}
 			} footer: {
 				Text(.localized("Choose search placement, page title alignment, and status placement."))
