@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AppIcon.appiconset/aether.png",
-      "version": "3.0.0",
-      "versionDate": "2026-10-26T04:15:54Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.0/Aether.ipa",
-      "size": 18172908,
-      "versionDescription": "# Aether 3.0.0\n\n- Improve repository browsing and search responsiveness, including large catalogs.\n- Refine source navigation, app icons, and appearance controls.\n- Polish Library updates and coordinate refresh indicators independently for each repository.\n- Smooth Imports progress transitions and strengthen lifecycle regression coverage.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.1",
+      "versionDate": "2026-10-26T04:52:20Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.1/Aether.ipa",
+      "size": 18171757,
+      "versionDescription": "# Aether 3.0.1\n\n- Shorten device tunnel connection feedback to four seconds.\n- Show the Library tunnel-unavailable placeholder with a Retry action and Settings guidance whenever the tunnel is unavailable.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.1",
+          "date": "2026-10-26T04:52:20Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.1/Aether.ipa",
+          "size": 18171757,
+          "localizedDescription": "# Aether 3.0.1\n\n- Shorten device tunnel connection feedback to four seconds.\n- Show the Library tunnel-unavailable placeholder with a Retry action and Settings guidance whenever the tunnel is unavailable.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.0",
           "date": "2026-10-26T04:15:54Z",
