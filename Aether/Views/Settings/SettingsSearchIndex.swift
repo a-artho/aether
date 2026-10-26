@@ -74,6 +74,7 @@ enum SettingsSearchIndex {
 			("Game Mode", "gaming"), ("iPad Fullscreen", "tablet"), ("Remove URL Scheme", "links deeplinks"),
 			("Remove Provisioning", "mobileprovision profile"), ("Force Localize", "language app name"),
 			("Install After Signing", "automatic install"), ("Merge Entitlements", "permissions"),
+			("Delete After Installing", "post signing cleanup completed installed IPA imports"),
 			("Replace Substrate with ElleKit", "tweak injection"), ("Disable Liquid Glass", "signed app design"),
 			("Enable Liquid Glass", "signed app design")
 		])

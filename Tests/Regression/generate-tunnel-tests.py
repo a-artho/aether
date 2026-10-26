@@ -10,13 +10,18 @@ def method(source,signature):
   elif source[end]=='}':level-=1
   end+=1
  return source[start:end]
-startup=method(device,'private func _connectForIDeviceMode()').replace('private func','func',1).replace('UIApplication','TunnelApplication')
+startup=method(device,'private func _connectForIDeviceMode(').replace('private func','func',1).replace('UIApplication','TunnelApplication')
 load=method(vpn,'func loadManagers()')
 wait=method(vpn,'func waitForStatus(')
 invalidate=method(vpn,'public func invalidateConfigurationCache()').replace('#if os(iOS) && !targetEnvironment(macCatalyst)','').replace('#endif','')
+reply=vpn[vpn.index('private final class TunnelOperationReply'):vpn.index('#if os(iOS)')]
 head=r'''
 import Foundation
 import XCTest
+private func CACurrentMediaTime()->TimeInterval { Date.timeIntervalSinceReferenceDate }
+private enum DeviceTunnelMethod {case inApp,localDevVPN}
+@MainActor private final class EmbeddedTunnelManager {static let shared=EmbeddedTunnelManager();var isRunning=false}
+
 @MainActor private final class TunnelApplication { enum State { case active,inactive,background }; static let shared=TunnelApplication(); var applicationState=State.active }
 private enum StartupDiagnostic { case checking,pairingMissing,tunnelUnavailable }
 @MainActor private final class StartupGate {
@@ -25,17 +30,23 @@ private enum StartupDiagnostic { case checking,pairingMissing,tunnelUnavailable 
  func release() { waiting?.resume();waiting=nil }
 }
 @MainActor private final class StartupFixture {
+ var hasCompletedInitialActivation=true
  var isIDeviceInstallationMode=true;var isConnected=false;var hasPairingFile=true
+ var tunnelMethod=DeviceTunnelMethod.localDevVPN; var automaticAttemptEpoch:UInt64?
+ var preparationTask:Task<Void,Never>?;var transitionDeadline:TimeInterval=0;var isConnectAutomaticallyEnabled=true
+ func _providerIsAvailable()->Bool { true };func _armAttemptTimeout(epoch:UInt64,seconds:Double) {}
+ func _beginTransportRecovery(automatically:Bool=true) { starts += 1 }
  var awaitingInitialActivation=false
  var connectionEpoch:UInt64=0;var activeVerificationID:UUID?
  var connectionPreparation:UUID?;var diagnostic=StartupDiagnostic.tunnelUnavailable
  var isUpdating:Bool { connectionPreparation != nil }
  var profile=true;var starts=0;let gate=StartupGate()
  func _syncPairingRecord() {}
+ func reconcile() async {}
  func _finishTransition(to:StartupState,diagnostic:StartupDiagnostic) { connectionPreparation=nil;self.diagnostic=diagnostic }
  enum StartupState { case disconnected }
  func _hasRequiredTunnelProfile() async -> Bool { await gate.wait();return profile }
- func setConnection(enabled:Bool) { starts += 1 }
+ func setConnection(enabled:Bool,deadline:TimeInterval,automatically:Bool) { starts += 1 }
 '''
 handoff=vpn[vpn.index('// The system callback transfers'):vpn.index('@MainActor', vpn.index('deinit { cancel() }'))]
 preferences=r'''
@@ -118,7 +129,7 @@ final class TunnelOptimizationTests:XCTestCase {
  }
 }
 '''
-pathlib.Path(sys.argv[1],'TunnelOptimizationTests.swift').write_text(head+startup+preferences+load+"\n"+invalidate+"\n"+wait+tests)
+pathlib.Path(sys.argv[1],'TunnelOptimizationTests.swift').write_text(head.replace('@MainActor private final class StartupFixture',reply+'@MainActor private final class StartupFixture')+startup+preferences+load+"\n"+invalidate+"\n"+wait+tests)
 # Execute the actual automation controls against an isolated preferences suite.
 controls='\n'.join(method(device, signature) for signature in [
  'public func setDisconnectWhenIdle(', 'public func setConnectAutomatically(',
@@ -130,17 +141,32 @@ assignments='\n'.join(line.strip().replace('UserDefaults.standard','automationDe
 automation=r'''
 private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UUID().uuidString)!
 @MainActor private final class AutoCellular {
- static let shared=AutoCellular();var isBusy=false
+ static let shared=AutoCellular();var isBusy=false;var isWaitingForManualRecovery=false;var requiresTunnelConnection=false
+ func networkNoLongerNeedsManualRecovery() {}
  func handleApplicationDidBecomeActive() {}
+ func handleApplicationDidEnterBackground() {}
+ func cancelAndRestoreIfNeeded() {}
 }
-@MainActor private final class AutoEmbedded { static let shared=AutoEmbedded();func invalidateConfigurationCache() {} }
+@MainActor private final class AutoEmbedded { static let shared=AutoEmbedded();var isRunning=false;func requestStopIfRunning() {};func invalidateConfigurationCache() {} }
 @MainActor private final class AutoSpoofSession { static var existing: AutoSpoofSession?; var requiresBackgroundExecution = false }
 @MainActor private final class AutoInstaller { static let shared=AutoInstaller();var isInstalling=false }
 @MainActor private final class AutoPairing { static let shared=AutoPairing();var isActive=false }
 @MainActor private final class AutomationFixture {
+ var hasCompletedInitialActivation=false
+ func _signalConnectionWorkChanged() {}
+ var appRefreshConnectionTask:Task<Bool,Never>?;var appRefreshConnectionID:UUID?
  static let disconnectWhenIdleKey="Aether.autoTunnelLifecycle",connectAutomaticallyKey="Aether.connectAutomatically",unresolvedSimulationKey="AutoTestSimulation"
  var isDisconnectWhenIdleEnabled:Bool;var isConnectAutomaticallyEnabled:Bool
- var awaitingInitialActivation=false;var hasPairingFile=true
+ var awaitingInitialActivation=false;var hasPairingFile=true;var requiresInAppTunnelSetup=false
+ var automaticAttemptEpoch:UInt64?;var connectionEpoch:UInt64=0
+ var localDevVPNHandoffGeneration:UUID?;var transitionGeneration:UUID?;var transitionExpectedState:Bool?
+ var hasReturnedFromLocalDevVPN=false;var needsLocalDevVPNCellularRecovery=false;var transitionDeadline:TimeInterval=0
+ func _armAttemptTimeout(epoch:UInt64,seconds:Double) {}
+ func _startTransitionPolling(generation:UUID,expectedState:Bool) {}
+ func reconcile(force:Bool) async {}
+ func _automaticConnectionPrerequisitesReady()->Bool {hasPairingFile && !requiresInAppTunnelSetup}
+ func _finishTransition(to:State,diagnostic:StartupDiagnostic) {state=to;self.diagnostic=diagnostic}
+ func _cancelTransition() {}
  var lastVerifiedAt:TimeInterval=0;var isIDeviceInstallationMode=true;var isConnected=false;var isUpdating=false
  enum State {case disconnected,disconnecting};var state=State.disconnected;var diagnostic=StartupDiagnostic.tunnelUnavailable
  enum Method {case inApp,localDevVPN};var tunnelMethod=Method.inApp
@@ -183,7 +209,7 @@ final class TunnelAutomationTests:XCTestCase {
    automationDefaults.set(disconnect,forKey:AutomationFixture.disconnectWhenIdleKey)
    let fixture=AutomationFixture()
    fixture._restoreInstallationMode();fixture.handleAppForeground()
-   XCTAssertEqual(fixture.starts,connect ? 2 : 0)
+   XCTAssertEqual(fixture.starts,connect ? 1 : 0)
    fixture.isConnected=true;TunnelApplication.shared.applicationState = .background;fixture.handleAppBackground()
    XCTAssertEqual(fixture.stops,disconnect ? 1 : 0)
    fixture.hasActiveTunnelDependencies=true;fixture.handleAppBackground()

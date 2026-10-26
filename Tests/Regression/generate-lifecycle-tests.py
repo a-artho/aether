@@ -15,8 +15,11 @@ spoof = pathlib.Path('Aether/Views/Spoofing/Engine/SpoofSession.swift')
 store = pathlib.Path('Aether/Views/Installed/InstalledAppsStore.swift')
 cellular = pathlib.Path('Aether/Backend/Observable/CellularAssistManager.swift')
 compute = pathlib.Path('Aether/Backend/Server/ServerInstaller+Compute.swift')
+embedded = (repo/'Aether/Backend/Observable/EmbeddedTunnelManager.swift').read_text()
+reply = embedded[embedded.index('private final class TunnelOperationReply'):embedded.index('#if os(iOS)')].replace('awaitTunnelReply', 'awaitLifecycleTunnelReply')
 parts = [r'''
 import Foundation
+@MainActor private final class UIApplication { enum State {case active,background};static let shared=UIApplication();var applicationState=State.active }
 import XCTest
 struct CLLocationCoordinate2D { var latitude: Double; var longitude: Double }
 enum Status: Equatable { case idle, active, connecting, reconnecting, stopping, dropped(String)
@@ -58,8 +61,12 @@ struct Keeper { func start() {} }
  func invoke() async -> Bool { await apply(.init(latitude:2,longitude:2),markRecent:false) }
 ''', method(spoof,'func stop() async'), method(spoof,'private func apply('), r'''
 }
-@MainActor final class DeviceConnectionManager { static let shared=DeviceConnectionManager(); var isConnected=true }
-struct AppInfo {
+@MainActor final class DeviceConnectionManager {
+ static let shared=DeviceConnectionManager(); var isConnected=true
+ func verifyForAppRefresh() async -> Bool {isConnected}
+ func reconcile(force:Bool) async -> Bool {isConnected}
+}
+struct AppInfo: Sendable {
  var name:String { id }
  var id:String
  var CFBundleIdentifier:String? { id }; var CFBundleDisplayName:String? { id }
@@ -70,7 +77,7 @@ enum AppInstallationProvenanceClassifier {
  static func needsProvisioningProfile(_ app:AppInfo) -> Bool { false }
  static func classify(_ app:AppInfo) -> AppInstallationProvenance { .unknown }
 }
-struct ProvisioningProfileInfo {}
+struct ProvisioningProfileInfo: Sendable {}
 @MainActor final class InstallationAppProxy {
  static let gate=Gate(); static var count=0; static var profileCount=0
  static func iconCacheRevision(for id:String) -> String { "" }
@@ -89,24 +96,28 @@ struct ProvisioningProfileInfo {}
  func log(_ message:String,category:String,level:Level = .warning) {}
 }
 @MainActor final class Store {
-	var hasLoadedApps=false; var lastLoadedAt:Date?; var verifiedApps:[AppInfo]?; var initialBrowse:Task<[AppInfo]?,Never>?
+	var hasLoadedApps=false; var lastLoadedAt:Date?; var verifiedApps:[AppInfo]?; var initialBrowse:Task<[AppInfo],Error>?
+ var cancelRead:(()->Void)?;var readID:UUID?;var automaticReadRetryUsed=false
  var iconPrefetchTask:Task<Void,Never>?; var needsTrailingRefresh=false; var refreshGeneration=UUID(); var apps:[AppInfo]=[]; var isLoading=false; var errorMessage:String?
  func prefetchFirstScreenIcons() {}
  func updateApplications(with apps:[AppInfo],profiles:[ProvisioningProfileInfo]) { self.apps=apps }
-''', method(store,'func load() async'), method(store,'func refreshOnForeground() async'), method(store,'func invalidateConnection()'), method(store,'func clear()'), method(store,'func refresh(force:'), r'''
+''', method(store,'func load() async'), method(store,'func refreshOnForeground() async'), method(store,'func invalidateConnection()'), method(store,'func clear()'), method(store,'func refresh(force:'), method(store,'private func verifyConnectionAfterReadFailure('), method(store,'private func readDevice<').replace('awaitTunnelReply', 'awaitLifecycleTunnelReply'), r'''
 }
 @MainActor final class Cellular {
  enum State:Equatable { case idle, checkingSetup, waitingForDataOff, restoringData, establishingTransport }
  enum Phase:Equatable { case idle, waitingForPostInstallVerification, probing(Purpose) }
  enum Purpose { case postInstall }
- enum Command { case on, probe }
+ enum Command { case on, off, probe }
  enum Level { case warning }
+ static let restoreBlockedKey="RegressionOnlyRestoreBlocked"
  static let restoreKey="RegressionOnlyRestoreDebt"
  var helperSetupPhase:Phase = .idle; var state:State = .waitingForDataOff
- var operationID:UUID? = UUID(); var activeCommand:Command?
- var callbackRecoveryTask:Task<Void,Never>?; var isEnabled=true; var didAttemptRestore=false
+ var operationID:UUID? = UUID(); var activeCommand:Command? = .off
+ var callbackRecoveryTask:Task<Void,Never>?;var callbackRecoveryDeadline:TimeInterval?; var isEnabled=true; var didAttemptRestore=false
  var launched:[Command]=[]
  var isBusy:Bool { state != .idle }
+ func _finishHelperSetupFailure(_ message:String) { _clearActiveOperation(); state = .idle }
+ func _finishRuntimeFailure(_ message:String) { _clearActiveOperation(); state = .idle }
  func _shortcutsAvailable()->Bool { true }; func _disableForMissingShortcuts() {}
  func _log(_ message:String,level:Level) {}
  func _startShortcut(_ command:Command) { launched.append(command); operationID=UUID(); activeCommand=command }
@@ -279,4 +290,4 @@ final class LifecycleRegressionTests:XCTestCase {
  }
 }
 ''')
-(out/'LifecycleRegressionTests.swift').write_text('\n'.join(parts))
+(out/'LifecycleRegressionTests.swift').write_text('\n'.join(parts)+'\n'+reply)

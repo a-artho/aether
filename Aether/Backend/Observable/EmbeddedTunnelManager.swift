@@ -7,6 +7,58 @@ import Combine
 import Foundation
 import IDeviceSwift
 
+/// System callbacks and native cleanup may outlive the caller. Resolve once,
+/// including cancellation/timeout, and ignore any eventual obsolete callback.
+private final class TunnelOperationReply<Value: Sendable>: @unchecked Sendable {
+	private let lock = NSLock()
+	private var continuation: CheckedContinuation<Value, Error>?
+	private var result: Result<Value, Error>?
+	private var timeoutTask: Task<Void, Never>?
+
+	func install(_ continuation: CheckedContinuation<Value, Error>, timeout: Double) {
+		lock.lock()
+		if let result {
+			lock.unlock()
+			continuation.resume(with: result)
+			return
+		}
+		self.continuation = continuation
+		timeoutTask = Task.detached { [weak self] in
+			do { try await Task.sleep(for: .seconds(timeout)) } catch { return }
+			self?.complete(.failure(NSError(domain: "Aether.Tunnel", code: 1,
+				userInfo: [NSLocalizedDescriptionKey: "The device connection timed out. Retry connecting."])))
+		}
+		lock.unlock()
+	}
+
+	func complete(_ result: Result<Value, Error>) {
+		lock.lock()
+		guard self.result == nil else { lock.unlock(); return }
+		self.result = result
+		let continuation = self.continuation
+		self.continuation = nil
+		let timeout = timeoutTask
+		timeoutTask = nil
+		lock.unlock()
+		timeout?.cancel()
+		continuation?.resume(with: result)
+	}
+}
+
+@MainActor
+func awaitTunnelReply<Value: Sendable>(timeout: Double = 4,
+	_ request: (@escaping @Sendable (Result<Value, Error>) -> Void) -> Void
+) async throws -> Value {
+	let reply = TunnelOperationReply<Value>()
+	return try await withTaskCancellationHandler {
+		try await withCheckedThrowingContinuation { continuation in
+			reply.install(continuation, timeout: timeout)
+			guard !Task.isCancelled else { reply.complete(.failure(CancellationError())); return }
+			request { reply.complete($0) }
+		}
+	} onCancel: { reply.complete(.failure(CancellationError())) }
+}
+
 #if os(iOS) && !targetEnvironment(macCatalyst)
 import NetworkExtension
 #endif
@@ -157,9 +209,42 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		return false
 	}
 
+	public var isRunning: Bool {
+		#if os(iOS) && !targetEnvironment(macCatalyst)
+		switch manager?.connection.status {
+		case .connected?, .connecting?, .reasserting?: return true
+		default: return false
+		}
+		#else
+		return isConnected
+		#endif
+	}
+
+	public var isProviderAvailable: Bool {
+		#if targetEnvironment(simulator)
+		return true
+		#elseif os(iOS) && !targetEnvironment(macCatalyst)
+		return (try? discoverProviderIdentifier()) != nil
+		#else
+		return false
+		#endif
+	}
+
+	/// Send a superseding stop without waiting for preferences or RSD locks.
+	public func requestStopIfRunning() {
+		#if os(iOS) && !targetEnvironment(macCatalyst)
+		guard let manager else { return }
+		switch manager.connection.status {
+		case .connected, .connecting, .reasserting:
+			manager.connection.stopVPNTunnel()
+		default: break
+		}
+		#endif
+	}
+
 	/// Checks whether Aether already has a saved tunnel profile without creating
 	/// one or triggering iOS's VPN-profile approval prompt.
-	public func hasSavedConfiguration() async -> Bool {
+	public func hasSavedConfiguration() async throws -> Bool {
 		#if targetEnvironment(simulator)
 		return true
 		#elseif os(iOS) && !targetEnvironment(macCatalyst)
@@ -171,7 +256,7 @@ public final class EmbeddedTunnelManager: ObservableObject {
 			}
 		} catch {
 			_log("Could not check for an in-app tunnel configuration: \(error.localizedDescription)", level: .warning)
-			return false
+			throw error
 		}
 		#else
 		return false
@@ -188,9 +273,11 @@ public final class EmbeddedTunnelManager: ObservableObject {
 
 	public func refresh() async {
 		#if os(iOS) && !targetEnvironment(macCatalyst)
+		let revision = managersRevision
 		do {
 			let providerIdentifier = try discoverProviderIdentifier()
 			let managers = try await loadManagers()
+			guard !Task.isCancelled, managersRevision == revision else { return }
 			let matching = managers.filter {
 				Self.isAetherManaged($0)
 					&& ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == providerIdentifier
@@ -198,13 +285,15 @@ public final class EmbeddedTunnelManager: ObservableObject {
 			manager = matching.first(where: { $0.connection.status == .connected || $0.connection.status == .connecting }) ?? matching.first
 			updateState(for: manager?.connection.status ?? .disconnected)
 		} catch {
+			guard !Task.isCancelled, managersRevision == revision else { return }
 			_setState(.error(error.localizedDescription))
 		}
 		#endif
 	}
 
 	@discardableResult
-	public func prepare() async throws -> Bool {
+	public func prepare(shouldProceed: () -> Bool = { true }) async throws -> Bool {
+		guard shouldProceed(), !Task.isCancelled else { throw CancellationError() }
 		#if targetEnvironment(simulator)
 		state = .disconnected
 		return true
@@ -212,6 +301,7 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		state = .preparing
 		let providerIdentifier = try discoverProviderIdentifier()
 		let managers = try await loadManagers()
+		guard shouldProceed(), !Task.isCancelled else { throw CancellationError() }
 		let aetherManagers = managers.filter(Self.isAetherManaged)
 		let matchingManagers = aetherManagers.filter {
 			($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == providerIdentifier
@@ -227,8 +317,10 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		}) ?? matchingManagers.first
 
 		for staleManager in aetherManagers where staleManager !== managerToKeep {
+			guard shouldProceed(), !Task.isCancelled else { throw CancellationError() }
 			try? await remove(staleManager)
 		}
+		guard shouldProceed(), !Task.isCancelled else { throw CancellationError() }
 		if aetherManagers.count > 1 {
 			_log("Removed stale in-app tunnel configurations.", level: .warning)
 		}
@@ -240,7 +332,9 @@ public final class EmbeddedTunnelManager: ObservableObject {
 			let newManager = NETunnelProviderManager()
 			configure(newManager, providerIdentifier: providerIdentifier)
 			try await save(newManager)
+			guard shouldProceed(), !Task.isCancelled else { throw CancellationError() }
 			try await load(newManager)
+			guard shouldProceed(), !Task.isCancelled else { throw CancellationError() }
 			selectedManager = newManager
 			_log("Created the in-app tunnel configuration.")
 		}
@@ -261,9 +355,12 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		state = .connected
 		return
 		#elseif os(iOS) && !targetEnvironment(macCatalyst)
-		_ = try await prepare()
+		_ = try await prepare(shouldProceed: shouldStart)
 		guard shouldStart() else { throw CancellationError() }
 		guard let manager else { throw EmbeddedTunnelError.invalidConfiguration }
+		if manager.connection.status == .disconnecting {
+			guard await waitForDisconnected(), shouldStart() else { throw CancellationError() }
+		}
 
 		switch manager.connection.status {
 		case .connected:
@@ -276,6 +373,7 @@ public final class EmbeddedTunnelManager: ObservableObject {
 			if !manager.isEnabled {
 				manager.isEnabled = true
 				try await save(manager)
+				guard shouldStart(), !Task.isCancelled else { throw CancellationError() }
 				try await load(manager)
 			}
 			guard shouldStart() else { throw CancellationError() }
@@ -301,7 +399,8 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		#endif
 	}
 
-	public func stop() async {
+	public func stop(shouldProceed: () -> Bool = { true }) async {
+		guard shouldProceed(), !Task.isCancelled else { return }
 		_log("In-app tunnel stop requested.")
 		#if targetEnvironment(simulator)
 		state = .disconnected
@@ -311,6 +410,7 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		// supersedes it. Find an existing running profile even if prepare() has
 		// not yet published its manager. This does not create a VPN profile.
 		if manager == nil { await refresh() }
+		guard shouldProceed(), !Task.isCancelled else { return }
 		guard let manager else {
 			state = .disconnected
 			return
@@ -321,7 +421,9 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		}
 		state = .disconnecting
 		manager.connection.stopVPNTunnel()
-		if await waitForDisconnected() {
+		let disconnected = await waitForDisconnected()
+		guard shouldProceed(), !Task.isCancelled else { return }
+		if disconnected {
 			_setState(.disconnected)
 		} else {
 			_setState(.error(.localized("The Aether tunnel did not stop in time.")))
@@ -388,14 +490,17 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		)
 	}
 
-	public func resetConfiguration() async {
+	public func resetConfiguration(shouldProceed: () -> Bool = { true }) async {
 		_log("Resetting the in-app tunnel configuration.", level: .warning)
 		#if os(iOS) && !targetEnvironment(macCatalyst)
 		let managers = (try? await loadManagers()) ?? []
+		guard shouldProceed(), !Task.isCancelled else { return }
 		for manager in managers where Self.isAetherManaged(manager) {
+			guard shouldProceed(), !Task.isCancelled else { return }
 			manager.connection.stopVPNTunnel()
 			try? await remove(manager)
 		}
+		guard shouldProceed(), !Task.isCancelled else { return }
 		self.manager = nil
 		_setState(.disconnected)
 		#endif
@@ -474,7 +579,7 @@ private extension EmbeddedTunnelManager {
 	}
 
 	func waitForConnected() async -> Bool {
-		await waitForStatus(.connected, timeout: 4_000_000_000)
+		await waitForStatus(.connected, timeout: 6_000_000_000)
 	}
 
 	func waitForDisconnected() async -> Bool {
@@ -521,10 +626,10 @@ private extension EmbeddedTunnelManager {
 		let revision = managersRevision
 		let id = UUID()
 		let task = Task<TunnelManagersHandoff, Error> {
-			try await withCheckedThrowingContinuation { continuation in
+			try await awaitTunnelReply { complete in
 				NETunnelProviderManager.loadAllFromPreferences { managers, error in
-					if let error { continuation.resume(throwing: error) }
-					else { continuation.resume(returning: TunnelManagersHandoff(managers ?? [])) }
+					if let error { complete(.failure(error)) }
+					else { complete(.success(TunnelManagersHandoff(managers ?? []))) }
 				}
 			}
 		}
@@ -553,12 +658,12 @@ private extension EmbeddedTunnelManager {
 	}
 
 	func load(_ manager: NETunnelProviderManager) async throws {
-		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+		try await awaitTunnelReply { (complete: @escaping @Sendable (Result<Void, Error>) -> Void) in
 			manager.loadFromPreferences { error in
 				if let error {
-					continuation.resume(throwing: error)
+					complete(.failure(error))
 				} else {
-					continuation.resume()
+					complete(.success(()))
 				}
 			}
 		}
@@ -584,15 +689,15 @@ private extension EmbeddedTunnelManager {
 			try manager.connection.startVPNTunnel(options: options)
 		} catch {
 			guard shouldStart() else { throw CancellationError() }
-			// A re-signed update can leave an old provider identifier in the
-			// preferences. Repair only Aether's marked configuration, then retry.
-			_log("Repairing the in-app tunnel configuration after a start failure.", level: .warning)
-			await resetConfiguration()
+			let failure = error as NSError
+			guard failure.domain == NEVPNErrorDomain,
+				failure.code == NEVPNError.configurationStale.rawValue else { throw error }
+			// Only stale preferences warrant one reload. Routing, permissions and
+			// provider failures must never delete a valid profile or re-prompt.
+			_log("Reloading stale VPN preferences before one retry.", level: .notice)
+			try await load(manager)
 			guard shouldStart() else { throw CancellationError() }
-			_ = try await prepare()
-			guard shouldStart() else { throw CancellationError() }
-			guard let repairedManager = self.manager else { throw error }
-			try repairedManager.connection.startVPNTunnel(options: options)
+			try manager.connection.startVPNTunnel(options: options)
 		}
 	}
 

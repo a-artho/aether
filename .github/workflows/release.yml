@@ -37,10 +37,7 @@ jobs:
           swift --version
 
       - name: Regression checks
-        run: |
-          python3 Tests/Regression/run-release-checks.py
-          python3 Tests/Regression/run-aether-update-checks.py
-          bash Tests/Regression/run.sh
+        run: bash Tests/Regression/run-release-gate.sh
 
       - name: Prepare native pairing library
         env:

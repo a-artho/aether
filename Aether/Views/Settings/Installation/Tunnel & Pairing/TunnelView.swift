@@ -207,6 +207,7 @@ struct TunnelView: View {
 			)) {
 				SettingsRowLabel(.localized("Disconnect When Idle"), systemImage: "moon", backgroundColor: .indigo)
 			}
+			.disabled(connection.tunnelMethod == .localDevVPN)
 		} header: {
 			Text(.localized("Automation"))
 		} footer: {

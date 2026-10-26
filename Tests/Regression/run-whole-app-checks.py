@@ -105,23 +105,8 @@ final class NativeProxy:@unchecked Sendable {
 '''
 s += declaration('IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/InstallationAppProxy.swift','public func fetchApps(').replace('public func','func',1)+'\n}\n'
 s += 'struct Search {var searchText:String\n' +declaration('Aether/Views/Library/LibraryView.swift','private func matchesSearch(').replace('private func','func',1)+'\n}\n'
-s += r'''
-struct PairingRecordIdentity:Equatable,Sendable {let id:String}
-enum State {case connected,disconnected}
-enum Diagnostic {case ready,checking}
-enum Level {case debug}
-func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
-@MainActor final class CellularAssistManager {static let shared=CellularAssistManager();var isAutomaticRecoveryInProgress=false}
-@MainActor final class ReadyDriver {
- var activeVerificationID:UUID?;var transitionGeneration:UUID?;var currentRecord:PairingRecordIdentity?
- var state:State = .disconnected;var diagnostic:Diagnostic = .checking;var lastVerifiedAt=0.0;var lastVerifiedRecord:PairingRecordIdentity?
- func _recordStillMatches(_ record:PairingRecordIdentity?)->Bool {currentRecord==record}
- func _log(_ text:String,level:Level){}
-'''
-s += declaration('Aether/Backend/Observable/DeviceConnectionManager.swift','private func _publishVerifiedTransport(').replace('private func','func',1)+'\n'
-connection=(repo/'Aether/Backend/Observable/DeviceConnectionManager.swift').read_text()
-callback=connection[connection.index('let publishReadiness: @Sendable'):connection.index('\n\t\tlet verification = Task.detached',connection.index('let publishReadiness: @Sendable'))]
-s += 'func callback(includeApps:Bool,verificationID:UUID,reconciliationGeneration:UUID?,checkedRecord:PairingRecordIdentity?,cellularAssistTransaction:Bool,verificationStarted:Double)->@Sendable ()->Void {\n'+callback+'\nreturn publishReadiness\n}\n}\n'
+# Transport readiness now runs through the production _reconcile method in
+# run-foreground-recovery-checks.py; the removed helper no longer exists.
 
 library = (repo/'Aether/Views/Library/LibraryView.swift').read_text()
 prelude = library[library.index('let sections: [LibrarySection] ='):library.index('let layout = LibraryLayout')]
@@ -145,20 +130,6 @@ func check(_ value:@autoclosure ()->Bool,_ message:String){precondition(value(),
   check(unverifiedRows.results().0==1,"Verified updates have a section")
   unverifiedRows.updates.hasVerifiedUpdates=false
   check(unverifiedRows.results().0==0,"Unverified retained matches must not show an Updates section")
-  let readiness=ReadyDriver(), verificationID=UUID(), record=PairingRecordIdentity(id:"one")
-  readiness.activeVerificationID=verificationID;readiness.currentRecord=record
-  readiness._publishVerifiedTransport(verificationID:UUID(),generation:nil,record:record,cellularAssistTransaction:false,startedAt:0)
-  check(readiness.state == .disconnected,"Obsolete verification cannot publish Connected")
-  readiness._publishVerifiedTransport(verificationID:verificationID,generation:nil,record:record,cellularAssistTransaction:false,startedAt:0)
-  check(readiness.state == .connected,"Authenticated transport publishes before enumeration")
-  readiness.state = .disconnected
-  let callback=readiness.callback(includeApps:true,verificationID:verificationID,reconciliationGeneration:nil,checkedRecord:record,cellularAssistTransaction:false,verificationStarted:0)
-  await Task.detached {callback()}.value
-  for _ in 0..<20 {await Task.yield()}
-  check(readiness.state == .connected,"Detached authenticated callback publishes on MainActor")
-  readiness.state = .disconnected;readiness.activeVerificationID=nil
-  readiness._publishVerifiedTransport(verificationID:verificationID,generation:nil,record:record,cellularAssistTransaction:false,startedAt:0)
-  check(readiness.state == .disconnected,"Late readiness cannot undo a completed disconnect")
   let driver=Driver(), saved=Download("saved"), early=NetworkTask("saved")
   driver.downloads=[saved];driver._restorableTransferIDs=[saved.id];driver._restoringTransferIDs=[saved.id]
   check(driver._getDownloadTask(early) === saved && saved.task === early,"Early restored callback adopts saved attempt synchronously")

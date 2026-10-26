@@ -5,6 +5,10 @@ import UIKit
 import Combine
 import IDeviceSwift
 
+private enum UnifiedImportAnimationMetrics {
+	static let actionMorphDuration: TimeInterval = 0.35
+}
+
 @MainActor
 struct UnifiedImportEntry: Identifiable {
 	nonisolated let id: String
@@ -125,8 +129,11 @@ final class UnifiedImportsController: ObservableObject {
 	@Published private(set) var deletingRows: Set<String> = []
 	@Published private(set) var cancellingRows: Set<String> = []
 	@Published private(set) var revision: UInt64 = 0
+	@Published private(set) var hasLoadedInitialRows = false
 	private var rowSignatures: [String] = []
 	@Published private(set) var rows: [UnifiedImportEntry] = []
+	private var pendingAutoDeleteUUIDs = Set<String>()
+	private var autoDeleteSettleTasks: [String: Task<Void, Never>] = [:]
 
 	var visibleRows: [UnifiedImportEntry] {
 		rows.filter { !deletingRows.contains($0.id) && !cancellingRows.contains($0.id) }
@@ -135,10 +142,54 @@ final class UnifiedImportsController: ObservableObject {
 
 	func updateRows(_ rows: [UnifiedImportEntry]) {
 		let signatures = rows.map { $0.signature }
-		guard rowSignatures != signatures else { return }
-		rowSignatures = signatures
-		self.rows = rows
-		revision &+= 1
+		guard !hasLoadedInitialRows || rowSignatures != signatures else {
+			_schedulePendingAutoDeletes()
+			return
+		}
+		let publish = {
+			self.rowSignatures = signatures
+			self.rows = rows
+			self.revision &+= 1
+			if !self.hasLoadedInitialRows { self.hasLoadedInitialRows = true }
+			self._schedulePendingAutoDeletes()
+		}
+		if hasLoadedInitialRows {
+			publish()
+		} else {
+			// Restored artifacts establish the initial screen, not a live insertion.
+			// Disable implicit animations even as this snapshot enables later ones.
+			var transaction = Transaction(animation: nil)
+			transaction.disablesAnimations = true
+			withTransaction(transaction, publish)
+		}
+	}
+
+	func requestAutoDelete(uuid: String) {
+		guard !uuid.isEmpty else { return }
+		pendingAutoDeleteUUIDs.insert(uuid)
+		_schedulePendingAutoDeletes()
+	}
+
+	private func _schedulePendingAutoDeletes() {
+		for uuid in pendingAutoDeleteUUIDs where autoDeleteSettleTasks[uuid] == nil {
+			guard let entry = rows.first(where: { $0.app?.uuid == uuid }), entry.operation == nil else { continue }
+			guard !isProtected(entry) else { continue }
+			autoDeleteSettleTasks[uuid] = Task { @MainActor [weak self] in
+				do {
+					try await Task.sleep(nanoseconds: UInt64(UnifiedImportAnimationMetrics.actionMorphDuration * 1_000_000_000))
+				} catch { return }
+				guard let self else { return }
+				self.autoDeleteSettleTasks[uuid] = nil
+				guard self.pendingAutoDeleteUUIDs.contains(uuid) else { return }
+				guard let current = self.rows.first(where: { $0.app?.uuid == uuid }) else {
+					self.pendingAutoDeleteUUIDs.remove(uuid)
+					return
+				}
+				guard current.operation == nil, !self.isProtected(current) else { return }
+				self.pendingAutoDeleteUUIDs.remove(uuid)
+				self.delete([current])
+			}
+		}
 	}
 
 	func isProtected(_ row: UnifiedImportEntry) -> Bool {
@@ -266,7 +317,13 @@ struct UnifiedImportsDataSource: ViewModifier {
             exports: exports.exports.map(\.id), lineage: index.lineage)
     }
     func body(content: Content) -> some View {
-        content.onChange(of: inputs, initial: true) { _, _ in
+		content
+		.onReceive(NotificationCenter.default.publisher(for: AppInstallationManager.importAutoDeleteNotification)) { notification in
+			if let uuid = notification.object as? String {
+				controller.requestAutoDelete(uuid: uuid)
+			}
+		}
+		.onChange(of: inputs, initial: true) { _, _ in
             controller.updateRows(projectedRows)
             let retired = downloads.committedImports.keys.filter { index.lineage.originalDates[$0] == nil }
             downloads.acknowledgeImports(Set(imported.compactMap(\.uuid)).union(retired))
@@ -923,7 +980,7 @@ private struct UnifiedImportAccessory: View {
 		let actionStage = isActionStage
 		let progressStage = isProgressStage
 		let pillTitle = actionTitle
-		let morphAnimation: Animation? = reduceMotion ? nil : .easeInOut(duration: 0.35)
+		let morphAnimation: Animation? = reduceMotion ? nil : .easeInOut(duration: UnifiedImportAnimationMetrics.actionMorphDuration)
 
 		return actionWidthReservation
 			.overlay {

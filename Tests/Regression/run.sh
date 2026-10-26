@@ -2,6 +2,7 @@
 set -euo pipefail
 test_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$test_dir/../.." && pwd)"
+python3 "$test_dir/run-regression-entrypoint-checks.py"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/aether-regression.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/Sources/Core" "$scratch/Tests/RegressionTests"
@@ -45,6 +46,9 @@ for check in run-tunnel-callback-checks.py run-sendable-value-checks.py run-audi
   python3 "$test_dir/$check"
 done
 python3 "$test_dir/run-aether-update-checks.py"
+python3 "$test_dir/run-self-update-checks.py"
+python3 "$test_dir/run-self-update-handoff-checks.py"
+python3 "$test_dir/run-self-update-queue-checks.py"
 
 python3 "$test_dir/run-native-signing-progress-checks.py"
 python3 "$test_dir/run-server-payload-progress-checks.py"
@@ -74,4 +78,11 @@ python3 "$test_dir/run-download-recovery-checks.py"
 python3 "$test_dir/run-sign-only-handoff-checks.py"
 
 python3 "$test_dir/run-library-presentation-checks.py"
+python3 "$test_dir/run-library-startup-checks.py"
+python3 "$test_dir/run-tunnel-lifecycle-checks.py"
+python3 "$test_dir/run-cellular-lifecycle-checks.py"
+python3 "$test_dir/run-cellular-verification-checks.py"
+python3 "$test_dir/run-refresh-verification-checks.py"
+python3 "$test_dir/run-followup-audit-checks.py"
+python3 "$test_dir/run-settings-search-checks.py"
 python3 "$test_dir/run-navigation-hardening-checks.py"

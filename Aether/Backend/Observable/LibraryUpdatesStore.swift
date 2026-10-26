@@ -85,6 +85,7 @@ final class LibraryUpdatesStore: ObservableObject {
 	func activate() {
 		guard !isForeground else { return }
 		isForeground = true
+		InstalledAppsStore.shared.beginRefreshEpisode()
 		request(.activation)
 	}
 
@@ -94,7 +95,7 @@ final class LibraryUpdatesStore: ObservableObject {
 		cancelRefresh()
 		clearAnnouncement()
 		let connection = DeviceConnectionManager.shared
-		if installationMode == 1, connection.isDisconnectWhenIdleEnabled, !connection.hasActiveTunnelDependencies {
+		if installationMode == 1, connection.tunnelMethod == .inApp, connection.isDisconnectWhenIdleEnabled, !connection.hasActiveTunnelDependencies {
 			invalidateVerification()
 			InstalledAppsStore.shared.invalidateConnection()
 		}
@@ -103,6 +104,7 @@ final class LibraryUpdatesStore: ObservableObject {
 	/// Manual pulls always bypass data freshness; repeated pulls join the owner.
 	func startRefresh() {
 		guard isForeground, manualRepositories == nil else { return }
+		InstalledAppsStore.shared.beginRefreshEpisode()
 		manualRepositories = SourcesViewModel.shared.startRefresh(sources)
 		deviceRefreshRequired = true
 		request(.manual)
@@ -110,6 +112,7 @@ final class LibraryUpdatesStore: ObservableObject {
 
 	/// Installation completion requires a new device snapshot, not a repo fetch.
 	func refreshInstalledApps() {
+		InstalledAppsStore.shared.beginRefreshEpisode()
 		deviceRefreshRequired = true
 		request(.deviceChanged)
 	}
@@ -235,24 +238,11 @@ final class LibraryUpdatesStore: ObservableObject {
 		guard installationMode == 1 else { return false }
 		let connection = DeviceConnectionManager.shared
 		let cellular = CellularAssistManager.shared
-		// Subscribe before starting/joining connection work. Buffered wakeups avoid
-		// missing completion between inspecting state and suspending; no polling.
-		let (changes, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-		let observation = Publishers.Merge(connection.objectWillChange, cellular.objectWillChange)
-			.sink { continuation.yield(()) }
-		defer { observation.cancel(); continuation.finish() }
-		if reason != .inputs { connection.connectAutomaticallyIfNeeded() }
-		continuation.yield(())
-		for await _ in changes {
-			guard !Task.isCancelled else { return false }
-			if connection.isConnected, !connection.isUpdating, !connection.isAwaitingAutomaticConnection, !cellular.isBusy { break }
-			guard connection.isUpdating || connection.isAwaitingAutomaticConnection || cellular.isBusy else {
-				phase = .idle
-				return false
-			}
-			phase = .connecting
-		}
-		guard !Task.isCancelled, connection.isConnected else { return false }
+		// The connection manager owns verification, recovery and handoff waits.
+		// Library never treats a previously published Connected value as proof.
+		phase = .connecting
+		guard await connection.verifyForAppRefresh(), !Task.isCancelled,
+			!connection.isUpdating, !cellular.isBusy else { return false }
 		let installed = InstalledAppsStore.shared
 		if reason == .inputs, !installed.hasLoadedApps, !installed.isLoading { return false }
 		if phase != .checking { checkingStarted = .now; phase = .checking }
@@ -386,7 +376,10 @@ struct LibraryLifecycleModifier: ViewModifier {
 			.onChange(of: sourceIdentities, initial: true) { _, _ in updates.setSources(Array(sources)) }
 			.onChange(of: installationMethod, initial: true) { _, mode in updates.setInstallationMode(mode) }
 			.onChange(of: scenePhase, initial: true) { _, phase in
-				if phase == .active { updates.activate() }
+				if phase == .active {
+					DeviceConnectionManager.shared.handleInitialActivationIfNeeded()
+					updates.activate()
+				}
 			}
 			.onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
 				if UIApplication.shared.applicationState == .background { updates.didEnterBackground() }

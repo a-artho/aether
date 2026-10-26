@@ -146,7 +146,7 @@ public struct NBSection<Content, Footer>: View
 		Section {
 			if !isStickyHeader {
 				header
-					.listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+					.listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 4, trailing: 20))
 					.listRowSeparator(.hidden)
 					.listRowBackground(Color.clear)
 					.accessibilityAddTraits(.isHeader)

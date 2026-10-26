@@ -126,7 +126,10 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 	@Published private(set) var hasLoadedApps = false
 	private var lastLoadedAt: Date?
 	private var verifiedApps: [AppInfo]?
-	private var initialBrowse: Task<[AppInfo]?, Never>?
+	private var initialBrowse: Task<[AppInfo], Error>?
+	private var cancelRead: (() -> Void)?
+	private var readID: UUID?
+	private var automaticReadRetryUsed = false
 	private var needsTrailingRefresh = false
 	private var refreshGeneration = UUID()
 	private var iconPrefetchTask: Task<Void, Never>?
@@ -205,7 +208,11 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 
 	func stageVerifiedApps(_ apps: [AppInfo]) { verifiedApps = apps }
 
-	func stageInitialBrowse(_ task: Task<[AppInfo]?, Never>) {
+	/// A genuine activation/manual action gets a fresh retry allowance. Internal
+	/// reconnection publications stay in the existing episode and cannot loop.
+	func beginRefreshEpisode() { automaticReadRetryUsed = false }
+
+	func stageInitialBrowse(_ task: Task<[AppInfo], Error>) {
 		initialBrowse?.cancel()
 		initialBrowse = task
 	}
@@ -218,6 +225,9 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 
 	/// A disconnected device invalidates freshness, not its last verified apps.
 	func invalidateConnection() {
+		cancelRead?()
+		cancelRead = nil
+		readID = nil
 		initialBrowse?.cancel()
 		initialBrowse = nil
 		verifiedApps = nil
@@ -247,6 +257,11 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		try await AppLifecycleService.uninstallApp(bundleIdentifier: app.bundleIdentifier)
 		installations.forgetInstallations(bundleIdentifier: app.bundleIdentifier)
 		// A refresh may have fetched this app before the uninstall completed.
+		cancelRead?()
+		cancelRead = nil
+		readID = nil
+		initialBrowse?.cancel()
+		initialBrowse = nil
 		refreshGeneration = UUID()
 		isLoading = false
 		needsTrailingRefresh = false
@@ -257,7 +272,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 		}
 	}
 
-	func refresh(force: Bool = false) async {
+	func refresh(force: Bool = false, retryingAfterRecovery: Bool = false) async {
 		guard DeviceConnectionManager.shared.isConnected else {
 			invalidateConnection()
 			return
@@ -266,6 +281,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			needsTrailingRefresh = needsTrailingRefresh || force
 			return
 		}
+		if !retryingAfterRecovery, errorMessage != nil { automaticReadRetryUsed = false }
 		let generation = UUID()
 		refreshGeneration = generation
 		isLoading = true
@@ -284,20 +300,24 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			}
 		}
 
-		let proxy = InstallationAppProxy()
 
 		do {
 			let lookupStarted = ProcessInfo.processInfo.systemUptime
 			let pending = initialBrowse
 			initialBrowse = nil
-			let pendingApps = force ? nil : await pending?.value
+			let pendingApps: [AppInfo]?
+			if let pending, !force {
+				pendingApps = try await readDevice {
+					try await withTaskCancellationHandler { try await pending.value } onCancel: { pending.cancel() }
+				}
+			} else { pending?.cancel(); pendingApps = nil }
 			try Task.checkCancellation()
 			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected else { return }
 			let staged = verifiedApps ?? pendingApps
 			verifiedApps = nil
 			let installedApps: [AppInfo]
 			if let staged, !force { installedApps = staged }
-			else { installedApps = try await proxy.fetchApps(applicationType: "User", lightweight: true) }
+			else { installedApps = try await readDevice { try await InstallationAppProxy().fetchApps(applicationType: "User", lightweight: true) } }
 			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
 			DebugLogManager.shared.log("App lookup seconds=\(ProcessInfo.processInfo.systemUptime - lookupStarted) reusedVerification=\(staged != nil && !force) count=\(installedApps.count).", category: "Device", level: .debug)
 			// Start the first screen's icons while any fallback profiles are loading.
@@ -310,7 +330,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			if installedApps.contains(where: AppInstallationProvenanceClassifier.needsProvisioningProfile) {
 				do {
 					let profilesStarted = ProcessInfo.processInfo.systemUptime
-					profiles = try await proxy.provisioningProfiles()
+					profiles = try await readDevice { try await InstallationAppProxy().provisioningProfiles() }
 					DebugLogManager.shared.log("Profile fallback seconds=\(ProcessInfo.processInfo.systemUptime - profilesStarted).", category: "Device", level: .debug)
 					DebugLogManager.shared.log(
 						"Loaded \(profiles.count) provisioning profile\(profiles.count == 1 ? "" : "s") from the device.",
@@ -320,6 +340,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 					// An obsolete lookup must not overwrite a newer session's status.
 					guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected,
 						!Task.isCancelled, !(error is CancellationError) else { return }
+					guard await verifyConnectionAfterReadFailure(generation: generation) else { return }
 					DebugLogManager.shared.log(
 						"Could not load provisioning profiles: \(error.localizedDescription)",
 						category: "Device",
@@ -347,6 +368,7 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			}
 			prefetchFirstScreenIcons()
 			hasLoadedApps = true
+			if !profileFallbackFailed { automaticReadRetryUsed = false }
 			lastLoadedAt = Date()
 			DebugLogManager.shared.log(
 				"Loaded \(apps.count) sideloaded app\(apps.count == 1 ? "" : "s") from the device.",
@@ -356,12 +378,51 @@ final class InstalledAppsStore: NSObject, ObservableObject {
 			return
 		} catch {
 			guard refreshGeneration == generation, DeviceConnectionManager.shared.isConnected, !Task.isCancelled else { return }
+			let mayRetry = !automaticReadRetryUsed
+			guard await verifyConnectionAfterReadFailure(generation: generation) else { return }
+			if mayRetry {
+				isLoading = false
+				await refresh(force: true, retryingAfterRecovery: true)
+				return
+			}
 			errorMessage = error.localizedDescription
 			DebugLogManager.shared.log(
 				"Could not load sideloaded apps: \(error.localizedDescription)",
 				category: "Device",
 				level: .error
 			)
+		}
+	}
+
+	/// Transport can disappear after verification but before the browse finishes.
+	/// Only report an app-service error if the shared connection is still valid.
+	private func verifyConnectionAfterReadFailure(generation: UUID) async -> Bool {
+		let connection = DeviceConnectionManager.shared
+		let verified: Bool
+		if automaticReadRetryUsed { verified = await connection.reconcile(force: true) }
+		else {
+			automaticReadRetryUsed = true
+			verified = await connection.verifyForAppRefresh()
+		}
+		return verified && refreshGeneration == generation && !Task.isCancelled
+	}
+
+	/// Native cancellation is cooperative; the reply releases the UI immediately
+	/// on disconnect/timeout even if an old native call takes longer to unwind.
+	private func readDevice<Value: Sendable>(_ operation: @escaping @MainActor () async throws -> Value) async throws -> Value {
+		let id = UUID()
+		readID = id
+		let worker = Task { try await operation() }
+		defer {
+			worker.cancel()
+			if readID == id { readID = nil; cancelRead = nil }
+		}
+		return try await awaitTunnelReply(timeout: 4) { complete in
+			cancelRead = { worker.cancel(); complete(.failure(CancellationError())) }
+			Task {
+				do { complete(.success(try await worker.value)) }
+				catch { complete(.failure(error)) }
+			}
 		}
 	}
 

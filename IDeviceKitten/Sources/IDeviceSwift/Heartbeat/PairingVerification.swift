@@ -47,13 +47,16 @@ public struct DeviceConnectionCheck: Sendable {
 	public let errorCode: Int32?
 	public let errorSubCode: Int32?
 	public let apps: [AppInfo]?
+	public let isTransientTransportFailure: Bool
 
-	public init(isConnected: Bool, error: String? = nil, errorCode: Int32? = nil, errorSubCode: Int32? = nil, apps: [AppInfo]? = nil) {
+	public init(isConnected: Bool, error: String? = nil, errorCode: Int32? = nil, errorSubCode: Int32? = nil, apps: [AppInfo]? = nil, isTransientTransportFailure: Bool = false) {
 		self.isConnected = isConnected
 		self.error = error
 		self.errorCode = errorCode
 		self.errorSubCode = errorSubCode
 		self.apps = apps
+		self.isTransientTransportFailure = !isConnected && (isTransientTransportFailure
+			|| errorCode.map { [1, 3, 4, 17, 19, 21, 109].contains($0) } == true)
 	}
 
 	/// idevice 0.1.68: InvalidHostID=18; RemotePairing=103, PairVerifyFailed=5.

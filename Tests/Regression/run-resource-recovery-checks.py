@@ -21,6 +21,7 @@ struct Heart{let ipAddress="fixture"}
  static let shared=DeviceConnectionManager();var shouldFail=true;var releases=0
  func ensureConnected() async throws {if shouldFail{throw Failure()}}
  func handleAppBackground(){releases+=1}
+ func cellularRecoveryDidFinish(){}
 }
 @MainActor final class Session {
  var status:Status = .active {didSet{handleStatusChange()}};var operationGeneration=0;var routeGeneration=0;var routeTask:Task<Void,Never>?
@@ -32,13 +33,14 @@ struct Heart{let ipAddress="fixture"}
 @MainActor final class Cellular {
  enum Command {case off,on,probe};enum State:Equatable {case idle,failed(String),checkingSetup,restoringData,waitingForDataOff}
  enum Purpose {case postInstall};enum Phase:Equatable {case idle,waitingForPostInstallVerification,probing(Purpose)};enum Episode {case consumed}
- static let restoreKey="Audit.RestoreDebt";static let enabledKey="Audit.CellularEnabled"
- var retryTask:Task<Void,Never>?;var callbackRecoveryTask:Task<Void,Never>?;var operationID:UUID?;var activeCommand:Command?
+ static let restoreBlockedKey="Audit.RestoreBlocked";static let restoreKey="Audit.RestoreDebt";static let enabledKey="Audit.CellularEnabled"
+ var transportRecoveryID:UUID?;var retryTask:Task<Void,Never>?;var callbackRecoveryTask:Task<Void,Never>?;var callbackRecoveryDeadline:TimeInterval?;var operationID:UUID?;var activeCommand:Command?
  var pendingTransportFailureMessage:String?;var helperSetupPhase=Phase.idle
  var didAttemptRestore=false;var automaticRecoveryEpisode=Episode.consumed;var isEnabled=true;var state=State.idle;var restores=0
  var isBusy:Bool {if case .restoringData=state{return true};return false}
  func _clearActiveOperation(){callbackRecoveryTask?.cancel();callbackRecoveryTask=nil;operationID=nil;activeCommand=nil}
  func _presentShortcutsUnavailableAlert(message:String){};func _presentTerminalAlert(title:String,message:String){}
+ func _finishHelperSetupFailure(_ message:String){_finishRuntimeFailure(message)}
  func _shortcutsAvailable()->Bool{true};func _disableForMissingShortcuts(){};func _startShortcut(_ command:Command){}
  func _log(_ message:String,level:Level = .info){};enum Level {case info,warning}
  func _restoreMobileDataOnce(force:Bool=false){guard force || !didAttemptRestore else{return};didAttemptRestore=true;restores+=1;state = .restoringData}
@@ -48,7 +50,7 @@ struct Heart{let ipAddress="fixture"}
 @MainActor enum SpoofSession {static var existing:Session?}
 @MainActor final class AppInstallationManager {static let shared=AppInstallationManager();var isInstalling=false}
 @MainActor final class OnDevicePairingManager {static let shared=OnDevicePairingManager();var isActive=false}
-@MainActor final class CellularAssistManager {static let shared=CellularAssistManager();var isBusy=false;var isWaitingForManualRecovery=false}
+@MainActor final class CellularAssistManager {static let shared=CellularAssistManager();var isBusy=false;var isWaitingForManualRecovery=false;var requiresTunnelConnection=false}
 @MainActor final class DependencyProbe {
 '''+d('Aether/Backend/Observable/DeviceConnectionManager.swift','public var hasActiveTunnelDependencies:')+'''}
 @MainActor final class DownloadManager {
@@ -85,7 +87,8 @@ struct RecoveryStore {var hasUnrestoredArtifacts=true}
   let cell=Cellular();UserDefaults.standard.set(true,forKey:Cellular.restoreKey);cell.failOff()
   check(UserDefaults.standard.bool(forKey:Cellular.restoreKey) && !cell.isEnabled && cell.restores==1,"Data-off failure lost restore debt or failed to restore")
   let onFailure=Cellular();onFailure.failOn();onFailure.handleApplicationDidBecomeActive()
-  check(UserDefaults.standard.bool(forKey:Cellular.restoreKey) && !onFailure.isEnabled && onFailure.restores==1,"Disabled feature blocked foreground data restoration")
+  check(UserDefaults.standard.bool(forKey:Cellular.restoreKey) && !onFailure.isEnabled && onFailure.restores==0,"Failed restoration relaunched automatically")
+  UserDefaults.standard.removeObject(forKey:Cellular.restoreBlockedKey)
   let disabled=Cellular();disabled.isEnabled=false;disabled.cancelAndRestoreIfNeeded()
   check(disabled.restores==1,"Cancellation blocked restoration when feature disabled")
   UserDefaults.standard.set(true,forKey:"Aether.spoofing.simulationMayBeActive")
@@ -105,7 +108,7 @@ struct RecoveryStore {var hasUnrestoredArtifacts=true}
   check(recovery._getDownloadTask(systemTask) === recovered && recovery.downloads.count==1,"Recovered transfer duplicated")
   let ordinary=RecoveryDriver();ordinary._store.hasUnrestoredArtifacts=false
   check(ordinary._getDownloadTask(systemTask)==nil,"Healthy queue adopted unknown task")
-  for key in [Cellular.restoreKey,Cellular.enabledKey,"Aether.spoofing.simulationMayBeActive"] {UserDefaults.standard.removeObject(forKey:key)}
+  for key in [Cellular.restoreBlockedKey,Cellular.restoreKey,Cellular.enabledKey,"Aether.spoofing.simulationMayBeActive"] {UserDefaults.standard.removeObject(forKey:key)}
   print("Resource recovery checks passed: spoof failures, live VPN ownership, cellular restore debt, HTTP/file routing")
  }
  static func check(_ condition:@autoclosure ()->Bool,_ message:String){precondition(condition(),message)}

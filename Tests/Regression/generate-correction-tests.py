@@ -14,7 +14,7 @@ def declaration(start):
  p=text.index(start); b=text.index('{',p); e=b+1; n=1
  while n: n+=(text[e]=='{')-(text[e]=='}');e+=1
  return text[p:e].replace('private struct','struct',1)
-queue_models='''
+queue_models=(repo/'Aether/Utilities/SelfUpdateAttempt.swift').read_text()+'''
 enum QueuePersistenceFixture {
  struct AppSnapshot: Codable { let uuid: String }
  struct Options: Codable, Sendable { let post_installAppAfterSigned: Bool }

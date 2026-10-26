@@ -169,6 +169,9 @@ final class OnDevicePairingManager: ObservableObject {
 			#if !targetEnvironment(macCatalyst)
 			BackgroundAudioManager.shared.stop("pairing")
 			#endif
+			if UIApplication.shared.applicationState == .background {
+				DeviceConnectionManager.shared.handleAppBackground()
+			}
 		}
 
 		switch result {

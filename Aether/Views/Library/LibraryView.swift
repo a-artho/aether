@@ -26,7 +26,6 @@ struct LibraryView: View {
 	@State private var searchFocused = false
 	@State private var appNavigationPath: [InstalledAppsRoute] = []
 	@State private var isRootListVisible = false
-	@State private var hasLoadedInitialContent = false
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
 
@@ -71,7 +70,6 @@ struct LibraryView: View {
 		NavigationStack(path: $appNavigationPath) {
 			rootContent(projection: projection)
 		}
-		.environment(\.nbStickySectionHeaders, false)
 		.modifier(FloatingNavigationAppearance())
 	}
 
@@ -136,7 +134,6 @@ struct LibraryView: View {
 		ScrollViewReader { scrollProxy in
 			libraryList(scrollProxy: scrollProxy, projection: projection)
 		}
-		.task { hasLoadedInitialContent = true }
 		.modifier(SearchToolbarModifier(
 			text: $searchText, isPresented: $tabManager.isLibrarySearchPresented,
 			focus: $searchFocused, title: libraryTitle,
@@ -188,7 +185,7 @@ struct LibraryView: View {
 			}
 		}
 		.listStyle(.plain)
-		.aetherAmbientScrollBackground()
+		.scrollContentBackground(.hidden)
 		.onAppear { isRootListVisible = true }
 		.onDisappear { isRootListVisible = false }
 		.task(id: libraryFocusState) {
@@ -209,14 +206,15 @@ struct LibraryView: View {
 			}
 			tabManager.consumeLibraryFocusRequest(request)
 		}
+		.animation(reduceMotion || !imports.hasLoadedInitialRows ? nil : .snappy, value: projection.layout)
+		.background { AetherAmbientBackground() }
 		.overlay {
 			if !searchText.isEmpty && projection.sections.isEmpty {
 				TabPlaceholderView(title: .localized("No Results"), description: .localized("Try another search."), systemImage: "magnifyingglass")
-			} else if installationMethod == 1 && searchText.isEmpty && (!imports.hasRows && showsDevicePlaceholder) {
+			} else if imports.hasLoadedInitialRows && installationMethod == 1 && searchText.isEmpty && (!imports.hasRows && showsDevicePlaceholder) {
 				_placeholderContent.transition(.opacity)
 			}
 		}
-		.animation(reduceMotion || !hasLoadedInitialContent ? nil : .snappy, value: projection.layout)
 		.modifier(UnifiedImportsDataSource(controller: imports))
 		.refreshable {
 			guard loadsApps else { return }
@@ -275,6 +273,7 @@ struct LibraryView: View {
 
 	private var showsDevicePlaceholder: Bool {
 		installationMethod == 0 || !connection.hasPairingFile || connection.requiresInAppTunnelSetup
+			|| failureDeviceStatus != nil
 			|| (_showsCellularConnectionGuidance && _needsManualCellularRefresh)
 			|| (!connection.isConnected && !isConnectingTunnel && !cellularAssist.isBusy
 				&& updates.phase != .connecting && !isLoadingInstalledApps && !_showsCellularConnectionGuidance)
@@ -298,7 +297,7 @@ struct LibraryView: View {
 	}
 
 	private var isConnectingTunnelStatus: Bool {
-		isConnectingTunnel || cellularAssist.isBusy || updates.phase == .connecting
+		isConnectingTunnel || cellularAssist.isBusy || (updates.phase == .connecting && !connection.isConnected)
 	}
 
 	private var showsAllAppsActivityIndicator: Bool {
@@ -306,10 +305,10 @@ struct LibraryView: View {
 	}
 
 	private var allAppsSubtitle: String {
-		if isConnectingTunnel || cellularAssist.isBusy || updates.phase == .connecting {
+		if isConnectingTunnel || cellularAssist.isBusy || (updates.phase == .connecting && !connection.isConnected) {
 			return .localized("Connecting Tunnel") + "…"
 		}
-		if isLoadingInstalledApps { return checkingForUpdatesStatus }
+		if isLoadingInstalledApps || updates.phase == .connecting { return checkingForUpdatesStatus }
 		if !connection.isConnected { return .localized("Tunnel Unavailable") }
 		if store.errorMessage != nil { return .localized("Unable to Load Apps") }
 		if updates.phase == .checking { return checkingForUpdatesStatus }
@@ -417,7 +416,7 @@ struct LibraryView: View {
 	}
 
 	private struct DeviceStatus {
-		enum Action { case pair, setupVPN, reconnect }
+		enum Action { case pair, setupVPN, reconnect, tunnelingSettings }
 		let title: String
 		let description: String
 		let icon: String
@@ -426,13 +425,32 @@ struct LibraryView: View {
 		var buttonTitle: String?
 	}
 
+	private var failureDeviceStatus: DeviceStatus? {
+		switch connection.diagnostic {
+		case .providerMissing(let method):
+			return DeviceStatus(title: method == .localDevVPN ? .localized("LocalDevVPN Missing") : .localized("Tunnel Extension Missing"), description: connection.diagnostic.localizedDescription, icon: "network.slash", action: .tunnelingSettings, buttonTitle: .localized("Settings"))
+		case .invalidPairing:
+			return DeviceStatus(title: .localized("Pairing File Invalid"), description: .localized("Replace the pairing file in Pairing File settings."), icon: "key.slash", action: .pair, buttonTitle: .localized("Pair"))
+		case .error(let message):
+			guard !connection.isAwaitingAutomaticConnection else { return nil }
+			return DeviceStatus(title: .localized("Tunnel Unavailable"), description: message, icon: "network.slash", action: .reconnect, buttonTitle: .localized("Retry"))
+		default: break
+		}
+		if connection.tunnelMethod == .inApp, case .failed(let message) = cellularAssist.state {
+			return DeviceStatus(title: .localized("Cellular Assist Failed"), description: message, icon: "antenna.radiowaves.left.and.right", action: .tunnelingSettings, buttonTitle: .localized("Settings"))
+		}
+		return nil
+	}
+
 	private var deviceStatus: DeviceStatus {
 		if !connection.hasPairingFile {
 			return DeviceStatus(title: .localized("Pairing File Missing"), description: .localized("Add a pairing file to view sideloaded apps or spoof device location."), icon: "key.slash", action: .pair, buttonTitle: .localized("Pair"))
 		} else if connection.requiresInAppTunnelSetup {
 			return DeviceStatus(title: .localized("VPN Setup Required"), description: .localized("Set up Aether’s VPN profile to connect to your device."), icon: "network.badge.shield.half.filled", action: .setupVPN, buttonTitle: .localized("Set Up"))
+		} else if let failure = failureDeviceStatus {
+			return failure
 		} else if _showsCellularConnectionGuidance && (store.apps.isEmpty || _needsManualCellularRefresh) {
-			return DeviceStatus(title: _needsManualCellularRefresh ? .localized("Refresh Cellular Connection") : .localized("Connecting on Cellular"), description: _needsManualCellularRefresh ? .localized("Turn off Mobile Data or briefly enable Airplane Mode. Switch it back on once Aether connects.") : .localized("Aether is refreshing the cellular connection to reach your device."), icon: "antenna.radiowaves.left.and.right", busy: true)
+			return DeviceStatus(title: _needsManualCellularRefresh ? .localized("Refresh Cellular Connection") : .localized("Connecting on Cellular"), description: _needsManualCellularRefresh ? .localized("Turn off Mobile Data or briefly enable Airplane Mode. Switch it back on once Aether connects.") : .localized("Aether is refreshing the cellular connection to reach your device."), icon: "antenna.radiowaves.left.and.right", busy: !_needsManualCellularRefresh, action: _needsManualCellularRefresh ? .reconnect : nil, buttonTitle: _needsManualCellularRefresh ? .localized("Retry") : nil)
 		} else if isConnectingTunnel && store.apps.isEmpty {
 			return DeviceStatus(title: .localized("Connecting Tunnel"), description: .localized("Aether is connecting so you can view sideloaded apps or spoof device location."), icon: "network")
 		} else if !connection.isConnected {
@@ -515,6 +533,7 @@ struct LibraryView: View {
 		case .pair: tabManager.openSettings(page: .pairingFile)
 		case .setupVPN: connection.setUpInAppTunnel()
 		case .reconnect: connection.reconnectForIDeviceMode()
+		case .tunnelingSettings: tabManager.openSettings(page: .tunnel)
 		}
 	}
 
@@ -523,9 +542,8 @@ struct LibraryView: View {
 		if connection.tunnelMethod == .inApp {
 			return cellularAssist.isBusy || cellularAssist.isWaitingForManualRecovery
 		}
-		// LocalDevVPN cannot be controlled by Aether's shortcut, but it hits the
-		// same cellular socket condition. Keep the recovery advice in one place.
-		return !connection.isConnected
+		// Let LocalDevVPN open before showing the required network change.
+		return connection.needsLocalDevVPNCellularRecovery
 	}
 
 	private var _needsManualCellularRefresh: Bool {

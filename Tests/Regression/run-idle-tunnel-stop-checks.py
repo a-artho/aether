@@ -3,12 +3,12 @@ from pathlib import Path
 import subprocess,tempfile
 repo=Path(__file__).resolve().parents[2]
 def declaration(path,start):
- s=(repo/path).read_text();a=s.index(start);b=s.index('{',a)+1;depth=1
+ s=(repo/path).read_text();a=s.index(start);b=s.index('{',a+len(start))+1;depth=1
  while depth:
   depth+=(s[b]=='{')-(s[b]=='}');b+=1
  return s[a:b]
-stop=declaration('Aether/Backend/Observable/EmbeddedTunnelManager.swift','public func stop() async')
-stop='func stop() async {\n'+stop.split('#elseif os(iOS) && !targetEnvironment(macCatalyst)')[1].split('#else')[0]+'\n}'
+stop=declaration('Aether/Backend/Observable/EmbeddedTunnelManager.swift','public func stop(shouldProceed: () -> Bool = { true }) async')
+stop='func stop(shouldProceed: () -> Bool = { true }) async {\n'+stop.split('#elseif os(iOS) && !targetEnvironment(macCatalyst)')[1].split('#else')[0]+'\n}'
 lease=declaration('Aether/Backend/Observable/DeviceConnectionManager.swift','private final class IdleTunnelStopLease').replace('private final','@MainActor final',1)
 s=r'''
 import Foundation
@@ -23,8 +23,9 @@ enum Level {case notice,warning}
 @MainActor final class Manager {let connection=Connection()}
 @MainActor final class Probe {
  var manager:Manager?;var saved:Manager?;var refreshes=0;var state=State.disconnected
+ var delayStop=false;var stopReply:CheckedContinuation<Void,Never>?
  func refresh() async {refreshes+=1;await Task.yield();manager=saved}
- func waitForDisconnected() async ->Bool {manager?.connection.status == .disconnected}
+ func waitForDisconnected() async ->Bool {if delayStop {await withCheckedContinuation{stopReply=$0}};return manager?.connection.status == .disconnected}
  func _setState(_ value:State){state=value}
  func _log(_ s:String,level:Level = .notice){}
 '''+stop+r'''
@@ -45,6 +46,12 @@ struct UIBackgroundTaskIdentifier:Equatable {let raw:Int;static let invalid=Self
   let known=Probe();known.manager=Manager();await known.stop()
   precondition(known.refreshes==0 && known.manager!.connection.stops==1)
   let absent=Probe();await absent.stop();precondition(absent.state == .disconnected)
+  let stale=Probe();stale.manager=Manager();stale.delayStop=true
+  let oldStop=Task {await stale.stop()}
+  while stale.stopReply == nil {await Task.yield()}
+  oldStop.cancel();stale.state = .error("newer attempt")
+  stale.stopReply?.resume();await oldStop.value
+  precondition(stale.state == .error("newer attempt"),"A cancelled stop callback cannot overwrite a replacement attempt")
   let lease=IdleTunnelStopLease();precondition(UIApplication.shared.begins==1)
   lease.end();lease.end();precondition(UIApplication.shared.ends==1)
   let expires=IdleTunnelStopLease();UIApplication.shared.expiration?()

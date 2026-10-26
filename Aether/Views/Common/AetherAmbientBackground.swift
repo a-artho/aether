@@ -58,6 +58,12 @@ struct AetherAmbientBackground: View {
 			}
 		}
 		.ignoresSafeArea()
+		// This is a stationary page surface. Never interpolate its geometry when
+		// a parent animates list insertions or the initial layout settles.
+		.transaction {
+			$0.animation = nil
+			$0.disablesAnimations = true
+		}
 		.allowsHitTesting(false)
 		.accessibilityHidden(true)
 	}

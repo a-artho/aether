@@ -11,38 +11,52 @@ def declaration(start):
 s=r'''
 import Foundation
 func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
-@MainActor final class UIApplication {static let shared=UIApplication();enum State {case active,inactive,background};var applicationState=State.active}
-@MainActor final class CellularAssistManager {static let shared=CellularAssistManager();var isBusy=false;func handleApplicationDidBecomeActive(){}}
+@MainActor final class UIApplication {static let shared=UIApplication();enum State {case active,inactive,background};var applicationState=State.active;var providerAvailable=true;var providerQueries=0;func canOpenURL(_ url:URL)->Bool {providerQueries+=1;return providerAvailable}}
+@MainActor final class CellularAssistManager {static let shared=CellularAssistManager();var isBusy=false;var requiresTunnelConnection=false;var isWaitingForManualRecovery=false;func handleApplicationDidEnterBackground(){};func handleApplicationDidBecomeActive(){};func networkNoLongerNeedsManualRecovery(){isWaitingForManualRecovery=false}}
+@MainActor final class EmbeddedTunnelManager {static let shared=EmbeddedTunnelManager();var isRunning=false;var isProviderAvailable=true}
 @MainActor final class SpoofSession {static var existing: SpoofSession?;var requiresBackgroundExecution=false}
 @MainActor final class AppInstallationManager {static let shared=AppInstallationManager();var isInstalling=false}
 @MainActor final class OnDevicePairingManager {static let shared=OnDevicePairingManager();var isActive=false}
 @MainActor final class Driver {
  var foregroundRecoveryTask:Task<Void,Never>?;var foregroundRecoveryID:UUID?
  var connectionWorkWaiters:[UUID:AsyncStream<Void>.Continuation]=[:]
- var reconciliationTask:Task<Void,Never>? {didSet {_signalConnectionWorkChanged()}};var lastVerifiedAt=0.0
+ var appRefreshConnectionID:UUID?;var appRefreshConnectionTask:Task<Bool,Never>?;var reconciliationTask:Task<Void,Never>? {didSet {_signalConnectionWorkChanged()}};var lastVerifiedAt=0.0
  enum State {case disconnected,disconnecting};var state=State.disconnected
- enum Diagnostic {case tunnelUnavailable};var diagnostic=Diagnostic.tunnelUnavailable
+ enum Diagnostic {case tunnelUnavailable,providerMissing(Method)};var diagnostic=Diagnostic.tunnelUnavailable
  enum Method {case inApp,localDevVPN};var tunnelMethod=Method.inApp
  var hasPairingFile=true
- var awaitingInitialActivation=false;var requiresInAppTunnelSetup=false
+ var awaitingInitialActivation=false;var requiresInAppTunnelSetup=false;var hasCompletedInitialActivation=false
  var isConnectAutomaticallyEnabled=true;var isIDeviceInstallationMode=true
  var isConnected=true;var isUpdating=false {didSet {_signalConnectionWorkChanged()}};var starts=0;var checks=0;var verified=false
  var isDisconnectWhenIdleEnabled=true;var hasActiveTunnelDependencies=false;var stops=0
  static let unresolvedSimulationKey="test"
  var forcedStop=false
+ var localDevVPNHandoffGeneration:UUID?;var transitionGeneration:UUID?;var transitionDeadline=0.0;var connectionEpoch:UInt64=0;var transitionExpectedState:Bool?
+ var hasReturnedFromLocalDevVPN=false
+ enum Network {case wifi,cellularOnly};var physicalNetworkState=Network.wifi
+ LOCALDEV_GUIDANCE
+ var automaticRetryBlocked=false
+ func _automaticConnectionPrerequisitesReady()->Bool {hasPairingFile && !requiresInAppTunnelSetup && !automaticRetryBlocked && !needsLocalDevVPNCellularRecovery && _providerIsAvailable()}
+ func _finishTransition(to state:State,diagnostic:Diagnostic){self.state=state;self.diagnostic=diagnostic;isUpdating=false;awaitingInitialActivation=false}
+ func _armAttemptTimeout(epoch:UInt64,seconds:Double){}
+ func _startTransitionPolling(generation:UUID,expectedState:Bool){}
  func setConnection(enabled:Bool,force:Bool=false){forcedStop=force;if !enabled {stops+=1;_cancelForegroundRecovery()}}
  enum Level {case notice}
  func _log(_ s:String,category:String,level:Level){}
  func _connectForIDeviceMode(){starts+=1;isUpdating=true}
- func reconcile() async {checks+=1;isConnected=verified}
+ func verifyForAppRefresh() async -> Bool {await reconcile();if !isConnected {_connectForIDeviceMode()};return isConnected}
+ func reconcile(force:Bool=false) async {guard reconciliationTask == nil else{return};checks+=1;isConnected=verified}
  func cancel(){_cancelForegroundRecovery()}
+ func _expireConnectionAttempt(){isUpdating=false;isConnected=false;automaticRetryBlocked=true}
  func _waitForForegroundConnectionToSettleForTest(id:UUID,deadline:Double) async ->Bool {await _waitForForegroundConnectionToSettle(id:id,deadline:deadline)}
  func finishStart(){isUpdating=false;isConnected=true;verified=true}
+ func providerAvailableForTest()->Bool {_providerIsAvailable()}
 '''
-for method in ['public var isAwaitingAutomaticConnection:', 'public func prepareForForeground()', 'public func handleAppForeground()', 'private func _scheduleForegroundRecovery()', 'private func _signalConnectionWorkChanged()', 'private func _waitForForegroundConnectionToSettle(', 'private func _cancelForegroundRecovery()', 'public func handleAppBackground()']:
+for method in ['public var isAwaitingAutomaticConnection:', 'public func prepareForForeground()', 'public func handleInitialActivationIfNeeded()', 'public func handleAppForeground()', 'private func _providerIsAvailable()', 'private func _scheduleForegroundRecovery()', 'private func _signalConnectionWorkChanged()', 'private func _waitForForegroundConnectionToSettle(', 'private func _cancelForegroundRecovery()', 'public func handleAppBackground()']:
  s+=declaration(method)+'\n'
 s+=declaration('private func _restoreInstallationMode()').replace('private func', 'func', 1)+'\n'
 s+='}\n'
+s=s.replace('LOCALDEV_GUIDANCE',declaration('public var needsLocalDevVPNCellularRecovery:').replace('public ', ''))
 s+=r'''
 func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),label)}
 @main struct Checks {
@@ -51,6 +65,27 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   preconditionFailure("Recovery did not settle")
  }
  @MainActor static func main() async throws {
+  UIApplication.shared.applicationState = .active
+  UIApplication.shared.providerAvailable=false
+  let cold=Driver();cold.isConnected=false;cold.tunnelMethod = .localDevVPN
+  cold._restoreInstallationMode()
+  check(cold.isAwaitingAutomaticConnection && cold.starts==0 && UIApplication.shared.providerQueries==0,
+   "An Active value during construction cannot query LocalDevVPN or start a handoff")
+  check(!cold.providerAvailableForTest() && UIApplication.shared.providerQueries==0 && cold.isAwaitingAutomaticConnection,
+   "Premature provider checks must not publish a missing-provider failure")
+  UIApplication.shared.providerAvailable=true
+  cold.handleInitialActivationIfNeeded()
+  check(cold.hasCompletedInitialActivation && cold.starts==1 && UIApplication.shared.providerQueries==1,
+   "Scene activation starts LocalDevVPN after its availability query is valid")
+  cold.finishStart();try await settled(cold)
+  cold.handleInitialActivationIfNeeded()
+  check(cold.starts==1,"Repeated scene activation cannot start a second initial connection")
+  UIApplication.shared.providerAvailable=false
+  let missing=Driver();missing.isConnected=false;missing.tunnelMethod = .localDevVPN
+  missing._restoreInstallationMode();missing.handleAppForeground()
+  check(missing.starts==0 && !missing.isAwaitingAutomaticConnection,"A missing provider remains actionable after activation")
+  if case .providerMissing(.localDevVPN)=missing.diagnostic {} else {preconditionFailure("Expected LocalDevVPN Missing")}
+  UIApplication.shared.providerAvailable=true
   UIApplication.shared.applicationState = .inactive
   let launch=Driver();launch.isConnected=false;launch._restoreInstallationMode()
   check(launch.isAwaitingAutomaticConnection && launch.starts==0,"Inactive cold launch is pending, not unavailable; VPN waits for activation")
@@ -62,7 +97,9 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   check(!server.isAwaitingAutomaticConnection,"Server mode never shows pending tunnel")
   UIApplication.shared.applicationState = .background
   let backgroundLaunch=Driver();backgroundLaunch._restoreInstallationMode()
-  check(!backgroundLaunch.isAwaitingAutomaticConnection && backgroundLaunch.starts==0,"Background launch never promises an automatic connection")
+  check(backgroundLaunch.isAwaitingAutomaticConnection && backgroundLaunch.starts==0,"Cold scene construction reserves presentation without starting a VPN in background")
+  backgroundLaunch.handleAppBackground()
+  check(!backgroundLaunch.isAwaitingAutomaticConnection,"Actual background lifecycle retires the startup presentation")
   UIApplication.shared.applicationState = .active
   let returning=Driver();returning.isConnected=false
   UIApplication.shared.applicationState = .inactive
@@ -93,6 +130,17 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   let dependent=Driver();dependent.hasActiveTunnelDependencies=true;dependent.handleAppBackground()
   check(dependent.stops==0,"Background installation/spoofing dependencies retain their tunnel")
   UIApplication.shared.applicationState = .active
+  for method in [Driver.Method.inApp, .localDevVPN] {
+   let disabled=Driver();disabled.isConnectAutomaticallyEnabled=false;disabled.isConnected=false;disabled.tunnelMethod=method
+   disabled._restoreInstallationMode();disabled.handleAppForeground();await Task.yield()
+   check(disabled.starts==0,"Disabled automatic connection never starts a provider on launch or foreground")
+  }
+  let cellularReturn=Driver();cellularReturn.tunnelMethod = .localDevVPN;cellularReturn.isConnected=false;cellularReturn.isUpdating=true;cellularReturn.physicalNetworkState = .cellularOnly
+  let handoff=UUID();cellularReturn.localDevVPNHandoffGeneration=handoff;cellularReturn.transitionGeneration=handoff;cellularReturn.transitionExpectedState=true
+  cellularReturn.handleAppForeground()
+  check(cellularReturn.needsLocalDevVPNCellularRecovery && !cellularReturn.isUpdating && cellularReturn.checks==0,"Returned LocalDevVPN handoff requests network change before probing")
+  cellularReturn.handleAppForeground();await Task.yield()
+  check(cellularReturn.starts==0 && cellularReturn.checks==0,"Manual network guidance cannot repeatedly reopen LocalDevVPN")
   let bounded=Driver();bounded.isUpdating=true;let timeoutID=UUID();bounded.foregroundRecoveryID=timeoutID
   let timedOut=await bounded._waitForForegroundConnectionToSettleForTest(id:timeoutID,deadline:CACurrentMediaTime()+0.03)
   check(!timedOut && bounded.connectionWorkWaiters.isEmpty,"A timed-out wait releases its continuation")
@@ -107,10 +155,12 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   check(stopping.starts==0 && stopping.checks==0,"Unlock waits for idle disconnect before verification or restart")
   stopping.isUpdating=false;try await settled(stopping)
   check(stopping.starts==1,"Completed idle disconnect is followed by automatic reconnect")
-  let checking=Driver();checking.reconciliationTask=Task {};checking.handleAppForeground()
+  let checking=Driver();checking.isConnected=false;checking.isUpdating=true;checking.reconciliationTask=Task {};checking.handleAppForeground()
   try await Task.sleep(nanoseconds:150_000_000)
   check(checking.starts==0 && checking.checks==0,"In-flight verification is allowed to settle")
-  checking.reconciliationTask=nil;try await settled(checking);check(checking.starts==1,"Failed prior verification does not consume recovery")
+  checking.reconciliationTask=nil;checking.isUpdating=false;try await settled(checking);check(checking.starts==1,"Failed prior verification does not consume recovery")
+  let browsing=Driver();browsing.reconciliationTask=Task {};browsing.handleAppForeground();try await settled(browsing)
+  check(browsing.starts==0 && browsing.checks==0,"A verified connection does not wait for optional app browsing or restart")
   let healthy=Driver();healthy.verified=true;healthy.handleAppForeground();try await settled(healthy)
   check(healthy.starts==0,"Healthy tunnel is not restarted")
   let off=Driver();off.isConnectAutomaticallyEnabled=false;off.handleAppForeground()
@@ -132,7 +182,7 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
 }
 '''
 # Passive reconciliation cannot prematurely finish an embedded disconnect.
-assert 'if method == .inApp, state == .disconnecting, !force { return }' in declaration('private func _reconcile(')
+assert 'if method == .inApp, state == .disconnecting, !force { return false }' in declaration('private func _reconcile(')
 assert '_cancelForegroundRecovery()' in declaration('public func handleAppBackground()')
 assert '_cancelForegroundRecovery()' in declaration('public func setConnection(')
 with tempfile.TemporaryDirectory(prefix='aether-foreground-') as d:
@@ -146,11 +196,23 @@ func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
 struct PairingRecordIdentity:Equatable,Sendable {}
 struct AppInfo:Sendable {}
 enum DeviceConnectionError:Error {case pairingMissing,invalidPairing,tunnelUnavailable(String),serviceUnavailable(String)}
-struct DeviceConnectionCheck:Sendable {var isConnected=false;var apps:[AppInfo]?;var rejectsPairingRecord=false;var error:String?="fixture failure"}
+struct DeviceConnectionCheck:Sendable {var isConnected=false;var error:String?="fixture failure";var apps:[AppInfo]?;var rejectsPairingRecord=false;var isTransientTransportFailure=true}
 final class HeartbeatManager:@unchecked Sendable {
  static let shared=HeartbeatManager();var ipAddress="";let isRsd=true
+ private let condition=NSCondition();private var mode=0;private var held=false;private var entered=false
+ func configure(_ mode:Int) {condition.lock();self.mode=mode;held=mode != 0;entered=false;condition.unlock()}
+ var isEntered:Bool {condition.lock();defer {condition.unlock()};return entered}
+ func release(){condition.lock();held=false;condition.broadcast();condition.unlock()}
+ func resetRSDTunnel() {}
  func checkSocketConnection(timeoutInSeconds:Double)->DeviceConnectionCheck {DeviceConnectionCheck()}
- func checkDeviceConnection(timeoutInSeconds:Double,includeApps:Bool=false,onVerified:@Sendable ()->Void = {})->DeviceConnectionCheck {DeviceConnectionCheck()}
+ func checkDeviceConnection(timeoutInSeconds:Double,includeApps:Bool=false,onVerified:@Sendable ()->Void = {})->DeviceConnectionCheck {
+  condition.lock();let selected=mode;entered=true;condition.unlock()
+  if selected == 0 {return DeviceConnectionCheck()}
+  if selected == 1 {onVerified()}
+  condition.lock();while held {condition.wait()};condition.unlock()
+  if selected == 2 {onVerified()}
+  return DeviceConnectionCheck(isConnected:true,apps:[])
+ }
 }
 @MainActor final class Gate {
  var pending:CheckedContinuation<Void,Never>?
@@ -159,6 +221,7 @@ final class HeartbeatManager:@unchecked Sendable {
 }
 @MainActor final class CellularAssistManager {
  static let shared=CellularAssistManager();var isAutomaticRecoveryInProgress=false
+ enum State {case idle,failed(String)};var state=State.idle;var isWaitingForManualRecovery=false
  func connectionDidSucceed(){}
 }
 @MainActor final class EmbeddedTunnelManager {
@@ -167,19 +230,24 @@ final class HeartbeatManager:@unchecked Sendable {
 }
 @MainActor final class InstalledAppsStore {
  static let shared=InstalledAppsStore()
- func stageInitialBrowse(_ task:Task<[AppInfo]?,Never>){}
+ func stageInitialBrowse(_ task:Task<[AppInfo],Error>){}
  func stageVerifiedApps(_ apps:[AppInfo]){}
 }
 struct PairingVerification {var record:PairingRecordIdentity?;mutating func beginChecking(_ r:PairingRecordIdentity){};mutating func finishChecking(_ r:PairingRecordIdentity,succeeded:Bool){}}
+@MainActor final class UIApplication {static let shared=UIApplication();enum State {case active,background};var applicationState=State.active}
 @MainActor final class Reconciler {
  enum Method {case inApp,localDevVPN};enum State {case connected,disconnected,disconnecting}
- enum Diagnostic:Equatable {case ready,tunnelUnavailable,pairingMissing,invalidPairing,error(String)}
+ enum Diagnostic:Equatable {case ready,tunnelUnavailable,pairingMissing,invalidPairing,error(String);var localizedDescription:String {"fixture"}}
  enum Network {case wifi,cellularOnly};enum Level {case debug,warning,notice,error}
  enum Rejection {case notRejected,discarded,failed,replaced}
- var connectionPreparation:UUID?;var transitionGeneration:UUID?;var connectionEpoch:UInt64=0
+ var automaticAttemptEpoch:UInt64?
+ var awaitingInitialActivation=false;var localDevVPNHandoffGeneration:UUID?
+ var isUpdating:Bool {state == .disconnecting}
+ var networkGeneration=UUID();var connectionPreparation:UUID?;var transitionGeneration:UUID?;var connectionEpoch:UInt64=0
  var tunnelMethod=Method.inApp;var state=State.connected;var diagnostic=Diagnostic.ready
  var isIDeviceInstallationMode=true;var hasPairingFile=true;var transitionExpectedState:Bool?;var transitionDeadline=0.0
- var physicalNetworkState=Network.wifi;var lastVerifiedRecord:PairingRecordIdentity?;var lastVerifiedAt=0.0
+ var needsLocalDevVPNCellularRecovery=false
+ var rsdCleanupTask:Task<Void,Never>?;var automaticRetryBlocked=false;var reconciliationRequiresFreshProbe=false;var physicalNetworkState=Network.wifi;var lastVerifiedRecord:PairingRecordIdentity?;var lastVerifiedAt=0.0
  var pairingVerification=PairingVerification();var activeVerificationID:UUID?
  var isConnected:Bool {state == .connected}
  var profile=true;var blockProfile=false;var blockReset=false;var profiles=0;var finishes=0
@@ -188,21 +256,46 @@ struct PairingVerification {var record:PairingRecordIdentity?;mutating func begi
  func _hasRequiredTunnelProfile() async ->Bool {profiles+=1;if blockProfile {await profileGate.wait()};return profile}
  func _resetRSDTunnel() async {if blockReset {await resetGate.wait()}}
  func _finishTransition(to s:State,diagnostic d:Diagnostic){finishes+=1;state=s;diagnostic=d}
+ func _providerIsAvailable()->Bool {true}
  func _beginCellularAssistIfEligible()->Bool {false}
  func _recordStillMatches(_ r:PairingRecordIdentity?)->Bool {true}
  func _discardRejectedRecord(_ result:DeviceConnectionCheck,record:PairingRecordIdentity?) async ->Rejection {.notRejected}
  func _routeCellularRecoveryIfNeeded()->Bool {false}
  func _waitForCellularRecovery() async ->Bool {false}
  func _log(_ s:String,category:String = "Device",level:Level = .debug){}
- func _publishVerifiedTransport(verificationID:UUID,generation:UUID?,record:PairingRecordIdentity?,cellularAssistTransaction:Bool,startedAt:Double){}
- func verify() async {await _reconcile(force:false,cellularAssistTransaction:false)}
+ func verify() async {_ = await _reconcile(force:false,cellularAssistTransaction:false)}
  func newAttempt(){connectionEpoch+=1;transitionGeneration=UUID();state = .connected;diagnostic = .ready}
 '''
+embedded=(repo/'Aether/Backend/Observable/EmbeddedTunnelManager.swift').read_text()
+helper=embedded[embedded.index('private final class TunnelOperationReply'):embedded.index('#if os(iOS)')]
+r=r.replace('import Foundation\n','import Foundation\n'+helper,1)
 r+=declaration('public func ensureConnected()')+'\n'+declaration('private func _reconcile(')+'\n'+declaration('private func _reconciliationIsCurrent(')+'\n}\n'
 r+=r'''
 func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),label)}
 @main struct Races {
  @MainActor static func main() async throws {
+  HeartbeatManager.shared.configure(1)
+  let early=Reconciler();early.state = .disconnected
+  await early.verify()
+  check(early.state == .connected && early.finishes == 1,"Transport readiness completes while the same client's app browse is still blocked")
+  HeartbeatManager.shared.release()
+  HeartbeatManager.shared.configure(2)
+  let changedRoute=Reconciler();changedRoute.state = .disconnected
+  let obsoleteRoute=Task {await changedRoute.verify()}
+  while !HeartbeatManager.shared.isEntered {await Task.yield()}
+  changedRoute.activeVerificationID=nil
+  HeartbeatManager.shared.release();await obsoleteRoute.value
+  check(changedRoute.finishes==0 && changedRoute.state == .disconnected,"A late route-invalidated verification cannot resurrect a disconnected tunnel")
+  HeartbeatManager.shared.configure(2)
+  let routeAction=Reconciler()
+  let oldAction=Task {try await routeAction.ensureConnected()}
+  while !HeartbeatManager.shared.isEntered {await Task.yield()}
+  routeAction.networkGeneration=UUID()
+  HeartbeatManager.shared.release()
+  do {_ = try await oldAction.value;preconditionFailure("Old-route explicit verification must cancel")}
+  catch is CancellationError {} catch {preconditionFailure("Unexpected route error")}
+  check(routeAction.finishes==0,"An explicit action cannot publish readiness from an old route")
+  HeartbeatManager.shared.configure(0)
   let profile=Reconciler();profile.profile=false;profile.blockProfile=true
   let p=Task {await profile.verify()};while profile.profileGate.pending == nil {await Task.yield()}
   profile.newAttempt();profile.profileGate.release();await p.value
@@ -212,7 +305,7 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   refresh.newAttempt();EmbeddedTunnelManager.shared.isConnected=false;EmbeddedTunnelManager.shared.gate.release();await v.value
   check(refresh.finishes==0,"Old VPN refresh cannot publish failure into a new attempt")
   EmbeddedTunnelManager.shared.blockRefresh=false;EmbeddedTunnelManager.shared.isConnected=true
-  let reset=Reconciler();reset.blockReset=true
+  let reset=Reconciler();reset.profile=false;reset.blockReset=true
   let t=Task {await reset.verify()};while reset.resetGate.pending == nil {await Task.yield()}
   reset.newAttempt();reset.resetGate.release();await t.value
   check(reset.finishes==0 && reset.diagnostic == .ready,"Old transport-reset completion cannot overwrite newer readiness")

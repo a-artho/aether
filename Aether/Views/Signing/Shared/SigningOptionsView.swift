@@ -239,6 +239,7 @@ struct SigningOptionsView: View {
 struct PostSigningSection: View {
 	@Binding var options: Options
 	var temporaryOptions: Options?
+	@AppStorage("Aether.deleteImportsAfterInstall") private var deleteImportsAfterInstall = false
 
 	var body: some View {
 		NBSection(.localized("Post Signing")) {
@@ -250,6 +251,16 @@ struct PostSigningSection: View {
 						.fontWeight(temporaryOptions.map { $0.post_installAppAfterSigned != options.post_installAppAfterSigned } == true ? .bold : .regular)
 				}
 			}
+
+			Toggle(isOn: $deleteImportsAfterInstall) {
+				HStack(spacing: 12) {
+					SettingsIconBadge(systemImage: "trash",
+						backgroundColor: SettingsIconBadge.color(for: "trash"))
+					Text(.localized("Delete After Install"))
+				}
+			}
+		} footer: {
+			Text(.localized("Remove the installed copy from Imports after a successful installation."))
 		}
 	}
 }

@@ -9,7 +9,6 @@ import SwiftUI
 import NimbleViews
 
 struct SourcesView: View {
-	@Environment(\.horizontalSizeClass) private var _horizontalSizeClass
 	@StateObject var viewModel = SourcesViewModel.shared
 	@State private var _searchText = ""
 	@State private var _refreshErrorMessage: String?
@@ -104,7 +103,6 @@ struct SourcesView: View {
 						}) {
 							repoRows
 						}
-						.environment(\.nbStickySectionHeaders, _horizontalSizeClass != .compact)
 						.listSectionSeparator(.hidden)
 					}
 				}

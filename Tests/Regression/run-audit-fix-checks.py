@@ -55,6 +55,7 @@ enum AppLifecycleService { static var completion: (() -> Void)?; static func uni
 struct Animation { static func easeOut(duration: Double) -> Animation { Animation() } }
 func withAnimation(_ animation: Animation, _ body: () -> Void) { body() }
 final class AppsStore {
+ var cancelRead:(()->Void)?;var readID:UUID?;var initialBrowse:Task<Void,Never>?
  var refreshGeneration = UUID(); var isLoading = true; var needsTrailingRefresh = true
  var iconPrefetchTask: Task<Void, Never>?; var apps = [InstalledApp(id: "remove"), InstalledApp(id: "keep")]
 '''
@@ -67,7 +68,11 @@ guards = connection[:connection.index('\n\t\tlet method')]
 source += '''
 enum State { case connected, disconnected, connecting, disconnecting }
 final class Connection {
+ var appRefreshConnectionTask:Task<Bool,Never>?;var appRefreshConnectionID:UUID?
  var connectionEpoch: UInt64 = 0; var activeVerificationID: UUID?
+ var localDevVPNHandoffGeneration:UUID?;var automaticAttemptEpoch:UInt64?;var hasReturnedFromLocalDevVPN=false
+ var preparationTask:Task<Void,Never>?;var connectionTask:Task<Void,Never>?;var rsdCleanupTask:Task<Void,Never>?
+ func _cancelReconciliation() {}
  func _cancelForegroundRecovery() {}
  var awaitingInitialActivation=false
  var connectionPreparation: UUID? = UUID(); var state: State = .connecting; var proceeded = false
@@ -77,8 +82,10 @@ embedded = (repo / 'Aether/Backend/Observable/EmbeddedTunnelManager.swift').read
 start = embedded[embedded.index('public func start('):embedded.index('public func stop(')]
 start = start.split('\t\t#if targetEnvironment(simulator)')[0] + start.split('\t\t#elseif os(iOS) && !targetEnvironment(macCatalyst)')[1].split('\t\t#else')[0] + '\n}\n'
 source += """
+let NEVPNErrorDomain="NEVPNErrorDomain"
+enum NEVPNError:Int {case configurationStale=4}
 enum EmbeddedTunnelError: Error { case unavailable, invalidConfiguration, providerNotReady }
-enum VPNStatus { case disconnected, connected, connecting, reasserting }
+enum VPNStatus { case disconnected, connected, connecting, reasserting, disconnecting }
 enum TunnelState { case connected, connecting; case error(String) }
 final class FakeVPNConnection {
  var status: VPNStatus = .disconnected; var starts = 0
@@ -91,7 +98,8 @@ final class TunnelProbe {
  let peerIPOnly = "peer", interfaceAddress = "interface", peerAddress = "peer"
  static let interfaceAddressKey = "interface", peerAddressKey = "peer"
  var prepared: (() -> Void)?; var waited: (() -> Void)?
- func prepare() async throws -> Bool { prepared?(); return true }
+ func prepare(shouldProceed: () -> Bool) async throws -> Bool { prepared?(); return shouldProceed() }
+ func waitForDisconnected() async -> Bool { true }
  func save(_ m: NETunnelProviderManager) async throws {}
  func load(_ m: NETunnelProviderManager) async throws {}
  func resetConfiguration() async {}

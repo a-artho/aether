@@ -25,6 +25,8 @@ final class AppInstallationManager: ObservableObject {
 		let serverMethod: Int
 		var signing: SigningInput?
 		var installRequested = true
+		var deleteAfterInstall = false
+		var selfUpdateAttempt: SelfUpdateAttempt?
 		#if DEBUG
 		var isMock = false
 		#endif
@@ -42,6 +44,8 @@ final class AppInstallationManager: ObservableObject {
 		let iconData: Data?
 		let certificateUUID: String?
 	}
+
+	static let importAutoDeleteNotification = Notification.Name("Aether.importAutoDeleteAfterInstall")
 
 	static let shared = AppInstallationManager()
     @Published private var completedArtifacts = Set(UserDefaults.standard.stringArray(forKey: "Aether.completedInstallArtifacts") ?? [])
@@ -102,6 +106,8 @@ final class AppInstallationManager: ObservableObject {
 		let serverMethod: Int
 		var signing: SigningInput?
 		var installRequested: Bool
+		var deleteAfterInstall: Bool?
+		var selfUpdateAttempt: SelfUpdateAttempt?
 	}
 	private static let queueStorageKey = "Aether.pendingInstallations"
 
@@ -126,7 +132,10 @@ final class AppInstallationManager: ObservableObject {
 			let records = try? JSONDecoder().decode([StoredInstallation].self, from: data) else { return }
 		let requests = records.compactMap { record -> InstallationRequest? in
 			guard Storage.shared.getAppDirectory(for: record.app) != nil else { return nil }
-			return InstallationRequest(app: record.app, method: record.method, serverMethod: record.serverMethod, signing: record.signing, installRequested: record.installRequested)
+			return InstallationRequest(app: record.app, method: record.method, serverMethod: record.serverMethod,
+				signing: record.signing, installRequested: record.installRequested,
+				deleteAfterInstall: record.deleteAfterInstall ?? false,
+				selfUpdateAttempt: record.selfUpdateAttempt)
 		}
 		guard let first = requests.first else {
 			UserDefaults.standard.removeObject(forKey: Self.queueStorageKey)
@@ -138,6 +147,30 @@ final class AppInstallationManager: ObservableObject {
 		activeApp = first.app
 		queuedInstalls = Array(requests.dropFirst())
 		let model = InstallerStatusViewModel(isIdevice: first.method == 1)
+		if first.method == 1, first.installRequested,
+			first.app.identifier == Bundle.main.bundleIdentifier,
+			first.selfUpdateAttempt?.confirmsReplacement(runningInfo: Bundle.main.infoDictionary ?? [:]) == true {
+			model.status = .completed(.success(()))
+			viewModel = model
+			completedArtifacts.insert(first.appKey)
+			UserDefaults.standard.set(Array(completedArtifacts), forKey: "Aether.completedInstallArtifacts")
+			_persistInstallQueue()
+			_log("Confirmed pending self-update from the running app's version and build.", category: "Install", level: .notice)
+			_finishCompletedInstall(generation: installGeneration)
+			return
+		}
+		if first.method == 1, first.installRequested,
+			first.app.identifier == Bundle.main.bundleIdentifier,
+			first.selfUpdateAttempt?.isUnconfirmedSameBuildReinstall(runningInfo: Bundle.main.infoDictionary ?? [:]) == true {
+			completedArtifacts.insert(first.appKey)
+			UserDefaults.standard.set(Array(completedArtifacts), forKey: "Aether.completedInstallArtifacts")
+			currentRequest = nil
+			activeApp = nil
+			_persistInstallQueue()
+			_log("Same-build self-install outcome is unconfirmed. Restored Reinstall and retained the IPA; automatic deletion was skipped.", category: "Install", level: .notice)
+			Task { @MainActor [weak self] in self?._startNextIfPossible() }
+			return
+		}
 		model.status = .broken(InstallationBackgroundError())
 		viewModel = model
 		lastErrorMessage = InstallationBackgroundError().localizedDescription
@@ -151,7 +184,9 @@ final class AppInstallationManager: ObservableObject {
 			if request.isMock { return nil }
 			#endif
 			if request.id == currentRequest?.id, hasCompletedSuccessfully { return nil }
-			return StoredInstallation(app: request.app, method: request.method, serverMethod: request.serverMethod, signing: request.signing, installRequested: request.installRequested)
+			return StoredInstallation(app: request.app, method: request.method, serverMethod: request.serverMethod,
+				signing: request.signing, installRequested: request.installRequested,
+				deleteAfterInstall: request.deleteAfterInstall, selfUpdateAttempt: request.selfUpdateAttempt)
 		}
 		if records.isEmpty { UserDefaults.standard.removeObject(forKey: Self.queueStorageKey) }
 		else if let data = try? JSONEncoder().encode(records) { UserDefaults.standard.set(data, forKey: Self.queueStorageKey) }
@@ -232,7 +267,8 @@ final class AppInstallationManager: ObservableObject {
 		let request = InstallationRequest(
 			app: AppSnapshot(app),
 			method: UserDefaults.standard.integer(forKey: "Aether.installationMethod"),
-			serverMethod: UserDefaults.standard.object(forKey: "Aether.serverMethod") as? Int ?? 1
+			serverMethod: UserDefaults.standard.object(forKey: "Aether.serverMethod") as? Int ?? 1,
+			deleteAfterInstall: UserDefaults.standard.bool(forKey: "Aether.deleteImportsAfterInstall")
 		)
 		guard app.identifier != Bundle.main.bundleIdentifier || request.method == 1 else {
 			UIAlertController.showAlertWithOk(
@@ -249,7 +285,9 @@ final class AppInstallationManager: ObservableObject {
 			method: UserDefaults.standard.integer(forKey: "Aether.installationMethod"),
 			serverMethod: UserDefaults.standard.object(forKey: "Aether.serverMethod") as? Int ?? 1,
 			signing: SigningInput(options: options, iconData: icon?.pngData(), certificateUUID: certificate?.uuid),
-			installRequested: options.post_installAppAfterSigned)
+			installRequested: options.post_installAppAfterSigned,
+			deleteAfterInstall: options.post_installAppAfterSigned
+				&& UserDefaults.standard.bool(forKey: "Aether.deleteImportsAfterInstall"))
 		return _enqueue(request)
 	}
 
@@ -481,6 +519,21 @@ final class AppInstallationManager: ObservableObject {
 		if context.method == 1, diagnosticLog != nil {
 			_log("transfer[\(generation.uuidString)] app=\(appSnapshot.name ?? "unknown") version=\(appSnapshot.version ?? "unknown") provider=\(diagnosticProvider) compression=\(ArchiveHandler.compressionLevel().rawValue) diagnosticSchema=2", category: "Install Transfer", level: .notice)
 		}
+		let beforeInstallation: (@Sendable () async throws -> Void)?
+		let onFirstInstallationResponse: (@MainActor @Sendable () -> Void)?
+		if context.method == 1, appSnapshot.identifier == Bundle.main.bundleIdentifier {
+			beforeInstallation = { @MainActor [weak self] in
+				guard let self, self.installGeneration == generation else { throw CancellationError() }
+				try Task.checkCancellation()
+				self._recordSelfUpdateAttempt(for: appSnapshot)
+			}
+			onFirstInstallationResponse = { [weak self] in
+				self?._handoffSelfUpdateAfterServiceResponse(generation: generation)
+			}
+		} else {
+			beforeInstallation = nil
+			onFirstInstallationResponse = nil
+		}
 		installTask = Task.detached { [weak self, appSnapshot] in
 			defer {
 				Task { @MainActor [weak self] in
@@ -537,7 +590,8 @@ final class AppInstallationManager: ObservableObject {
 					}
 					try await proxy.install(
 						at: packageUrl,
-						suspend: appSnapshot.identifier == Bundle.main.bundleIdentifier,
+						beforeInstallation: beforeInstallation,
+						onFirstInstallationResponse: onFirstInstallationResponse,
 						diagnosticID: generation.uuidString,
 						diagnosticLog: diagnosticLog
 					)
@@ -660,6 +714,34 @@ final class AppInstallationManager: ObservableObject {
 		}
 	}
 
+	private func _recordSelfUpdateAttempt(for app: AppSnapshot) {
+		guard currentRequest?.appKey == InstallationRequest.appKey(for: app),
+			let directory = Storage.shared.getAppDirectory(for: app),
+			let data = try? Data(contentsOf: directory.appendingPathComponent("Info.plist")),
+			let info = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
+			let attempt = SelfUpdateAttempt(runningInfo: Bundle.main.infoDictionary ?? [:], targetInfo: info) else {
+			_log("Self-install will proceed without relaunch confirmation: bundle metadata is unavailable.", category: "Install", level: .warning)
+			return
+		}
+		currentRequest?.selfUpdateAttempt = attempt
+		_persistInstallQueue()
+		_log("Starting self-install; waiting for a service response before suspension. Target=\(attempt.targetVersion) build=\(attempt.targetBuild).", category: "Install", level: .notice)
+	}
+
+	private func _handoffSelfUpdateAfterServiceResponse(generation: UUID) {
+		guard installGeneration == generation, currentRequest?.method == 1,
+			currentRequest?.app.identifier == Bundle.main.bundleIdentifier,
+			case .installing = viewModel?.status else { return }
+		if var attempt = currentRequest?.selfUpdateAttempt {
+			attempt.receivedInstallationResponse = true
+			currentRequest?.selfUpdateAttempt = attempt
+			_persistInstallQueue()
+		}
+		_log("Self-install received its first service progress response; handing replacement to iOS.", category: "Install", level: .notice)
+		guard UIApplication.shared.applicationState != .background else { return }
+		UIApplication.shared.perform(#selector(NSXPCConnection.suspend))
+	}
+
 	private func _finishCompletedInstall(generation: UUID) {
 		settlementTask?.cancel()
 		let worker = installTask
@@ -672,8 +754,14 @@ final class AppInstallationManager: ObservableObject {
 				do { try await Task.sleep(nanoseconds: 3_000_000_000) } catch { return }
 			}
 			guard !Task.isCancelled, self.installGeneration == generation else { return }
+			let artifactToDelete = self.currentRequest.flatMap { request -> String? in
+				request.installRequested && request.deleteAfterInstall ? request.app.uuid : nil
+			}
 			self.settlementTask = nil
 			self.cancel()
+			if let artifactToDelete {
+				NotificationCenter.default.post(name: Self.importAutoDeleteNotification, object: artifactToDelete)
+			}
 		}
 	}
 

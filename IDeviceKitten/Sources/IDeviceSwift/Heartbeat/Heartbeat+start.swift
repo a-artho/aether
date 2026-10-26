@@ -49,7 +49,9 @@ extension HeartbeatManager {
 	) throws {
 		rsdConnectionLock.lock()
 		defer { rsdConnectionLock.unlock() }
+		try Task.checkCancellation()
 		try _ensureRSDTunnelLocked(discoveryTimeout: discoveryTimeout)
+		try Task.checkCancellation()
 		guard let adapter = rsdAdapter, let handshake = rsdHandshake else {
 			throw IDeviceConnectionError.rsdTunnelUnavailable("The adapter or handshake is missing.")
 		}
@@ -61,6 +63,7 @@ extension HeartbeatManager {
 	}
 
 	private func _ensureRSDTunnelLocked(discoveryTimeout: TimeInterval? = nil) throws {
+		try Task.checkCancellation()
 		if rsdAdapter != nil, rsdHandshake != nil {
 			return
 		}
@@ -84,6 +87,7 @@ extension HeartbeatManager {
 		var attemptedPorts = Set<UInt16>()
 
 		func tryPort(_ port: UInt16) throws -> Bool {
+			try Task.checkCancellation()
 			guard attemptedPorts.insert(port).inserted else { return false }
 
 			address.sin_port = CFSwapInt16HostToBig(port)
@@ -108,6 +112,7 @@ extension HeartbeatManager {
 				if let newHandshake { rsd_handshake_free(newHandshake) }
 				if let newAdapter { adapter_free(newAdapter) }
 				let error = IDeviceSwiftError(result)
+				try Task.checkCancellation()
 				// Preserve explicit authentication rejection instead of wrapping it
 				// in a generic endpoint error or retrying another port.
 				if DeviceConnectionCheck(isConnected: false, errorCode: error.code, errorSubCode: error.subCode).rejectsPairingRecord {
@@ -122,6 +127,11 @@ extension HeartbeatManager {
 				if let newAdapter { adapter_free(newAdapter) }
 				failures.append("\(ipAddress):\(port) — The tunnel returned incomplete handles.")
 				return false
+			}
+			guard !Task.isCancelled else {
+				rsd_handshake_free(newHandshake)
+				adapter_free(newAdapter)
+				throw CancellationError()
 			}
 
 			rsdAdapter = newAdapter
@@ -151,6 +161,9 @@ extension HeartbeatManager {
 	public func resetRSDTunnel() {
 		rsdConnectionLock.lock()
 		defer { rsdConnectionLock.unlock() }
+		// A lifecycle owner may retire this cleanup while it waits for a native
+		// connection. It must not subsequently reset a newer session's handles.
+		guard !Task.isCancelled else { return }
 		_invalidateRSDTunnelLocked()
 	}
 

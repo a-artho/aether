@@ -9,17 +9,19 @@ source = (repo / 'Aether/Views/Library/UnifiedImportsSection.swift').read_text()
 activity = source[source.index('@MainActor\nprivate final class UnifiedImportActivity:'):source.index('\nprivate struct UnifiedImportMetadata:')]
 cancellation = source[source.index('\tfunc cancelDownload('):source.index('\n\tfunc delete(_ targets:')]
 visibility = source[source.index('\tvar visibleRows:'):source.index('\n\tfunc updateRows(')]
-update_rows = source[source.index('\tfunc updateRows('):source.index('\n\tfunc isProtected(')]
 def declaration(marker):
     a=source.index(marker);b=source.index('{',a)+1;n=1
     while n:
         n+=(source[b]=='{')-(source[b]=='}');b+=1
     return source[a:b]
+update_rows = declaration('\tfunc updateRows(')
 name=declaration('var displayName:')
 phase=declaration('private var numericProgressPhase:').replace('private var','var',1)
 fixture = r'''
 import Foundation
 import Combine
+struct Transaction {var animation:Int?;var disablesAnimations=false}
+func withTransaction(_ transaction:Transaction,_ body:()->Void) {body()}
 @MainActor final class Download: ObservableObject {
  let id = UUID().uuidString; @Published var progress = 0.0
  enum State {case downloading,processing,paused}
@@ -37,11 +39,13 @@ import Combine
  }
 }
 @MainActor final class CancellationFixture {
+ var hasLoadedInitialRows=false
  var cancellingRows: Set<String> = []
  var deletingRows: Set<String> = []
  var rows: [UnifiedImportEntry] = []
  var rowSignatures: [String] = []
  var revision: UInt64 = 0
+ func _schedulePendingAutoDeletes() {} // Auto-delete is outside this subscription/cancellation fixture.
  VISIBILITY
  UPDATE_ROWS
  CANCELLATION

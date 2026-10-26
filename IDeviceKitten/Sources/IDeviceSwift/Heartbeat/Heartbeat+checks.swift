@@ -29,8 +29,8 @@ extension HeartbeatManager {
 		} catch let error as IDeviceSwiftError {
 			let check = DeviceConnectionCheck(isConnected: false, error: error.localizedDescription, errorCode: error.code, errorSubCode: error.subCode)
 			if check.rejectsPairingRecord { return check }
-			return .init(isConnected: true)
-		} catch { return .init(isConnected: true) }
+			return .init(isConnected: true, error: error.localizedDescription)
+		} catch { return .init(isConnected: true, error: error.localizedDescription) }
 	}
 
 	private func _checkRSDDeviceConnection(timeoutInSeconds: Double, includeApps: Bool, onVerified: (@Sendable () -> Void)?) -> DeviceConnectionCheck {
@@ -44,6 +44,11 @@ extension HeartbeatManager {
 			return verifiedClient(client, includeApps: includeApps, onVerified: onVerified)
 		} catch let error as IDeviceSwiftError {
 			return .init(isConnected: false, error: error.localizedDescription, errorCode: error.code, errorSubCode: error.subCode)
+		} catch let error as IDeviceConnectionError {
+			if case .rsdTunnelUnavailable = error {
+				return .init(isConnected: false, error: error.localizedDescription, isTransientTransportFailure: true)
+			}
+			return .init(isConnected: false, error: error.localizedDescription)
 		} catch {
 			return .init(isConnected: false, error: error.localizedDescription)
 		}

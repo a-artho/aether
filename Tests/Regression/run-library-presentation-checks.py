@@ -40,11 +40,17 @@ enum DeviceConnectionState { case connected, connecting, disconnecting, disconne
  var isDisconnectWhenIdleEnabled = false
  var hasActiveTunnelDependencies = false
  var automatic = true
+ enum Method {case inApp,localDevVPN};var tunnelMethod=Method.inApp
  var connections = 0
  func connectAutomaticallyIfNeeded() {
   guard automatic, state == .disconnected else { return }
   connections += 1; state = .connecting
   Task { await Task.yield(); self.state = .connected }
+ }
+ func verifyForAppRefresh() async -> Bool {
+  connectAutomaticallyIfNeeded()
+  while isUpdating && !Task.isCancelled {await Task.yield()}
+  return !Task.isCancelled && isConnected
  }
 }
 @MainActor final class CellularAssistManager: ObservableObject {
@@ -103,6 +109,7 @@ struct InstalledApp: Equatable { let bundleIdentifier: String; let version: Stri
  var pause = false
  var waiter: CheckedContinuation<Void, Never>?
  func invalidateConnection() { hasLoadedApps = false; lastUpdated = nil; isLoading = false; errorMessage = nil }
+ func beginRefreshEpisode() {}
  func refreshOnForeground() async {
   if !hasLoadedApps || Date().timeIntervalSince(lastUpdated ?? .distantPast) >= 60 { await refresh(force: false) }
  }

@@ -8,7 +8,6 @@
 import Foundation
 import SwiftUI
 import IDevice
-import UIKit.UIApplication
 
 // One pending main-queue delivery, regardless of how many AFC writes finish.
 // Closing discards delayed deliveries so they cannot overwrite a terminal state.
@@ -58,6 +57,43 @@ private final class UploadProgressContext {
  }
 }
 
+/// Native callbacks follow installation-service responses. Keep a single handoff
+/// alive for the native call, and retire queued delivery on completion/cancel.
+private final class InstallationProgressContext: @unchecked Sendable {
+	private let lock = NSLock()
+	private let publisher: UploadProgressPublisher
+	private let onFirstResponse: (@MainActor @Sendable () -> Void)?
+	private var handoffScheduled = false
+	private var closed = false
+
+	init(publisher: UploadProgressPublisher, onFirstResponse: (@MainActor @Sendable () -> Void)?) {
+		self.publisher = publisher
+		self.onFirstResponse = onFirstResponse
+	}
+
+	func report(_ progress: UInt64) {
+		publisher.submit(Double(progress) / 100.0)
+		lock.lock()
+		let shouldSchedule = !closed && !handoffScheduled && onFirstResponse != nil
+		if shouldSchedule { handoffScheduled = true }
+		lock.unlock()
+		if shouldSchedule { DispatchQueue.main.async { [self] in deliverHandoff() } }
+	}
+
+	@MainActor private func deliverHandoff() {
+		lock.lock()
+		let shouldDeliver = !closed
+		lock.unlock()
+		if shouldDeliver { onFirstResponse?() }
+	}
+
+	func cancel() {
+		lock.lock()
+		closed = true
+		lock.unlock()
+	}
+}
+
 public class InstallationProxy: Identifiable, ObservableObject {
 	private let _heartbeat = HeartbeatManager.shared
 	private let _uuid = UUID().uuidString
@@ -73,7 +109,9 @@ public class InstallationProxy: Identifiable, ObservableObject {
 	}
 
 	public func install(
-		at url: URL, suspend: Bool = false,
+		at url: URL,
+		beforeInstallation: (@Sendable () async throws -> Void)? = nil,
+		onFirstInstallationResponse: (@MainActor @Sendable () -> Void)? = nil,
 		diagnosticID: String? = nil,
 		diagnosticLog: (@Sendable (String) -> Void)? = nil
 	) async throws {
@@ -92,7 +130,9 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		let installationProgressPublisher = UploadProgressPublisher { [weak self] value in
 			self?.viewModel.installProgress = value
 		}
-		defer { progressPublisher.cancel(); installationProgressPublisher.cancel() }
+		let installationContext = InstallationProgressContext(publisher: installationProgressPublisher,
+			onFirstResponse: onFirstInstallationResponse)
+		defer { progressPublisher.cancel(); installationProgressPublisher.cancel(); installationContext.cancel() }
 		let worker = Task.detached(priority: .utility) {
 			// Native handles belong exclusively to this worker and its cleanup.
 			var afcClient: AfcClientHandle?
@@ -100,7 +140,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			var installproxy: InstallationProxyClientHandle?
 			var remotePath: String?
 
-			defer { progressPublisher.cancel(); installationProgressPublisher.cancel() }
+			defer { progressPublisher.cancel(); installationProgressPublisher.cancel(); installationContext.cancel() }
 			var diagnosticOutcome = "failed"
 			defer { diagnostics?.finish(outcome: Task.isCancelled ? "cancelled" : diagnosticOutcome) }
 			try Task.checkCancellation()
@@ -221,18 +261,14 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			}
 
 			try Task.checkCancellation()
+			try await beforeInstallation?()
+			try Task.checkCancellation()
 			diagnostics?.stage("native-install")
 
 			let installError: UnsafeMutablePointer<IdeviceFfiError>? = remoteDir.withCString { cString in
-				let context = Unmanaged.passUnretained(installationProgressPublisher).toOpaque()
+				let context = Unmanaged.passUnretained(installationContext).toOpaque()
 
-				if suspend {
-					DispatchQueue.main.async {
-						UIApplication.shared.perform(#selector(NSXPCConnection.suspend))
-					}
-				}
-
-				return withExtendedLifetime(installationProgressPublisher) { installation_proxy_install_with_callback(
+				return withExtendedLifetime(installationContext) { installation_proxy_install_with_callback(
 					installproxy,
 					cString,
 					nil, // options
@@ -240,6 +276,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 					context
 				) }
 			}
+			installationContext.cancel()
 
 			guard installError == nil else {
 				throw IDeviceSwiftError(installError)
@@ -256,6 +293,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		} onCancel: {
 			progressPublisher.cancel()
 			installationProgressPublisher.cancel()
+			installationContext.cancel()
 			worker.cancel()
 		}
 	}
@@ -278,6 +316,6 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		UInt64, UnsafeMutableRawPointer?
 	) -> Void = { progress, context in
 		guard let context else { return }
-		Unmanaged<UploadProgressPublisher>.fromOpaque(context).takeUnretainedValue().submit(Double(progress) / 100.0)
+		Unmanaged<InstallationProgressContext>.fromOpaque(context).takeUnretainedValue().report(progress)
 	}
 }

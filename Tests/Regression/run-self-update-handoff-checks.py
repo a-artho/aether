@@ -1,0 +1,62 @@
+"""Exercise the production native-callback handoff without suspending an app."""
+from pathlib import Path
+import subprocess
+import tempfile
+
+root = Path(__file__).resolve().parents[2]
+proxy = (root / 'IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/InstallationProxy.swift').read_text()
+contexts = proxy[proxy.index('private final class UploadProgressPublisher'):proxy.index('public class InstallationProxy')]
+checks = r'''
+import Foundation
+CONTEXTS
+@MainActor final class Counts {
+ var handoffs=0
+ var progress:[Double]=[]
+}
+@main struct Checks {
+ @MainActor static func drain() async throws {try await Task.sleep(for:.milliseconds(20))}
+ @MainActor static func main() async throws {
+  let counts=Counts()
+  let publisher=UploadProgressPublisher {counts.progress.append($0)}
+  let context=InstallationProgressContext(publisher:publisher,onFirstResponse:{counts.handoffs+=1})
+  await Task.detached {
+   DispatchQueue.concurrentPerform(iterations:200) {context.report(UInt64($0 % 100))}
+  }.value
+  try await drain()
+  precondition(counts.handoffs==1,"Concurrent native responses hand off once")
+  precondition(counts.progress.last==0.99,"Progress still coalesces monotonically")
+  context.cancel();publisher.cancel()
+
+  for completed in [false,true] {
+   let counts=Counts(), publisher=UploadProgressPublisher {_ in}
+   let context=InstallationProgressContext(publisher:publisher,onFirstResponse:{counts.handoffs+=1})
+   context.report(0)
+   context.cancel() // Either native completion or caller cancellation retires queued suspension.
+   if !completed {context.report(80)}
+   try await drain()
+   precondition(counts.handoffs==0,"Retired calls cannot suspend the app later")
+   publisher.cancel()
+  }
+
+  let zero=Counts(), zeroPublisher=UploadProgressPublisher {_ in}
+  let zeroContext=InstallationProgressContext(publisher:zeroPublisher,onFirstResponse:{zero.handoffs+=1})
+  zeroContext.report(0);try await drain()
+  precondition(zero.handoffs==1,"A genuine zero-percent response is sufficient; don't wait for percentage growth")
+  zeroContext.cancel();zeroPublisher.cancel()
+
+  let normal=Counts()
+  let normalPublisher=UploadProgressPublisher {normal.progress.append($0)}
+  let normalContext=InstallationProgressContext(publisher:normalPublisher,onFirstResponse:nil)
+  normalContext.report(50);try await drain()
+  precondition(normal.progress==[0.5] && normal.handoffs==0,"Other apps retain progress without a self-update handoff")
+  normalContext.cancel();normalPublisher.cancel()
+  print("Self-update handoff checks passed: concurrent responses, one-shot delivery, zero-percent response, completion/cancellation retirement and normal-app progress")
+ }
+}
+'''.replace('CONTEXTS', contexts)
+with tempfile.TemporaryDirectory(prefix='aether-self-handoff-') as directory:
+    folder = Path(directory)
+    swift = folder / 'Checks.swift'
+    swift.write_text(checks)
+    subprocess.run(['swiftc', '-swift-version', '6', '-parse-as-library', str(swift), '-o', str(folder / 'checks')], check=True)
+    subprocess.run([str(folder / 'checks')], check=True, timeout=15)

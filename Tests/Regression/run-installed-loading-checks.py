@@ -12,7 +12,7 @@ s+=(repo/'IDeviceKitten/Sources/IDeviceSwift/Utilties/AnyCodable.swift').read_te
 s+=(repo/'IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/Models/AppInfo.swift').read_text()
 s+=(repo/'IDeviceKitten/Sources/IDeviceSwift/InstallationProxy/Models/AppInstallationProvenance.swift').read_text()
 s+=r'''
-public struct ProvisioningProfileInfo {
+public struct ProvisioningProfileInfo: Sendable {
  func matches(bundleIdentifier:String,appTeamIdentifier:String?,appApplicationIdentifier:String?,now:Date) -> Bool {bundleIdentifier == "unknown"}
 }
 struct InstalledApp {
@@ -22,24 +22,29 @@ struct InstalledApp {
 }
 enum Level {case error, debug}
 @MainActor final class DebugLogManager {static let shared=DebugLogManager();func log(_ s:String,category:String,level:Level?=nil) {}}
-@MainActor final class DeviceConnectionManager {static let shared=DeviceConnectionManager();var isConnected=true}
+@MainActor final class DeviceConnectionManager {static let shared=DeviceConnectionManager();var isConnected=true;var verificationSucceeds=true;var verifications=0;func verifyForAppRefresh() async -> Bool {verifications+=1;isConnected=verificationSucceeds;return isConnected};func reconcile(force:Bool) async -> Bool {verifications+=1;isConnected=verificationSucceeds;return isConnected}}
 @MainActor final class InstallationAppProxy {
- static var failProfiles=false;static var fetches=0;static var profileFetches=0;static var profileWaiter:CheckedContinuation<[ProvisioningProfileInfo],Never>?
+ static var holdFetch=false;static var fetchWaiter:CheckedContinuation<[AppInfo],Never>?;static var failFetch=false;static var failProfiles=false;static var fetches=0;static var profileFetches=0;static var profileWaiter:CheckedContinuation<[ProvisioningProfileInfo],Never>?
  static var result:[AppInfo]=[]
- func fetchApps(applicationType:String?,lightweight:Bool) async throws -> [AppInfo] {Self.fetches+=1;return Self.result}
+ func fetchApps(applicationType:String?,lightweight:Bool) async throws -> [AppInfo] {Self.fetches+=1;if Self.holdFetch {return await withCheckedContinuation {Self.fetchWaiter=$0}};if Self.failFetch {throw NSError(domain:"Fetch",code:1)};return Self.result}
  func provisioningProfiles() async throws -> [ProvisioningProfileInfo] {Self.profileFetches+=1;if Self.failProfiles {throw NSError(domain:"Test",code:1)};let result = await withCheckedContinuation {Self.profileWaiter=$0};if Self.failProfiles {throw NSError(domain:"Late profile failure",code:2)};return result}
  static func getAppIconCached(for id:String,cacheVersion:String?) async throws -> String? {nil}
  nonisolated static func iconCacheRevision(for id:String)->String {""}
 }
 @MainActor final class Store {
  var apps:[InstalledApp]=[];var hasLoadedApps=false;var lastLoadedAt:Date?;var verifiedApps:[AppInfo]?
- var initialBrowse:Task<[AppInfo]?,Never>?
+ var initialBrowse:Task<[AppInfo],Error>?
+ var cancelRead:(()->Void)?;var readID:UUID?;var automaticReadRetryUsed=false
  var needsTrailingRefresh=false;var refreshGeneration=UUID();var iconPrefetchTask:Task<Void,Never>?
  var isLoading=false;var errorMessage:String?
 '''
-for start in ['func stageInitialBrowse(', 'func stageVerifiedApps(', 'func load()', 'func refreshOnForeground()', 'func clear()', 'func invalidateConnection()', 'func refresh(force:', 'private func prefetchFirstScreenIcons()', 'private func updateApplications(']:
+for start in ['func stageInitialBrowse(', 'func stageVerifiedApps(', 'func load()', 'func refreshOnForeground()', 'func clear()', 'func invalidateConnection()', 'func refresh(force:', 'private func verifyConnectionAfterReadFailure(', 'private func readDevice<', 'private func prefetchFirstScreenIcons()', 'private func updateApplications(']:
  s+=declaration('Aether/Views/Installed/InstalledAppsStore.swift',start)+'\n'
 s+='}\n'
+embedded=(repo/'Aether/Backend/Observable/EmbeddedTunnelManager.swift').read_text()
+helper=embedded[embedded.index('private final class TunnelOperationReply'):embedded.index('#if os(iOS)')]
+s+='\n'+helper
+s=s.replace('awaitTunnelReply(timeout: 4)', 'awaitTunnelReply(timeout: 0.04)')
 s+='@MainActor struct LoadingPresentation { let store:Store;let connection=DeviceConnectionManager.shared\n'+declaration('Aether/Views/Library/LibraryView.swift','private var isLoadingInstalledApps:').replace('private var','var',1)+'\n}\n'
 s+=r'''
 func check(_ value:@autoclosure ()->Bool,_ label:String){precondition(value(),label)}
@@ -95,6 +100,31 @@ func check(_ value:@autoclosure ()->Bool,_ label:String){precondition(value(),la
   InstallationAppProxy.result=[]
   await store.refresh(force:true)
   check(store.apps.isEmpty && store.hasLoadedApps,"A successful empty browse is authoritative")
+  let readFailure=Store();InstallationAppProxy.failFetch=true
+  await readFailure.refresh(force:true)
+  check(readFailure.errorMessage != nil && DeviceConnectionManager.shared.isConnected,"A service error remains visible when transport verification succeeds")
+  let disconnected=Store();DeviceConnectionManager.shared.verificationSucceeds=false
+  await disconnected.refresh(force:true)
+  check(disconnected.errorMessage == nil && !DeviceConnectionManager.shared.isConnected,"A read failure with lost transport must not leave Connected or publish a misleading app error")
+  check(DeviceConnectionManager.shared.verifications>=2,"App read failures trigger real connection verification")
+  InstallationAppProxy.failFetch=false;DeviceConnectionManager.shared.verificationSucceeds=true
+  let blocked=Store();InstallationAppProxy.holdFetch=true
+  DeviceConnectionManager.shared.isConnected=true
+  let hanging=Task {await blocked.refresh(force:true)}
+  while InstallationAppProxy.fetchWaiter == nil {await Task.yield()}
+  blocked.invalidateConnection()
+  await hanging.value
+  check(!blocked.isLoading && blocked.apps.isEmpty,"Disconnect releases an in-flight load before the native call returns")
+  InstallationAppProxy.fetchWaiter?.resume(returning:[known]);InstallationAppProxy.fetchWaiter=nil
+  for _ in 0..<100 {await Task.yield()}
+  check(blocked.apps.isEmpty,"A late cancelled read cannot publish apps")
+  let timed=Store();DeviceConnectionManager.shared.verificationSucceeds=false;DeviceConnectionManager.shared.isConnected=true
+  let timeout=Task {await timed.refresh(force:true)}
+  while InstallationAppProxy.fetchWaiter == nil {await Task.yield()}
+  await timeout.value
+  check(!timed.isLoading,"A silent native read is bounded without a disconnect notification")
+  InstallationAppProxy.fetchWaiter?.resume(returning:[known]);InstallationAppProxy.fetchWaiter=nil
+  InstallationAppProxy.holdFetch=false
   print("Installed loading/foreground checks passed")
  }
 }
