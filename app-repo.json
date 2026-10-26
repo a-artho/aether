@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AppIcon.appiconset/aether.png",
-      "version": "2.0.8",
-      "versionDate": "2026-10-24T21:08:02Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0.8/Aether.ipa",
-      "size": 19499094,
-      "versionDescription": "# Aether 2.0.8\n\n- Simplify the Library flow by removing installation-driven tab navigation and automatic scrolling.\n- Keep update checks coordinated across app activation, repository refreshes, installs, and uninstalls; avoid redundant refreshes on tab switches.\n- Restore the established 2.0.5 import progress presentation and retain stable row/icon behavior through signing and installation.\n- Improve import status badges, repository loading presentation, and appearance controls.\n- Remove obsolete animation, focus, and tab-label code and extend regression coverage for refresh lifecycle behavior.\n\nThe IPA is unsigned, includes the in-app VPN extension, and requires signing before installation.",
+      "version": "3.0.0",
+      "versionDate": "2026-10-26T04:15:54Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.0/Aether.ipa",
+      "size": 18172908,
+      "versionDescription": "# Aether 3.0.0\n\n- Improve repository browsing and search responsiveness, including large catalogs.\n- Refine source navigation, app icons, and appearance controls.\n- Polish Library updates and coordinate refresh indicators independently for each repository.\n- Smooth Imports progress transitions and strengthen lifecycle regression coverage.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.0",
+          "date": "2026-10-26T04:15:54Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.0/Aether.ipa",
+          "size": 18172908,
+          "localizedDescription": "# Aether 3.0.0\n\n- Improve repository browsing and search responsiveness, including large catalogs.\n- Refine source navigation, app icons, and appearance controls.\n- Polish Library updates and coordinate refresh indicators independently for each repository.\n- Smooth Imports progress transitions and strengthen lifecycle regression coverage.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "2.0.8",
           "date": "2026-10-24T21:08:02Z",
