@@ -537,7 +537,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		activeVerificationID = nil
 		transitionGeneration = generation
 		transitionExpectedState = enabled
-		transitionDeadline = method == .inApp ? .infinity : CACurrentMediaTime() + 6.0
+		transitionDeadline = method == .inApp ? .infinity : CACurrentMediaTime() + 4.0
 		state = enabled ? .connecting : .disconnecting
 		diagnostic = .checking
 		_log("\(enabled ? "Connecting" : "Disconnecting") with \(method.displayName).", category: "Tunnel", level: .notice)

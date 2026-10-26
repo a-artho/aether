@@ -275,10 +275,9 @@ struct LibraryView: View {
 
 	private var showsDevicePlaceholder: Bool {
 		installationMethod == 0 || !connection.hasPairingFile || connection.requiresInAppTunnelSetup
-			|| (store.apps.isEmpty && (
-				(_showsCellularConnectionGuidance && _needsManualCellularRefresh)
-				|| (!connection.isConnected && !isConnectingTunnel && !cellularAssist.isBusy)
-			))
+			|| (_showsCellularConnectionGuidance && _needsManualCellularRefresh)
+			|| (!connection.isConnected && !isConnectingTunnel && !cellularAssist.isBusy
+				&& updates.phase != .connecting && !isLoadingInstalledApps && !_showsCellularConnectionGuidance)
 	}
 
 	private var isLoadingInstalledApps: Bool {
@@ -432,12 +431,12 @@ struct LibraryView: View {
 			return DeviceStatus(title: .localized("Pairing File Missing"), description: .localized("Add a pairing file to view sideloaded apps or spoof device location."), icon: "key.slash", action: .pair, buttonTitle: .localized("Pair"))
 		} else if connection.requiresInAppTunnelSetup {
 			return DeviceStatus(title: .localized("VPN Setup Required"), description: .localized("Set up Aether’s VPN profile to connect to your device."), icon: "network.badge.shield.half.filled", action: .setupVPN, buttonTitle: .localized("Set Up"))
-		} else if _showsCellularConnectionGuidance && store.apps.isEmpty {
+		} else if _showsCellularConnectionGuidance && (store.apps.isEmpty || _needsManualCellularRefresh) {
 			return DeviceStatus(title: _needsManualCellularRefresh ? .localized("Refresh Cellular Connection") : .localized("Connecting on Cellular"), description: _needsManualCellularRefresh ? .localized("Turn off Mobile Data or briefly enable Airplane Mode. Switch it back on once Aether connects.") : .localized("Aether is refreshing the cellular connection to reach your device."), icon: "antenna.radiowaves.left.and.right", busy: true)
 		} else if isConnectingTunnel && store.apps.isEmpty {
 			return DeviceStatus(title: .localized("Connecting Tunnel"), description: .localized("Aether is connecting so you can view sideloaded apps or spoof device location."), icon: "network")
-		} else if !connection.isConnected && store.apps.isEmpty {
-			return DeviceStatus(title: .localized("Tunnel Unavailable"), description: .localized("Reconnect the tunnel to view sideloaded apps or spoof device location."), icon: "network.slash", action: .reconnect, buttonTitle: .localized("Retry"))
+		} else if !connection.isConnected {
+			return DeviceStatus(title: .localized("Tunnel Unavailable"), description: .localized("Retry connecting or check Settings."), icon: "network.slash", action: .reconnect, buttonTitle: .localized("Retry"))
 
 		} else {
 			return DeviceStatus(title: .localized("No Sideloaded Apps"), description: .localized("Sideloaded apps will appear here. Manage location spoofing in Settings."), icon: "square.stack.3d.up.slash")

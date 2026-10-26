@@ -474,7 +474,7 @@ private extension EmbeddedTunnelManager {
 	}
 
 	func waitForConnected() async -> Bool {
-		await waitForStatus(.connected, timeout: 10_000_000_000)
+		await waitForStatus(.connected, timeout: 4_000_000_000)
 	}
 
 	func waitForDisconnected() async -> Bool {
