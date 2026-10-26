@@ -26,6 +26,7 @@ struct ConfigurationDictView: View {
 				}
 			}
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 		.toolbar {
 			NBToolbarButton(
 				systemImage: "plus",

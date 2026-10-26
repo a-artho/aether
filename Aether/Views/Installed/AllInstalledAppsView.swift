@@ -57,6 +57,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 							.contentShape(Rectangle())
 					}
 					.buttonStyle(.plain)
+					.listRowBackground(Color.clear)
 					.listRowInsets(.horizontal, horizontalInset.points)
 					.disabled(deletingIDs.contains(app.id))
 					.id(app.id)
@@ -76,6 +77,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 			.listSectionSeparator(.hidden)
 		}
 		.listStyle(.plain)
+		.aetherAmbientScrollBackground()
 		.overlay {
 			if store.apps.isEmpty { placeholder }
 			else if filteredApps.isEmpty {

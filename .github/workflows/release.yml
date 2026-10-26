@@ -33,6 +33,7 @@ jobs:
       - name: Regression checks
         run: |
           python3 Tests/Regression/run-release-checks.py
+          python3 Tests/Regression/run-aether-update-checks.py
           bash Tests/Regression/run.sh
 
       - name: Prepare native pairing library
@@ -81,3 +82,48 @@ jobs:
             gh release create "$TAG" packages/Aether.ipa --target "$GITHUB_SHA" \
               --title "Aether $VERSION" --notes-file "docs/releases/$VERSION.md"
           fi
+
+      - name: Update Aether app repository manifest
+        if: github.event_name == 'push' || inputs.publish_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$VERSION"
+          RELEASE_DATE="$(gh release view "$TAG" --json publishedAt --jq '.publishedAt // empty')"
+          ASSET_SIZE="$(gh release view "$TAG" --json assets --jq '[.assets[] | select(.name == "Aether.ipa") | .size][0] // empty')"
+          if [[ -z "$RELEASE_DATE" || -z "$ASSET_SIZE" ]]; then
+            echo "Published release $TAG is missing its publication date or Aether.ipa asset" >&2
+            exit 1
+          fi
+          gh release view "$TAG" --json body --jq '.body // ""' > "$RUNNER_TEMP/aether-release-notes.md"
+
+          MANIFEST_WORKTREE="$RUNNER_TEMP/AetherManifest"
+          git fetch origin main
+          git worktree add --detach "$MANIFEST_WORKTREE" origin/main
+          trap 'git worktree remove --force "$MANIFEST_WORKTREE"' EXIT
+          git -C "$MANIFEST_WORKTREE" config user.name "github-actions[bot]"
+          git -C "$MANIFEST_WORKTREE" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git -C "$MANIFEST_WORKTREE" reset --hard origin/main
+            python3 "$GITHUB_WORKSPACE/scripts/update-app-repo.py" \
+              "$MANIFEST_WORKTREE/app-repo.json" \
+              --version "$VERSION" \
+              --date "$RELEASE_DATE" \
+              --download-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/Aether.ipa" \
+              --size "$ASSET_SIZE" \
+              --notes-file "$RUNNER_TEMP/aether-release-notes.md"
+            git -C "$MANIFEST_WORKTREE" add app-repo.json
+            if git -C "$MANIFEST_WORKTREE" diff --cached --quiet; then
+              echo "Aether app repository already reflects $VERSION"
+              exit 0
+            fi
+            git -C "$MANIFEST_WORKTREE" commit -m "chore: update Aether app repository for $TAG"
+            if git -C "$MANIFEST_WORKTREE" push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Manifest push attempt $attempt failed; retrying from the latest main."
+          done
+          echo "Could not update app-repo.json after three attempts." >&2
+          exit 1

@@ -10,6 +10,12 @@ import AltSourceKit
 import SwiftUI
 import OSLog
 
+enum AetherBuiltInRepository {
+	static let key = "builtin:aether"
+	static let canonicalBundleIdentifier = "com.anfear.aether"
+	static let url = URL(string: "https://raw.githubusercontent.com/a-artho/aether/main/app-repo.json")!
+}
+
 // MARK: - Class
 @MainActor
 final class SourcesViewModel: ObservableObject {
@@ -18,12 +24,15 @@ final class SourcesViewModel: ObservableObject {
 	private let _repositoryService: SourceRepositoryService
 	private let _defaults: UserDefaults
 	private var _lastGlobalAttempt: Date?
+	private var _lastBuiltInAttempt: Date?
 	private static let _lastUpdatedKey = "Aether.sourcesLastUpdated"
 	@Published private(set) var lastUpdated: Date?
 	private var _revisions: [String: String] = [:]
 	private var removedSourceKeys = Set<String>()
 	private var cacheResetGeneration = UUID()
 	@Published private(set) var refreshErrors: [String: String] = [:]
+	/// Kept separate from user repositories so this catalog never appears in Sources.
+	@Published private(set) var builtInAetherSnapshot: SourceRepositoryService.Snapshot?
 	
 	@Published private(set) var catalogRevision = 0
 	@Published private(set) var isRefreshRequested = false
@@ -80,8 +89,10 @@ final class SourcesViewModel: ObservableObject {
 		await InstalledAppUpdateCatalog.shared.clearCache()
 		_revisions.removeAll()
 		sources.removeAll()
+		builtInAetherSnapshot = nil
 		refreshErrors.removeAll()
 		_lastGlobalAttempt = nil
+		_lastBuiltInAttempt = nil
 		lastUpdated = nil
 		_defaults.removeObject(forKey: Self._lastUpdatedKey)
 		catalogRevision += 1
@@ -106,6 +117,29 @@ final class SourcesViewModel: ObservableObject {
 
 	func repository(for source: AltSource) -> ASRepository? {
 		sources[source.objectID.uriRepresentation().absoluteString]
+	}
+
+	/// Rebind only Aether's canonical release entry to this installation's identity.
+	/// This supports developer-signed or otherwise renamed Aether builds while
+	/// leaving every other app in the manifest untouched.
+	func builtInAetherUpdateContext(installedBundleIdentifier: String?) -> SourceAppCatalogContext? {
+		guard let installedBundleIdentifier,
+			let snapshot = builtInAetherSnapshot else { return nil }
+		var repository = snapshot.repository
+		let aetherApps = repository.apps.compactMap { app -> ASRepository.App? in
+			guard app.id == AetherBuiltInRepository.canonicalBundleIdentifier else { return nil }
+			var rebound = app
+			rebound.id = installedBundleIdentifier
+			return rebound
+		}
+		guard !aetherApps.isEmpty else { return nil }
+		repository.apps = aetherApps
+		return SourceAppCatalogContext(
+			sourceObjectURI: AetherBuiltInRepository.key,
+			sourceURL: AetherBuiltInRepository.url,
+			repository: repository,
+			revision: snapshot.revision
+		)
 	}
 
 	/// Keeps the manifest fetched while adding a source so the Sources view does
@@ -163,17 +197,15 @@ final class SourcesViewModel: ObservableObject {
 	func fetchSources(_ sources: [AltSource], refresh: Bool = false, batchSize: Int = 4) async {
 		guard isFinished else { return }
 		let generation = cacheResetGeneration
-		let allRequests = sources.map {
-			SourceRequest(key: $0.objectID.uriRepresentation().absoluteString, sourceURL: $0.sourceURL)
-		}
-		let validKeys = Set(allRequests.map(\.key))
+		let userRequests = _userRequests(sources)
+		let validKeys = Set(userRequests.map(\.key))
 		if self.sources.keys.contains(where: { !validKeys.contains($0) }) {
 			self.sources = self.sources.filter { validKeys.contains($0.key) }
 			catalogRevision += 1
 		}
 		_revisions = _revisions.filter { validKeys.contains($0.key) }
 		refreshErrors = refreshErrors.filter { validKeys.contains($0.key) }
-		let requests = allRequests.filter { refresh || self.sources[$0.key] == nil }
+		let requests = _requests(for: userRequests, refresh: refresh)
 		guard !requests.isEmpty else { return }
 
 		isFinished = false
@@ -181,7 +213,9 @@ final class SourcesViewModel: ObservableObject {
 		await _fetchRequests(requests, refresh: refresh, batchSize: batchSize)
 		if refresh, !Task.isCancelled, generation == cacheResetGeneration {
 			_lastGlobalAttempt = Date()
-			if requests.allSatisfy({ refreshErrors[$0.key] == nil }) {
+			// The hidden Aether feed is optional and must not affect the user's
+			// repository status or make an otherwise successful refresh look failed.
+			if !userRequests.isEmpty && userRequests.allSatisfy({ refreshErrors[$0.key] == nil }) {
 				lastUpdated = Date()
 				_defaults.set(lastUpdated, forKey: Self._lastUpdatedKey)
 			}
@@ -190,7 +224,7 @@ final class SourcesViewModel: ObservableObject {
 
 	/// Automatic refreshes share a two-minute freshness window, including relaunches.
 	func refreshIfNeeded(_ sources: [AltSource], now: Date = .now) async {
-		guard !Task.isCancelled, isFinished, !isRefreshRequested, !sources.isEmpty else { return }
+		guard !Task.isCancelled, isFinished, !isRefreshRequested else { return }
 		if now.timeIntervalSince(_lastGlobalAttempt ?? lastUpdated ?? .distantPast) >= 2 * 60 {
 			// The page may disappear or become inactive while the request is in
 			// flight. Shared ownership keeps catalog and timestamp commits together.
@@ -204,13 +238,38 @@ final class SourcesViewModel: ObservableObject {
 	func ensureSourcesLoaded(_ sources: [AltSource], batchSize: Int = 4) async {
 		let generation = cacheResetGeneration
 		guard !Task.isCancelled else { return }
-		let requests = sources.map {
-			SourceRequest(key: $0.objectID.uriRepresentation().absoluteString, sourceURL: $0.sourceURL)
-		}
+		let requests = _requests(for: _userRequests(sources), refresh: false)
 		await _restoreCachedSources(requests)
 		guard !Task.isCancelled, generation == cacheResetGeneration else { return }
-		let missing = requests.filter { self.sources[$0.key] == nil }
+		let missing = requests.filter { !_hasCatalog(for: $0.key) }
 		await _fetchRequests(missing, refresh: false, batchSize: batchSize, restoreCached: false)
+	}
+
+	private func _userRequests(_ sources: [AltSource]) -> [SourceRequest] {
+		sources.map {
+			SourceRequest(key: $0.objectID.uriRepresentation().absoluteString, sourceURL: $0.sourceURL)
+		}
+	}
+
+	/// One request builder keeps manual refresh, automatic refresh, and lazy cache
+	/// restoration aligned while keeping the internal feed out of Core Data.
+	private func _requests(for userRequests: [SourceRequest], refresh: Bool) -> [SourceRequest] {
+		var requests = userRequests.filter { refresh || self.sources[$0.key] == nil }
+		let builtInRetryIsDue = _lastBuiltInAttempt.map { Date().timeIntervalSince($0) >= 2 * 60 } ?? true
+		if refresh || (builtInAetherSnapshot == nil && builtInRetryIsDue) {
+			requests.append(SourceRequest(key: AetherBuiltInRepository.key, sourceURL: AetherBuiltInRepository.url))
+		}
+		return requests
+	}
+
+	private func _hasCatalog(for key: String) -> Bool {
+		key == AetherBuiltInRepository.key ? builtInAetherSnapshot != nil : sources[key] != nil
+	}
+
+	private func _publishBuiltInAether(_ snapshot: SourceRepositoryService.Snapshot) {
+		guard builtInAetherSnapshot?.revision != snapshot.revision else { return }
+		builtInAetherSnapshot = snapshot
+		catalogRevision += 1
 	}
 
 	private func _restoreCachedSources(_ requests: [SourceRequest]) async {
@@ -219,7 +278,7 @@ final class SourcesViewModel: ObservableObject {
 		let service = _repositoryService
 		let requestsByKey = Dictionary(uniqueKeysWithValues: requests.map { ($0.key, $0) })
 		await withTaskGroup(of: (String, SourceRepositoryService.Snapshot?).self) { group in
-			for request in requests where self.sources[request.key] == nil {
+			for request in requests where !_hasCatalog(for: request.key) {
 				guard !Task.isCancelled else { break }
 				group.addTask {
 					guard !Task.isCancelled, let url = request.sourceURL else { return (request.key, nil) }
@@ -228,6 +287,11 @@ final class SourcesViewModel: ObservableObject {
 			}
 			for await (key, snapshot) in group {
 				guard !Task.isCancelled, generation == cacheResetGeneration else { group.cancelAll(); break }
+				if let snapshot, key == AetherBuiltInRepository.key {
+					guard !_hasCatalog(for: key) else { continue }
+					_publishBuiltInAether(snapshot)
+					continue
+				}
 				if let snapshot, !removedSourceKeys.contains(key), self.sources[key] == nil {
 					guard let request = requestsByKey[key] else { continue }
 					do {
@@ -290,6 +354,17 @@ final class SourcesViewModel: ObservableObject {
 					let request = requests[nextIndex]
 					nextIndex += 1
 					group.addTask { await fetch(request) }
+				}
+				if key == AetherBuiltInRepository.key {
+					_lastBuiltInAttempt = Date()
+					if let snapshot {
+						_publishBuiltInAether(snapshot)
+					} else if let error {
+						// GitHub returns an unauthenticated 404 while this repository is
+						// private. Log it for diagnosis, but keep it out of source errors.
+						Logger.misc.notice("Built-in Aether update feed unavailable: \(error, privacy: .public)")
+					}
+					continue
 				}
 				guard !removedSourceKeys.contains(key) else { continue }
 				if let snapshot, (_revisions[key] != snapshot.revision || self.sources[key] == nil) {

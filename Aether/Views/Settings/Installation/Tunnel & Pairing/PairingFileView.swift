@@ -86,6 +86,7 @@ struct PairingFileView: View {
 			}
 
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 		.disabled(AppMaintenanceGuard.pairingBlockReason != nil)
 		.sheet(isPresented: $_isImportingPairingPresenting) {
 			FileImporterRepresentableView(

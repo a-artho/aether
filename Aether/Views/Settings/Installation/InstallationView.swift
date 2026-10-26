@@ -49,6 +49,7 @@ struct InstallationView: View {
 			}
 			
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 		.alert(.localized("Local Installation"), isPresented: $_showMethodChangedAlert) {
 			Button(.localized("Switch Back"), role: .destructive) {
 				_selectInstallationMethod(0)

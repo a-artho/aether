@@ -37,6 +37,7 @@ struct ResetView: View {
 				Section { Text(reason).font(.footnote).foregroundStyle(.secondary) }
 			}
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 		.disabled(AppMaintenanceGuard.resetBlockReason != nil)
 		.confirmationDialog(String.localized("Reset Ignored Updates?"), isPresented: $confirmsIgnoredUpdatesReset, titleVisibility: .visible) {
 			Button(String.localized("Reset Ignored Updates"), role: .destructive) { ignoredUpdates.reset() }

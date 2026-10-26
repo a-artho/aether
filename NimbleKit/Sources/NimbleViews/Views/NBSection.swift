@@ -7,11 +7,23 @@
 
 import SwiftUI
 
+private struct NBStickySectionHeadersKey: EnvironmentKey {
+	static let defaultValue = true
+}
+
+public extension EnvironmentValues {
+	var nbStickySectionHeaders: Bool {
+		get { self[NBStickySectionHeadersKey.self] }
+		set { self[NBStickySectionHeadersKey.self] = newValue }
+	}
+}
+
 public struct NBSection<Content, Footer>: View
 	where 	Content: View,
 	Footer: View
 {
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@Environment(\.nbStickySectionHeaders) private var isStickyHeader
 	private var _isExpanded: Binding<Bool>?
 	private var _headerText: String
 	private var _headerTextSecondary: String?
@@ -131,9 +143,20 @@ public struct NBSection<Content, Footer>: View
 	}
 
 	public var body: some View {
-		Section(header: header.offset(y: 2), footer: _footer.font(.caption).foregroundStyle(.secondary)) {
+		Section {
+			if !isStickyHeader {
+				header
+					.listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+					.listRowSeparator(.hidden)
+					.listRowBackground(Color.clear)
+					.accessibilityAddTraits(.isHeader)
+			}
 			if _isExpanded?.wrappedValue != false { _content }
 		}
+		header: {
+			if isStickyHeader { header.offset(y: 2) }
+		}
+		footer: { _footer.font(.caption).foregroundStyle(.secondary) }
 		.headerProminence(.increased)
 	}
 }

@@ -44,6 +44,7 @@ struct CertificatesInfoView: View {
 					}
 				}
 			}
+			.aetherAmbientScrollBackground(base: .grouped)
 			.toolbar {
 				NBToolbarButton(role: .close)
 			}

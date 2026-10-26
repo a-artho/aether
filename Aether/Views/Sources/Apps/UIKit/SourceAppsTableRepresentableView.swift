@@ -14,6 +14,26 @@ import os
 private let sourceAppsTableSignpostLog = OSLog(subsystem: Bundle.main.bundleIdentifier ?? "Aether", category: "SourceAppsTable")
 
 private final class SourceAppTableCell: UITableViewCell {
+	override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+		super.init(style: style, reuseIdentifier: reuseIdentifier)
+		automaticallyUpdatesBackgroundConfiguration = false
+	}
+
+	required init?(coder: NSCoder) {
+		super.init(coder: coder)
+		automaticallyUpdatesBackgroundConfiguration = false
+	}
+
+	override func updateConfiguration(using state: UICellConfigurationState) {
+		super.updateConfiguration(using: state)
+
+		var background = UIBackgroundConfiguration.listCell().updated(for: state)
+		if !state.isHighlighted && !state.isSelected {
+			background.backgroundColor = .clear
+		}
+		backgroundConfiguration = background
+	}
+
 	// These rows have no responder editing actions. Their copy/download menus are
 	// supplied by the table delegate. UIKit's default implementation searches its
 	// tentative-cell map for each accessibility attribute, quadratically on large lists.
@@ -106,7 +126,8 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	func makeUIView(context: Context) -> UITableView {
 		let tableView = UITableView(frame: .zero, style: .plain)
 		// Native plain-table headers remain pinned until the next section replaces them.
-		tableView.backgroundColor = .systemBackground
+		tableView.backgroundColor = .clear
+		tableView.isOpaque = false
 		tableView.topEdgeEffect.style = .soft
 		tableView.sectionFooterHeight = .leastNormalMagnitude
 		tableView.estimatedSectionFooterHeight = .leastNormalMagnitude
@@ -335,7 +356,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 	private func configureSkeletonCell(_ cell: UITableViewCell) {
 		cell.selectionStyle = .none
 		cell.accessoryType = showsDownloadButtons ? .none : .disclosureIndicator
-		cell.backgroundConfiguration = .listCell()
+		cell.setNeedsUpdateConfiguration()
 		let showsDownload = showsDownloadButtons
 		var configuration = UIHostingConfiguration { SourceAppsSkeletonRow(showsDownloadButton: showsDownload) }
 		if let inset = horizontalInset.points { configuration = configuration.margins(.horizontal, inset) }
@@ -355,7 +376,7 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 			sourceObjectURI: row.sourceObjectURI,
 			appLocator: .locator(for: row.app)
 		)
-		cell.backgroundConfiguration = .listCell()
+		cell.setNeedsUpdateConfiguration()
 		var configuration = UIHostingConfiguration {
 			SourceAppsCellView(sourceURL: row.sourceURL, source: source, app: row.app,
 				showSourceBadge: showBadge, showsDownloadButton: showDownload,

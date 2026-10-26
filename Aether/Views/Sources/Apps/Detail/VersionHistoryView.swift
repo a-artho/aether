@@ -61,5 +61,6 @@ struct VersionHistoryView: View {
 			}
 			.padding(.top, 8)
 		}
+		.aetherAmbientBackground()
 	}
 }

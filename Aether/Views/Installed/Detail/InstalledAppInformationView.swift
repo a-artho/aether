@@ -92,6 +92,7 @@ struct InstalledAppInformationView: View {
 			} catch is CancellationError {} catch { metadataError = error.localizedDescription }
 		}
 		.listStyle(.insetGrouped)
+		.aetherAmbientScrollBackground(base: .grouped)
 		.navigationTitle(app.displayName)
 		.navigationBarTitleDisplayMode(.inline)
 

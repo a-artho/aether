@@ -12,14 +12,20 @@ import Zsign
 // MARK: - View
 struct LibraryInfoView: View {
 	var app: AppInfoPresentable
+	@Environment(\.nbStickySectionHeaders) private var stickySectionHeaders
 	
 	// MARK: Body
 	var body: some View {
 		NBNavigationView(app.name ?? "", displayMode: .inline) {
 			List {
-				Section {} header: {
-					FRAppIconView(app: app)
-						.frame(maxWidth: .infinity, alignment: .center)
+				if stickySectionHeaders {
+					Section {} header: { appIconHeader }
+				} else {
+					Section {
+						appIconHeader
+							.listRowSeparator(.hidden)
+							.listRowBackground(Color.clear)
+					}
 				}
 				
 				_infoSection(for: app)
@@ -35,10 +41,16 @@ struct LibraryInfoView: View {
 					}
 				}
 			}
+			.aetherAmbientScrollBackground(base: .grouped)
 			.toolbar {
 				NBToolbarButton(role: .close)
 			}
 		}
+	}
+
+	private var appIconHeader: some View {
+		FRAppIconView(app: app)
+			.frame(maxWidth: .infinity, alignment: .center)
 	}
 }
 

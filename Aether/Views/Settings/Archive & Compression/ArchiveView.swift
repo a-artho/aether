@@ -35,5 +35,6 @@ struct ArchiveView: View {
 				Text(.localized("Toggling show sheet will present a share sheet after exporting to your files."))
 			}
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 	}
 }

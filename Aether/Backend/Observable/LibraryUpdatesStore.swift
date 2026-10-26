@@ -68,6 +68,7 @@ final class LibraryUpdatesStore: ObservableObject {
 		inputRevision &+= 1
 		verificationGeneration = UUID()
 		let keys = Set(sources.map { $0.objectID.uriRepresentation().absoluteString })
+			.union([AetherBuiltInRepository.key])
 		updateContexts = updateContexts.mapValues { $0.filter { keys.contains($0.sourceObjectURI) } }
 		request(.configuration)
 	}
@@ -283,16 +284,22 @@ final class LibraryUpdatesStore: ObservableObject {
 		let repositories = SourcesViewModel.shared
 		guard installationMode == 1, DeviceConnectionManager.shared.isConnected,
 			installed.hasLoadedApps, !installed.isLoading, repositories.isFinished, !repositories.isRefreshRequested else { return nil }
-		let contexts = sources.compactMap { source -> SourceAppCatalogContext? in
+		let userContexts = sources.compactMap { source -> SourceAppCatalogContext? in
 			guard let repository = repositories.repository(for: source) else { return nil }
 			return SourceAppCatalogContext(sourceObjectURI: source.objectID.uriRepresentation().absoluteString,
 				sourceURL: source.sourceURL, repository: repository, revision: repositories.revision(for: source))
+		}
+		var contexts = userContexts
+		if let aetherContext = repositories.builtInAetherUpdateContext(
+			installedBundleIdentifier: Bundle.main.bundleIdentifier
+		) {
+			contexts.append(aetherContext)
 		}
 		let versions = installed.apps.reduce(into: [String: String]()) { values, app in
 			if let version = app.version { values[app.bundleIdentifier] = version }
 		}
 		return MatchingInputs(versions: versions, contexts: contexts, ignored: IgnoredAppUpdates.shared.identifiers,
-			complete: repositories.refreshErrors.isEmpty && contexts.count == sources.count && installed.errorMessage == nil)
+			complete: repositories.refreshErrors.isEmpty && userContexts.count == sources.count && installed.errorMessage == nil)
 	}
 
 	private static func signature(versions: [String: String], contexts: [SourceAppCatalogContext], ignored: Set<String>) -> [String] {

@@ -142,7 +142,7 @@ struct SourceAppsDetailView: View {
 			.padding(.top, 10)
 			.padding(.bottom, 44)
 		}
-		.background(Color(uiColor: .systemBackground).ignoresSafeArea())
+		.aetherAmbientBackground()
 		.navigationTitle(app.currentName)
 		.navigationBarTitleDisplayMode(.inline)
 		.toolbar {

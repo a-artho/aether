@@ -19,6 +19,7 @@ struct AppearanceView: View {
 	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .sources
 	@AppStorage("Aether.settingsRowIconStyle") private var _settingsRowIconStyle: SettingsRowIconStyle = .colored
 	@AppStorage("Aether.deviceControlsStyle") private var _deviceControlsStyle: DeviceControlsStyle = .standard
+	@AppStorage("Aether.ambientBackgroundEnabled") private var _ambientBackgroundEnabled = false
 	@AppStorage("Aether.mutedSectionHeaders") private var _mutedSectionHeaders = false
 	@AppStorage("Aether.userInterfaceStyle")
 	private var _userInterfaceStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
@@ -86,6 +87,14 @@ struct AppearanceView: View {
 				NavigationLink(destination: AppIconView(currentIcon: $_currentIcon)) {
 					SettingsRowLabel(.localized("App Icon"), systemImage: "app.badge.fill", backgroundColor: .indigo)
 				}
+			}
+
+			NBSection(.localized("Background")) {
+				Toggle(isOn: $_ambientBackgroundEnabled) {
+					SettingsRowLabel(.localized("Ambient Background"), systemImage: "circle.lefthalf.filled", backgroundColor: .indigo)
+				}
+			} footer: {
+				Text(.localized("Adds a subtle theme-colored glow to page backgrounds in dark mode."))
 			}
 
 			NBSection(.localized("Settings")) {
@@ -265,6 +274,7 @@ struct AppearanceView: View {
 				}
 			}
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 		.onChange(of: _userInterfaceStyle) { _, value in
 			if let style = UIUserInterfaceStyle(rawValue: value) {
 				for scene in UIApplication.shared.connectedScenes {

@@ -70,9 +70,7 @@ struct SettingsView: View {
 			}
 			.contentMargins(.top, 0, for: .scrollContent)
 			.navigationBarTitleDisplayMode(.inline)
-			// Native grouped page colors adapt to light/dark mode and presentation elevation.
-			.scrollContentBackground(.visible)
-			.background(Color(uiColor: .systemGroupedBackground))
+			.aetherAmbientScrollBackground(base: .grouped)
 			.navigationDestination(for: AppTabManager.SettingsPage.self) { page in
 				Group {
 					switch page {

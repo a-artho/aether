@@ -50,6 +50,12 @@ actor InstalledAppUpdateCatalog {
 		let installedVersions = installedVersions.filter { !ignoredIdentifiers.contains($0.key) }
 		guard !installedVersions.isEmpty else { signature = []; cached = [:]; return [:] }
 		let contexts = contexts.filter { !removedSources.contains($0.sourceObjectURI) }
+		let aetherBundleIdentifiers = Set([
+			AetherBuiltInRepository.canonicalBundleIdentifier,
+			Bundle.main.bundleIdentifier
+		].compactMap { $0 })
+		let installedAetherIdentifier = Bundle.main.bundleIdentifier
+		var preferredAether: (context: SourceAppCatalogContext, app: ASRepository.App, version: String)?
 		let nextSignature = installedVersions.sorted { $0.key < $1.key }.flatMap { [$0.key, $0.value] }
 			+ contexts.flatMap { [$0.sourceObjectURI, $0.sourceURL?.absoluteString ?? "", $0.revision] }
 		if signature == nextSignature { return cached }
@@ -61,6 +67,28 @@ actor InstalledAppUpdateCatalog {
 				try Task.checkCancellation()
 				guard let identifier = app.id,
 					let url = app.currentDownloadUrl, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { continue }
+				// Treat canonical and locally renamed Aether IDs as one app. Resolve
+				// the highest exact release during this scan; dot-suffixed tweak
+				// variants continue through the normal matching path below.
+				if aetherBundleIdentifiers.contains(identifier) {
+					if let version = app.currentVersion, Self.components(version) != nil {
+						let shouldReplace: Bool
+						if let current = preferredAether {
+							let isSameVersion = !Self.isNewer(version, than: current.version)
+								&& !Self.isNewer(current.version, than: version)
+							let preferBuiltInTie = isSameVersion
+								&& context.sourceObjectURI == AetherBuiltInRepository.key
+								&& current.context.sourceObjectURI != AetherBuiltInRepository.key
+							shouldReplace = Self.isNewer(version, than: current.version) || preferBuiltInTie
+						} else {
+							shouldReplace = true
+						}
+						if shouldReplace {
+							preferredAether = (context, app, version)
+						}
+					}
+					continue
+				}
 				// Repos may append tweak/version suffixes to the real bundle ID.
 				// Walk dot boundaries instead of scanning every installed app;
 				// retain the original entry and URL for each separate variant row.
@@ -81,6 +109,19 @@ actor InstalledAppUpdateCatalog {
 					sourceObjectURI: context.sourceObjectURI, sourceURL: context.sourceURL,
 					repository: repository, revision: context.revision + "|updates|" + identifier + "|" + installedVersions[identifier, default: ""]))
 			}
+		}
+		if let preferredAether, let installedAetherIdentifier,
+			let installedVersion = installedVersions[installedAetherIdentifier],
+			Self.isNewer(preferredAether.version, than: installedVersion) {
+			var repository = preferredAether.context.repository
+			repository.apps = [preferredAether.app]
+			repository.news = nil
+			result[installedAetherIdentifier, default: []].append(SourceAppCatalogContext(
+				sourceObjectURI: preferredAether.context.sourceObjectURI,
+				sourceURL: preferredAether.context.sourceURL,
+				repository: repository,
+				revision: preferredAether.context.revision + "|updates|" + installedAetherIdentifier + "|" + installedVersion
+			))
 		}
 		try Task.checkCancellation()
 		signature = nextSignature

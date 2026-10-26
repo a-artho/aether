@@ -71,6 +71,7 @@ struct LibraryView: View {
 		NavigationStack(path: $appNavigationPath) {
 			rootContent(projection: projection)
 		}
+		.environment(\.nbStickySectionHeaders, false)
 		.modifier(FloatingNavigationAppearance())
 	}
 
@@ -187,6 +188,7 @@ struct LibraryView: View {
 			}
 		}
 		.listStyle(.plain)
+		.aetherAmbientScrollBackground()
 		.onAppear { isRootListVisible = true }
 		.onDisappear { isRootListVisible = false }
 		.task(id: libraryFocusState) {
@@ -253,6 +255,7 @@ struct LibraryView: View {
 			}
 		}
 		.listSectionSeparator(.hidden)
+		.listRowBackground(Color.clear)
 	}
 
 	private func importsSection(entries: [UnifiedImportEntry], groups: [SplitArtifactGroup]) -> some View {
@@ -262,6 +265,7 @@ struct LibraryView: View {
 			}
 		}
 		.listSectionSeparator(.hidden)
+		.listRowBackground(Color.clear)
 		.id("libraryImports")
 	}
 
@@ -374,6 +378,7 @@ struct LibraryView: View {
 				.listRowSeparator(.hidden)
 			}
 		}
+		.listRowBackground(Color.clear)
 	}
 
 	private func allAppsSummary(subtitle: String) -> some View {

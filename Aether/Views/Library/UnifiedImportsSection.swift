@@ -509,19 +509,23 @@ struct SplitArtifactsView: View {
 						UnifiedImportsRows(entries: group.signedEntries, controller: controller)
 					}
 					.listSectionSeparator(.hidden)
+					.listRowBackground(Color.clear)
 				}
 				if !group.unsignedEntries.isEmpty {
 					NBSection(.localized("Unsigned")) {
 						UnifiedImportsRows(entries: group.unsignedEntries, controller: controller)
 					}
 					.listSectionSeparator(.hidden)
+					.listRowBackground(Color.clear)
 				}
 			} else {
 				TabPlaceholderView(title: .localized("No App Copies"), description: .localized("The signed and unsigned copies are no longer available."), systemImage: "doc.on.doc")
 					.listRowSeparator(.hidden)
+					.listRowBackground(Color.clear)
 			}
 		}
 		.listStyle(.plain)
+		.aetherAmbientScrollBackground()
 		.navigationTitle(title)
 		.navigationBarTitleDisplayMode(.inline)
 	}

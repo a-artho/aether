@@ -76,6 +76,8 @@ struct SourceAppsView: View {
 	// MARK: Body
 	var body: some View {
 		ZStack {
+			AetherAmbientBackground()
+
 			if isLoading || (_sourceContexts?.contains(where: { !$0.repository.apps.isEmpty }) == true) {
 				SourceAppsTableRepresentableView(
 					sourceContexts: _sourceContexts ?? [],

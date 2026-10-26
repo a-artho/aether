@@ -1,0 +1,157 @@
+{
+  "identifier": "com.anfear.aether",
+  "name": "Aether",
+  "subtitle": "Aether for iOS",
+  "website": "https://github.com/a-artho/aether",
+  "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AppIcon.appiconset/aether.png",
+  "apps": [
+    {
+      "name": "Aether",
+      "bundleIdentifier": "com.anfear.aether",
+      "developerName": "Artho",
+      "subtitle": "App installer and manager for iOS",
+      "localizedDescription": "Install and manage apps from your sources with Aether.",
+      "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AppIcon.appiconset/aether.png",
+      "version": "2.0.8",
+      "versionDate": "2026-10-24T21:08:02Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0.8/Aether.ipa",
+      "size": 19499094,
+      "versionDescription": "# Aether 2.0.8\n\n- Simplify the Library flow by removing installation-driven tab navigation and automatic scrolling.\n- Keep update checks coordinated across app activation, repository refreshes, installs, and uninstalls; avoid redundant refreshes on tab switches.\n- Restore the established 2.0.5 import progress presentation and retain stable row/icon behavior through signing and installation.\n- Improve import status badges, repository loading presentation, and appearance controls.\n- Remove obsolete animation, focus, and tab-label code and extend regression coverage for refresh lifecycle behavior.\n\nThe IPA is unsigned, includes the in-app VPN extension, and requires signing before installation.",
+      "versions": [
+        {
+          "version": "2.0.8",
+          "date": "2026-10-24T21:08:02Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0.8/Aether.ipa",
+          "size": 19499094,
+          "localizedDescription": "# Aether 2.0.8\n\n- Simplify the Library flow by removing installation-driven tab navigation and automatic scrolling.\n- Keep update checks coordinated across app activation, repository refreshes, installs, and uninstalls; avoid redundant refreshes on tab switches.\n- Restore the established 2.0.5 import progress presentation and retain stable row/icon behavior through signing and installation.\n- Improve import status badges, repository loading presentation, and appearance controls.\n- Remove obsolete animation, focus, and tab-label code and extend regression coverage for refresh lifecycle behavior.\n\nThe IPA is unsigned, includes the in-app VPN extension, and requires signing before installation."
+        },
+        {
+          "version": "2.0.7",
+          "date": "2026-10-24T16:35:02Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0.7/Aether.ipa",
+          "size": 20745044,
+          "localizedDescription": "# Aether 2.0.7\n\n- Keep import progress, status text, and Sign/Install controls in sync through processing, signing, transfer, completion, pause, and cancellation.\n- Smooth the Imports progress-to-action handoff with one shared spring and a brief minimum presentation for fast operations, without delaying the underlying work.\n- Preserve installed-app and update state across tunnel reconnects, and correctly revalidate cached empty update results.\n- Prevent an obsolete provisioning-profile lookup from replacing the current connection error.\n- Apply the horizontal inset preference consistently to repository rows, repository details, All Apps, and Newer Versions.\n- Keep repository detail section headings readable when muted section headers are enabled, while retaining muted body text.\n- Remove the unused full-width action style preference and use the shared native prominent button style.\n- Keep compact text action buttons aligned to a shared minimum width.\n- Extend regression coverage for import handoffs, update revalidation, installed-app loading, and row insets.\n\nThe IPA is unsigned, includes the in-app VPN extension, and requires signing before installation."
+        },
+        {
+          "version": "2.0.6",
+          "date": "2026-10-23T20:23:02Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0.6/Aether.ipa",
+          "size": 20732659,
+          "localizedDescription": "# Aether 2.0.6\n\n- Drive the progress-to-button handoff from one spring, including outline, fill, symbol position and label reveal.\n- Replace overlapping status crossfades with a low-opacity text swap; keep numeric progress stationary.\n- Retain installed apps and known updates through idle disconnection, reconnecting and failed or partial checks.\n- Keep Checking for Updates visible for at least half a second without delaying results.\n- Add lifecycle regression coverage for update retention, indicator timing, rapid status changes and Reduce Motion.\n\n- Morph the Imports progress control into Sign/Install with a shared surface and non-bouncy spring; reserve stable label space and guard departing controls.\n- Preserve previous artwork if rendering fails, fade remote/local icon handoffs, and keep long statuses readable.\n- Stabilize All Apps subtitle height and loading/count space.\n- Add Current/Glass full-width action-button styles and Cloud/Circle/Arrow/Save download symbols for repo rows and app details.\n- Shorten the Updates swipe action to Ignore and soften app-description text.\n\n- Improve Imports row handoffs, status crossfades, cancellation, and swipe deletion.\n- Keep system-default row spacing and remove the inset option.\n- Add Default, Medium, and Large row icon sizes (50, 54, and 58), with matching loading skeletons.\n- Add Standalone, Black, System, and native Glass overview icon styles, optionally applied to individual repo artwork.\n- Add App Store, original Globe, and Books choices for All Repos.\n- Fade All Apps subtitle changes and stabilize its loading/count accessory.\n- Add swipe-to-ignore updates per installed app, persistent exclusions, and Reset Ignored Updates.\n- Improve continuous progress, status changes, and Reduce Motion support in Imports.\n- Prevent transient rows during import/signing completion and cancellation, including delayed database updates.\n- Clean failed signed-record insertions without discarding unrelated edits.\n- Improve IPA file-picker type handling and prevent duplicate completion callbacks.\n- Use a native prominent Liquid Glass signing button and move Post Signing to the top of Signing Options.\n- Add Default repository ordering while retaining Latest as the initial choice.\n- Keep All Repos with a muted App Store logo.\n- Simplify repository display names and remove unused download-icon styling.\n- Keep network configuration expandable inside Aether Tunnel, with aligned rows and no redundant heading.\n- Improve search focus handling, icon selection, and copy feedback.\n- Reduce redundant spoofing connection checks and shorten developer-service discovery with fallback.\n- Improve spoofing cancellation, route timing, and protection against stale map results.\n\nThe IPA is unsigned, includes the in-app VPN extension, and requires signing before installation."
+        },
+        {
+          "version": "2.0.5",
+          "date": "2026-10-22T20:29:41Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0.5/Aether.ipa",
+          "size": 20625992,
+          "localizedDescription": "# Aether 2.0.5\n\n- Improve shared icon loading, cancellation, stale-image handling and repository theme updates.\n- Preserve previously confirmed sideloaded apps during temporary profile-fetch failures.\n- Reduce repeated Library projection work and initialize saved repository sorting earlier.\n- Restore complete repository skeleton text placeholders and streamline initial table presentation.\n- Retire download staging files before background cleanup and batch diagnostic log publication.\n- Bound and share App Store lookups with independent caller cancellation.\n- Add an Unsign swipe action to reveal the unsigned IPA and show Reinstall after completed install flows.\n- Add Current/Safari download icon choices and Small/Medium/Large repo-row icon sizing with unchanged touch targets.\n\n- Anchor source badges to icons, preserve readable status text and clear stale reinstall labels after deletion or uninstall.\n- Remove cancelled icon-render waiters promptly.\n\nThe IPA is unsigned, includes the in-app VPN extension, and requires signing before installation."
+        },
+        {
+          "version": "2.0.4",
+          "date": "2026-10-22T12:02:50Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0.4/Aether.ipa",
+          "size": 20597986,
+          "localizedDescription": "# Aether 2.0.4\n\n- Use balanced row text sizing throughout the app and remove the text-size setting.\n- Use complete animated repository skeleton rows for at least 0.3 seconds, followed by a 0.2-second crossfade.\n- Reduce repeated catalog processing and move optional sorted-index writes away from list presentation.\n- Open update lists directly using native list rows, with individual icon skeletons and no page-loading delay.\n- Stabilize right-side search toolbar items during navigation and restore per-row Imports context menus.\n- Avoid animating the Library’s initial population while preserving animations for later changes.\n- Show the App Store information row immediately, with readable action text and a theme-colored link icon.\n\nThe IPA is unsigned, includes the in-app VPN extension, and requires signing before installation."
+        },
+        {
+          "version": "2.0.3",
+          "date": "2026-10-21T20:15:06Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0.3/Aether.ipa",
+          "size": 20576706,
+          "localizedDescription": "# Aether 2.0.3\n\n- Restore 2.0.2 tunnel connection timing, discovery, retries, and native TCP behavior; retain idle cleanup improvements.\n- Stop unnecessary background location and audio work when spoofing is inactive or fails.\n- Improve Cellular Assist recovery and preserve download files when saved queue data cannot be read.\n- Route external download links through the shared background download engine.\n- Keep automatic repo refresh timestamps synchronized and shorten app-row errors.\n- Disable pull-to-refresh for empty Sources and improve app-detail text contrast and installed-app sheet titles.\n\n- Include newer dot-suffixed tweak variants as separate update candidates.\n- Use a List-level Imports context menu with the existing app actions.\n- Stabilize sign-only completion so the progress accessory transitions to Install without returning to a queued state.\n- Reconcile stale queue rows against live jobs and resolve cancellation when the action is tapped.\n- Use consistent muted loading skeletons for Imports, repos, repository apps, and All Apps. Pulse only while visible, loading, and foregrounded; respect Reduce Motion and stop on failure. Prevent local icon swaps from inheriting row animations.\n- Make app-description text follow Appearance text sizing and move the App Store action into Information.\n- Fix repeated spoofing Stop retries after success and use consistent screenshot sources for previews.\n- Add explicit cleanup of quarantined download artifacts through Work Cache reset, preserving readable queued files.\n\nThe IPA is unsigned, includes the in-app VPN extension, and requires signing before installation."
+        },
+        {
+          "version": "2.0.2",
+          "date": "2026-10-16T11:38:25Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0.2/Aether.ipa",
+          "size": 20540042,
+          "localizedDescription": "# Aether 2.0.2\n\n- Prevent unnecessary repository refreshes when switching to Library.\n- Improve tunnel recovery presentation when unlocking or returning to Aether.\n- Preserve installed apps and report errors when profile lookup temporarily fails.\n- Keep repository refresh slots busy without waiting for a slow batch member.\n- Avoid rewriting unchanged catalog bodies on every refresh.\n- Preserve diagnostics arriving during history loading and bound log-history memory.\n- Reduce repeated log filtering and sorting during view updates.\n\nFresh unsigned iPhone IPA, including the in-app VPN extension. No ad-hoc signature or provisioning profile is embedded."
+        },
+        {
+          "version": "2.0.1",
+          "date": "2026-10-16T10:21:04Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0.1/Aether.ipa",
+          "size": 20535268,
+          "localizedDescription": "# Aether 2.0.1\n\n- Added Default, Compact, and Balanced row text options and a cold-launch tab preference.\n- Fixed the brief tunnel-unavailable message before automatic launch connection.\n- Improved installed-app icon presentation, thumbnail memory use, and first-screen prefetching.\n- Synced Library update checks with repository refreshes and added independent repository-row progress.\n- Made installed-app Info a native compact sheet with scrolling and expansion to full height.\n\nThe IPA and included VPN extension are fully unsigned, without ad hoc signatures or embedded provisioning profiles. Sign with your certificate and profile before installing."
+        },
+        {
+          "version": "2.0",
+          "date": "2026-10-15T19:39:36Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v2.0/Aether.ipa",
+          "size": 20509796,
+          "localizedDescription": "# Aether 2.0\n\n- Unified Library with dynamic import, signing, installation, and download rows.\n- Refined search transitions, navigation, typography, and Settings appearance options.\n- Added Default, Glass, and Native styles for the device controls card.\n- Improved background task ownership, import processing, tunnel recovery, and installation progress.\n- Removed obsolete screens and unreachable selection controls; repaired regression coverage.\n\nThe IPA is unsigned, including its VPN extension. Sign it with your own certificate and provisioning profile before installing."
+        },
+        {
+          "version": "1.0.9",
+          "date": "2026-10-09T01:12:51Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v1.0.9/Aether.ipa",
+          "size": 20420738,
+          "localizedDescription": "Aether 1.0.9 improves concurrency correctness and updates the app for current iOS APIs.\n\n- Fixes UI and background-worker ownership across signing, installation, imports, storage, and tunnel callbacks.\n- Prevents delayed packet callbacks from affecting a stopped or restarted tunnel.\n- Makes app metadata, log values, and text/icon caches safe to use across workers.\n- Updates deprecated SwiftUI, MapKit, and icon-rendering APIs while preserving existing flows and styling.\n- Resolves all 240 application source warning locations from the previous audit.\n- Removes obsolete saved-data migrations and unused platform compatibility code for the iOS 26+ app.\n\nValidation includes all 83 regression tests, focused signing/tunnel/progress checks, a fresh iPhone build, and unsigned IPA verification.\n\nThe IPA is unsigned, without provisioning profiles or ad-hoc executable signatures. Sign it with your own certificate before installing."
+        },
+        {
+          "version": "1.0.8",
+          "date": "2026-10-08T02:47:44Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v1.0.8/Aether.ipa",
+          "size": 21207219,
+          "localizedDescription": "Aether 1.0.8 improves signing, installation progress, and Library behavior.\n\n- Reports real signing and hashing progress, plus continuous payload transfer progress in iDevice and Server modes.\n- Prevents unfinished signing jobs from appearing in Signed or briefly showing Queued.\n- Shows a loading indicator during bulk Library deletion and moves file cleanup off the main thread.\n- Adds small-size fallback artwork for the Aether Dark icon.\n- Retains the optional Match Certificate Identity toggle for signing Aether itself, off by default.\n\nThis release follows the 1.0.6 settings and server behavior; it does not include the CA server setup introduced in the original 1.0.7 release.\n\nThe IPA is unsigned, without provisioning profiles or ad-hoc executable signatures. Sign it with your own certificate before installing. iOS still controls background execution and may request confirmation during long operations."
+        },
+        {
+          "version": "1.0.7",
+          "date": "2026-10-07T23:37:22Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v1.0.7/Aether.ipa",
+          "size": 21178831,
+          "localizedDescription": "Aether 1.0.7 adds on-device certificate setup for Fully Local server installation and reorganizes installation settings.\n\n- Choose Server or iDevice from Settings → Installation; both controls share the Device tab’s switching guards.\n- Find Tunneling and Pairing under iDevice, and server configuration under Server.\n- Fully Local generates a device-local CA and HTTPS certificate, opens the CA profile download, checks system trust, and renews the HTTPS certificate without replacing a valid CA. Installing the profile and enabling full trust remain manual iOS steps.\n- Reset the generated CA and HTTPS credentials under Settings → Reset. Remove the installed iOS profile manually in Settings.\n- Semi Local retains its existing installation flow and localhost option.\n- Aether’s signing sheet includes an optional certificate identity matching toggle for signing Aether itself. It is off by default.\n\nThe IPA is unsigned and contains no provisioning profiles or ad-hoc executable signatures. Sign it with your own certificate before installing."
+        },
+        {
+          "version": "1.0.6",
+          "date": "2026-10-07T21:55:04Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v1.0.6/Aether.ipa",
+          "size": 21131876,
+          "localizedDescription": "Aether 1.0.6 fixes automatic tunnel recovery after unlocking or returning from the background. Delayed lifecycle events and older connection checks can no longer overwrite newer connection attempts.\n\nRecovery now waits for connection events instead of polling, reuses freshly verified stable connections, and avoids redundant connection-state UI updates. Automatic connection preferences and active installation/spoofing behavior are preserved.\n\nThe IPA is fully unsigned and includes the tunnel extension. Sign it with your own certificate before installing."
+        },
+        {
+          "version": "1.0.5",
+          "date": "2026-10-07T13:25:16Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v1.0.5/Aether.ipa",
+          "size": 21122137,
+          "localizedDescription": "Aether 1.0.5 improves tunnel connection readiness, sideloaded-app loading, repository caching, and scrolling efficiency. It also fixes restored download callbacks, partial app-list responses, Library search across Downloads and Exports, deletion recovery, stale icons, and description expansion.\n\nThe IPA is fully unsigned and includes the tunnel extension. Sign it with your own certificate before installing."
+        },
+        {
+          "version": "1.0.4",
+          "date": "2026-10-07T01:28:47Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v1.0.4/Aether.ipa",
+          "size": 21059009,
+          "localizedDescription": "Aether 1.0.4 fixes nine reliability issues: metadata resets, duplicate Cellular Assist callback parameters, missing repository artwork, Mach-O patch bounds, deleted-certificate revocation callbacks, tunnel packet access, installation server interface selection, joystick coordinates, and decryptor argument validation.\n\nThe IPA is fully unsigned and includes the tunnel extension. Sign it with your own certificate before installing."
+        },
+        {
+          "version": "1.0.3",
+          "date": "2026-10-06T06:58:05Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v1.0.3/Aether.ipa",
+          "size": 21053245,
+          "localizedDescription": "Aether 1.0.3 fixes Library importing and import feedback.\n\n- Restore copy-based file picker importing.\n- Show Library processing progress when opening an IPA with Aether.\n- Keep detailed import diagnostics for troubleshooting.\n- Long-press the Library plus button to import an IPA by URL directly.\n- Respect the selected haptic strength for the plus-button long press and Install.\n- Restore Feather-compatible archive extraction without the custom archive restrictions.\n\nThe attached IPA is fully unsigned, including its bundled framework and tunnel extension, and contains no provisioning profiles. Sign it with your own certificate before installing.\n\nValidation: 85 regression tests passed; fresh Release build."
+        },
+        {
+          "version": "1.0.2",
+          "date": "2026-10-06T00:23:44Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v1.0.2/Aether.ipa",
+          "size": 21043652,
+          "localizedDescription": "Unsigned IPA for signing with your own certificate and provisioning profile. All executable signatures and embedded provisioning profiles have been removed, including ad-hoc signatures. The built-in tunnel extension is included.\n\nChanges in 1.0.2:\n- Use native background URLSession downloads with completion and failure notifications.\n- Improve tunnel startup, installed-app loading, and icon caching; refresh installed apps on returning to Aether.\n- Add separate automatic-connect and disconnect-when-idle controls.\n- Add appearance options for tab labels, right-side search, and update day-group cards.\n- Add the Device tab installation queue badge and Library download selection.\n- Fix hidden selections during bulk deletion, stale icon updates, tunnel settings during connection preparation, and failed-install mode switching.\n- Correct full-width update dividers in Long Description mode.\n\nValidation: fresh iPhone Release build and 91 passing regression tests. Requires iOS 26 or later. On-device pairing requires iOS 27. The built-in tunnel requires signing with the supported VPN and network-extension entitlements."
+        },
+        {
+          "version": "1.0.1",
+          "date": "2026-10-05T17:48:31Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v1.0.1/Aether.ipa",
+          "size": 21018292,
+          "localizedDescription": "Unsigned IPA for self-signing. Requires iOS 26 or later; on-device pairing requires iOS 27. The built-in tunnel needs a paid certificate with packet-tunnel-provider and allow-vpn entitlements.\r\n\r\nChanges in 1.0.1:\r\n- Add appearance options for device controls, including header controls and Liquid Glass tiles.\r\n- Add the selectable Aether Dark icon\r\n- Improve install queue navigation and preserve the exact repository app variant when opening details.\r\n- Correct background audio cleanup, bound live debug log memory, and remove the unused installation package cache."
+        },
+        {
+          "version": "1.0.0",
+          "date": "2026-10-02T02:59:48Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v1.0.0/Aether.ipa",
+          "size": 19534427,
+          "localizedDescription": "Unsigned IPA for self-signing. Requires iOS 26 or later; on-device pairing requires iOS 27. The built-in tunnel needs a paid certificate with packet-tunnel-provider and allow-vpn entitlements."
+        }
+      ]
+    }
+  ]
+}

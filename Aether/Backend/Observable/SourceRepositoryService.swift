@@ -60,7 +60,7 @@ actor SourceRepositoryService {
 			let configuration = URLSessionConfiguration.ephemeral
 			configuration.urlCache = nil
 			configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-			configuration.timeoutIntervalForRequest = 30
+			configuration.timeoutIntervalForRequest = 10
 			self.session = URLSession(configuration: configuration)
 		}
 		self.cacheDirectory = cacheDirectory

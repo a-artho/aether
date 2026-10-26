@@ -22,5 +22,6 @@ struct CertificatesInfoEntitlementView: View {
 			}
 		}
 		.listStyle(.grouped)
+		.aetherAmbientScrollBackground(base: .grouped)
 	}
 }

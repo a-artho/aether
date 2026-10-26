@@ -54,6 +54,7 @@ struct TunnelView: View {
 				_automationControls
 			}
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 		.onAppear {
 			_refreshLocalDevVPNAvailability()
 			_syncDraftsFromManager()

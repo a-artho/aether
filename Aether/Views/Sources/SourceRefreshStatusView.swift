@@ -22,7 +22,7 @@ struct SourceRefreshStatusView: View {
 		if isRefreshing { return .localized("Updating…") }
 		if hasFailures { return .localized("Refresh incomplete") }
 		guard let lastUpdated else { return .localized("Not updated yet") }
-		if now.timeIntervalSince(lastUpdated) < 60 { return .localized("Updated now") }
+		if now.timeIntervalSince(lastUpdated) < 60 { return .localized("Updated just now") }
 		let formatter = RelativeDateTimeFormatter()
 		formatter.unitsStyle = .abbreviated
 		return .localized("Updated %@", arguments: formatter.localizedString(for: lastUpdated, relativeTo: now))

@@ -67,6 +67,7 @@ struct AppIconView: View {
 				}
 			}
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 		.alert(String.localized("Could Not Change Icon"), isPresented: Binding(get: { iconError != nil }, set: { if !$0 { iconError = nil } })) {
 			Button(String.localized("OK"), role: .cancel) {}
 		} message: { Text(iconError ?? "") }

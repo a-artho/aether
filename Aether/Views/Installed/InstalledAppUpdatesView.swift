@@ -6,6 +6,7 @@ import NimbleViews
 /// Small, already-matched update lists render directly; icons load independently.
 struct InstalledAppUpdatesView: View {
 	@AppStorage("Aether.rowHorizontalInset") private var horizontalInset: RowHorizontalInset = .standard
+	@Environment(\.nbStickySectionHeaders) private var stickySectionHeaders
 	let contexts: [SourceAppCatalogContext]
 	@State private var selectedUpdate: SelectedUpdate?
 	@StateObject private var groupedUpdates: GroupedUpdates
@@ -109,23 +110,11 @@ struct InstalledAppUpdatesView: View {
 		let groups = groupedUpdates.groups
 		List {
 			ForEach(groups) { group in
-				Section {
-					ForEach(group.rows) { row in
-						SourceAppsCellView(sourceURL: row.context.sourceURL, source: row.context.repository,
-							app: row.app, showSourceBadge: true, onSelect: {
-								selectedUpdate = SelectedUpdate(sourceURL: row.context.sourceURL,
-									repository: row.context.repository, app: row.app)
-							})
-							.listRowInsets(.horizontal, horizontalInset.points)
-					}
-				} header: {
-					SourceAppDateChip(title: group.title)
-						.textCase(nil)
-				}
-				.listSectionSeparator(.hidden)
+				updateGroupSection(group)
 			}
 		}
 		.listStyle(.plain)
+		.aetherAmbientScrollBackground()
 		.onChange(of: contexts) { _, next in groupedUpdates.update(next) }
 		.onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
 			groupedUpdates.update(contexts)
@@ -151,6 +140,42 @@ struct InstalledAppUpdatesView: View {
 			if let update = selectedUpdate {
 				SourceAppsDetailView(sourceURL: update.sourceURL, source: update.repository, app: update.app)
 			}
+		}
+	}
+
+	@ViewBuilder
+	private func updateGroupSection(_ group: UpdateGroup) -> some View {
+		if stickySectionHeaders {
+			Section {
+				updateRows(group)
+			} header: {
+				SourceAppDateChip(title: group.title)
+					.textCase(nil)
+			}
+			.listSectionSeparator(.hidden)
+		} else {
+			Section {
+				SourceAppDateChip(title: group.title)
+					.listRowInsets(EdgeInsets())
+					.listRowSeparator(.hidden)
+					.listRowBackground(Color.clear)
+					.accessibilityAddTraits(.isHeader)
+				updateRows(group)
+			}
+			.listSectionSeparator(.hidden)
+		}
+	}
+
+	@ViewBuilder
+	private func updateRows(_ group: UpdateGroup) -> some View {
+		ForEach(group.rows) { row in
+			SourceAppsCellView(sourceURL: row.context.sourceURL, source: row.context.repository,
+				app: row.app, showSourceBadge: true, onSelect: {
+					selectedUpdate = SelectedUpdate(sourceURL: row.context.sourceURL,
+						repository: row.context.repository, app: row.app)
+				})
+				.listRowBackground(Color.clear)
+				.listRowInsets(.horizontal, horizontalInset.points)
 		}
 	}
 }

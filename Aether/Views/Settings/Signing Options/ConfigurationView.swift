@@ -38,6 +38,7 @@ struct ConfigurationView: View {
 			}
 			SigningOptionsView(options: $_optionsManager.options, showsPostSigning: false)
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 		.toolbar {
 			NBToolbarMenu(
 				systemImage: "character.textbox",

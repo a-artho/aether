@@ -43,6 +43,7 @@ struct CertificatesView: View {
 				_cellButton(for: cert, at: index)
 			}
 		}
+		.aetherAmbientBackground(base: .grouped)
 		.navigationTitle(.localized("Certificates"))
 		.overlay {
 			if _certificates.isEmpty {

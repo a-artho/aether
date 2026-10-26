@@ -31,6 +31,7 @@ struct ConfigurationDictAddView: View {
 			}
 			.autocapitalization(.none)
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 		.toolbar {
 			NBToolbarButton(
 				systemImage: "checkmark",

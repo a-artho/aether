@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run focused release regressions against production code using macOS tools."""
-import pathlib, subprocess, tempfile
+import json, os, pathlib, subprocess, tempfile
 repo = pathlib.Path(__file__).resolve().parents[2]
 def declaration(path, start):
     source = (repo / path).read_text()
@@ -38,6 +38,12 @@ with tempfile.TemporaryDirectory(prefix='aether-release-tests-') as temp:
     source += r'''
 func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(value(), label) }
 let decoder = JSONDecoder()
+let manifestData = try Data(contentsOf: URL(fileURLWithPath: ProcessInfo.processInfo.environment["AETHER_MANIFEST_PATH"]!))
+let manifest = try decoder.decode(ASRepository.self, from: manifestData)
+check(manifest.apps.count == 1, "Aether release manifest contains one app")
+check(manifest.apps[0].id == "com.anfear.aether", "Aether manifest uses its canonical bundle ID")
+check(manifest.apps[0].currentVersion == ProcessInfo.processInfo.environment["AETHER_MANIFEST_VERSION"], "Aether manifest current version decodes")
+check(manifest.apps[0].versions?.count ?? 0 >= 2, "Aether manifest keeps release history")
 for artwork in ["", ",\"iconURL\":null", ",\"iconURL\":42", ",\"iconURL\":\"https://example.com/icon.png\""] {
  let json = "{\"name\":\"Fixture\",\"apps\":[{\"name\":\"App\",\"bundleIdentifier\":\"test.app\"" + artwork + "}]}"
  let repo = try decoder.decode(ASRepository.self, from: Data(json.utf8))
@@ -97,7 +103,10 @@ print("Release Swift checks passed")
     # A throwing count expression cannot be captured by the nonthrowing test autoclosure.
     source = source.replace('check(try context.count(for:request) == 0,', 'let count = try context.count(for:request)\ncheck(count == 0,')
     (root/'checks.swift').write_text(source)
-    subprocess.run(['swift', str(root/'checks.swift')], check=True)
+    swift_env = os.environ.copy()
+    swift_env['AETHER_MANIFEST_PATH'] = str(repo/'app-repo.json')
+    swift_env['AETHER_MANIFEST_VERSION'] = json.loads((repo/'app-repo.json').read_text())['apps'][0]['version']
+    subprocess.run(['swift', str(root/'checks.swift')], check=True, env=swift_env)
     driver = r'''
 #import "MachOUtils.h"
 int main(int argc, char **argv) { @autoreleasepool {

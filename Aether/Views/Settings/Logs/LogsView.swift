@@ -280,6 +280,7 @@ struct LogsView: View {
 				}
 			}
 		}
+		.aetherAmbientScrollBackground(base: .grouped)
 		.confirmationDialog(
 			.localized("Clear Diagnostics?"),
 			isPresented: $_showClearConfirmation,
@@ -442,6 +443,7 @@ struct DebugLogDetailView: View {
 					}
 				}
 			}
+			.aetherAmbientScrollBackground(base: .grouped)
 			.toolbar {
 				ToolbarItem(placement: .topBarTrailing) {
 					Button(.localized("Done")) {

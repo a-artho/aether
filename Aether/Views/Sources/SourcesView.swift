@@ -9,6 +9,7 @@ import SwiftUI
 import NimbleViews
 
 struct SourcesView: View {
+	@Environment(\.horizontalSizeClass) private var _horizontalSizeClass
 	@StateObject var viewModel = SourcesViewModel.shared
 	@State private var _searchText = ""
 	@State private var _refreshErrorMessage: String?
@@ -40,6 +41,7 @@ struct SourcesView: View {
 				SourcesCellView(source: source, isRefreshing: viewModel.isRefreshing(source))
 			}
 			.buttonStyle(.plain)
+			.listRowBackground(Color.clear)
 		}
 	}
 
@@ -85,11 +87,14 @@ struct SourcesView: View {
 							}
 						}
 						.buttonStyle(.plain)
+						.listRowBackground(Color.clear)
 						.listRowSeparator(.hidden)
 					}
 
 					if !_searchText.isEmpty && _filteredSources.isEmpty {
-						Text(String.localized("No Results")).foregroundStyle(.secondary)
+						Text(String.localized("No Results"))
+							.foregroundStyle(.secondary)
+							.listRowBackground(Color.clear)
 					}
 					if !_filteredSources.isEmpty {
 						NBSection(.localized("Repos"), trailing: {
@@ -99,10 +104,12 @@ struct SourcesView: View {
 						}) {
 							repoRows
 						}
+						.environment(\.nbStickySectionHeaders, _horizontalSizeClass != .compact)
 						.listSectionSeparator(.hidden)
 					}
 				}
 			}
+			.aetherAmbientScrollBackground()
 			.modifier(SourcesRefreshModifier(isEnabled: !_sources.isEmpty) {
 				_reportRefreshFailures = true
 				LibraryUpdatesStore.shared.startRefresh()
