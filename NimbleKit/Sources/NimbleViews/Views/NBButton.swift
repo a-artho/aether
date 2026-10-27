@@ -8,7 +8,7 @@
 import SwiftUI
 import NimbleExtensions
 
-public enum NBButtonSurfaceStyle: String, CaseIterable, Identifiable {
+public enum NBButtonSurfaceStyle: String, CaseIterable, Identifiable, Sendable {
 	case standard, glass
 
 	public var id: Self { self }
