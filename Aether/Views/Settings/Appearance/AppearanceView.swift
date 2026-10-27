@@ -44,7 +44,7 @@ struct AppearanceView: View {
 
 	@AppStorage("Aether.storeCellAppearance")
 	private var _storeCellAppearance: Int = 0
-	private let _storeCellAppearanceOptions = [
+	private let _storeCellAppearanceOptions: [String] = [
 		.localized("Standard"),
 		.localized("Large")
 	]
