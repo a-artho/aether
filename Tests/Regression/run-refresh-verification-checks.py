@@ -50,6 +50,7 @@ HELPER
  var appRefreshConnectionTask: Task<Bool,Never>?
  var reconciliationTask: Task<Bool,Never>?
  var reconciliationID: UUID?; var reconciliationRequiresFreshProbe = false
+ var selfUpdateHandoffPending = false
  var connectionEpoch: UInt64 = 0; var tunnelMethod = Method.inApp
  var transitionExpectedState: Bool?; var transitionDeadline = 0.0; var hasActiveTunnelDependencies = false
  var isIDeviceInstallationMode = true; var isConnectAutomaticallyEnabled = true
@@ -88,6 +89,10 @@ HELPER
   let cancelledWait=Task {await cancelledStartup.verifyForAppRefresh()};await drain();cancelledWait.cancel()
   let cancelledResult=await cancelledWait.value
   precondition(!cancelledResult && cancelledStartup.connectionWorkWaiters.isEmpty && cancelledStartup.checks==0)
+  let selfUpdateHandoff=Driver();selfUpdateHandoff.selfUpdateHandoffPending=true
+  let selfUpdateRefresh=await selfUpdateHandoff.verifyForAppRefresh()
+  precondition(!selfUpdateRefresh && selfUpdateHandoff.checks==0 && selfUpdateHandoff.starts==0,
+   "Refresh verification must not reconnect the embedded VPN while Aether is handing off its self-update")
   let backgroundStartup=Driver();backgroundStartup.hasCompletedInitialActivation=false
   let backgroundWait=Task {await backgroundStartup.verifyForAppRefresh()};await drain()
   UIApplication.shared.applicationState = .background;backgroundStartup.wakeActivationWaiters()

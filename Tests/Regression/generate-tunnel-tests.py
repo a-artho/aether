@@ -31,6 +31,7 @@ private enum StartupDiagnostic { case checking,pairingMissing,tunnelUnavailable 
 }
 @MainActor private final class StartupFixture {
  var hasCompletedInitialActivation=true
+ var selfUpdateHandoffPending=false
  var isIDeviceInstallationMode=true;var isConnected=false;var hasPairingFile=true
  var tunnelMethod=DeviceTunnelMethod.localDevVPN; var automaticAttemptEpoch:UInt64?
  var preparationTask:Task<Void,Never>?;var transitionDeadline:TimeInterval=0;var isConnectAutomaticallyEnabled=true
@@ -68,6 +69,11 @@ preferences=preferences.replace('@MainActor private final class VPNFixture', han
 tests=r'''
 }
 final class TunnelOptimizationTests:XCTestCase {
+ @MainActor func testSelfUpdateHandoffSuppressesAutomaticStartup() {
+  let fixture=StartupFixture();fixture.selfUpdateHandoffPending=true
+  fixture._connectForIDeviceMode()
+  XCTAssertEqual(fixture.starts,0,"Automatic startup cannot restart the embedded VPN during Aether replacement")
+ }
  @MainActor func testPreparationShowsConnectingAndCoalescesLaunchRequests() async {
   let fixture=StartupFixture()
   fixture._connectForIDeviceMode();XCTAssertTrue(fixture.isUpdating);XCTAssertEqual(fixture.diagnostic,.checking)
@@ -158,6 +164,7 @@ private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UU
  static let disconnectWhenIdleKey="Aether.autoTunnelLifecycle",connectAutomaticallyKey="Aether.connectAutomatically",unresolvedSimulationKey="AutoTestSimulation"
  var isDisconnectWhenIdleEnabled:Bool;var isConnectAutomaticallyEnabled:Bool
  var awaitingInitialActivation=false;var awaitingIdleReconnect=false;var hasPairingFile=true;var requiresInAppTunnelSetup=false
+ var selfUpdateHandoffPending=false
  var isAwaitingAutomaticConnection:Bool {awaitingInitialActivation || awaitingIdleReconnect}
  var automaticAttemptEpoch:UInt64?;var connectionEpoch:UInt64=0
  var localDevVPNHandoffGeneration:UUID?;var transitionGeneration:UUID?;var transitionExpectedState:Bool?
@@ -174,7 +181,8 @@ private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UU
  var hasActiveTunnelDependencies=false;var starts=0;var stops=0
  enum Level { case notice }
  func _log(_ message:String,category:String,level:Level) {}
- func _scheduleForegroundRecovery() {}
+ var foregroundRecoverySchedules=0
+ func _scheduleForegroundRecovery() { foregroundRecoverySchedules += 1 }
  func _cancelForegroundRecovery() {}
  func _connectForIDeviceMode() { starts += 1 }
  func setConnection(enabled:Bool,force:Bool=false) { if !enabled { stops += 1 } }
@@ -226,6 +234,19 @@ final class TunnelAutomationTests:XCTestCase {
   fixture.setConnectAutomatically(true);XCTAssertEqual(fixture.starts,1)
   fixture.isIDeviceInstallationMode=false
   fixture._restoreInstallationMode();fixture.handleAppForeground();XCTAssertEqual(fixture.starts,1)
+ }
+ @MainActor func testSelfUpdateHandoffSuppressesForegroundRecoveryAndIdleShutdown() {
+  automationDefaults.set(true,forKey:AutomationFixture.connectAutomaticallyKey)
+  automationDefaults.set(true,forKey:AutomationFixture.disconnectWhenIdleKey)
+  let fixture=AutomationFixture();fixture.selfUpdateHandoffPending=true
+  fixture.handleAppForeground()
+  XCTAssertEqual(fixture.starts,0,"Foreground recovery cannot restart the embedded VPN during Aether replacement")
+  XCTAssertEqual(fixture.foregroundRecoverySchedules,0,"Handoff foregrounding must not schedule automatic recovery")
+  TunnelApplication.shared.applicationState = .background
+  fixture.isConnected=true
+  fixture.handleAppBackground()
+  XCTAssertEqual(fixture.stops,0,"Idle lifecycle shutdown must not race the explicit self-update VPN handoff")
+  TunnelApplication.shared.applicationState = .active
  }
 }
 '''

@@ -68,11 +68,13 @@ STORED
  var queuedInstalls:[InstallationRequest]=[]
  var viewModel:InstallerStatusViewModel?;var lastErrorMessage:String?
  var _foregroundObserver:NSObjectProtocol?;var _backgroundObserver:NSObjectProtocol?
- var execution:Execution?;var isInstalling=false;var installGeneration=UUID()
+ var execution:Execution?;var isInstalling=false;var installGeneration=UUID();var selfUpdateHandoffGeneration:UUID?
  var nextStarts=0;var completionSettlements=0;var logMessages:[String]=[]
  enum Level {case notice}
  func _startNextIfPossible() {nextStarts+=1}
- func _interruptInstallation(generation:UUID) {}
+ var interruptionCount=0;var foregroundHandoffResolutions=0
+ func _interruptInstallation(generation:UUID) {interruptionCount+=1}
+ func _resolveSelfUpdateHandoffOnForeground(generation:UUID) {foregroundHandoffResolutions+=1}
  func _finishCompletedInstall(generation:UUID) {completionSettlements+=1}
  func _log(_ text:String,category:String,level:Level) {logMessages.append(text)}
 SUCCESS

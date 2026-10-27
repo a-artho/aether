@@ -215,6 +215,12 @@ class BackgroundTaskManager: ObservableObject {
     func updateProgress(for downloadId: String, progress: Double) { _updateTask(for: downloadId, progress: progress) }
     func stopTask(for downloadId: String, success: Bool) { _stopTask(for: downloadId, success: success) }
 
+    /// Ends ownership cleanly when work has been handed to iOS, without showing
+    /// the operation as 100% complete before the system finishes installing it.
+    func finishTaskForHandoff(for token: String) {
+        _stopTask(for: token, success: true, markProgressComplete: false)
+    }
+
     private func _updateTask(for token: String, title: String? = nil, subtitle: String? = nil, progress: Double) {
         guard let work = workByToken[token] else { return }
         guard !work.cancellation.isCancelled else { return }
@@ -229,11 +235,11 @@ class BackgroundTaskManager: ObservableObject {
         }
     }
 
-    private func _stopTask(for token: String, success: Bool) {
+    private func _stopTask(for token: String, success: Bool, markProgressComplete: Bool = true) {
         guard let work = workByToken[token] else { return }
         work.launch.completion = success
         if let task = work.task {
-            if success { applyProgress(to: task, progress: 1) }
+            if success && markProgressComplete { applyProgress(to: task, progress: 1) }
             task.setTaskCompleted(success: success)
         } else { BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: work.identifier) }
         DebugLogManager.shared.log("Continued task finished id=\(work.identifier) success=\(success).", category: "Background", level: .info)

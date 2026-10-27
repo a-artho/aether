@@ -26,6 +26,7 @@ func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
  enum Method {case inApp,localDevVPN};var tunnelMethod=Method.inApp
  var hasPairingFile=true
  var awaitingInitialActivation=false;var awaitingIdleReconnect=false;var requiresInAppTunnelSetup=false;var hasCompletedInitialActivation=false
+ var selfUpdateHandoffPending=false
  var isConnectAutomaticallyEnabled=true;var isIDeviceInstallationMode=true
  var isConnected=true;var isUpdating=false {didSet {_signalConnectionWorkChanged()}};var starts=0;var checks=0;var verified=false
  var isDisconnectWhenIdleEnabled=true;var hasActiveTunnelDependencies=false;var stops=0
@@ -257,6 +258,7 @@ struct PairingVerification {var record:PairingRecordIdentity?;mutating func begi
  enum Network {case wifi,cellularOnly};enum Level {case debug,warning,notice,error}
  enum Rejection {case notRejected,discarded,failed,replaced}
  var automaticAttemptEpoch:UInt64?
+ var selfUpdateHandoffPending=false
  var awaitingInitialActivation=false;var localDevVPNHandoffGeneration:UUID?
  var isUpdating:Bool {state == .disconnecting}
  var networkGeneration=UUID();var connectionPreparation:UUID?;var transitionGeneration:UUID?;var connectionEpoch:UInt64=0

@@ -99,6 +99,9 @@ final class AppInstallationManager: ObservableObject {
 	private var execution: AppOperationExecution?
 	private var _backgroundObserver: NSObjectProtocol?
 	private var _foregroundObserver: NSObjectProtocol?
+	private var selfUpdateHandoffGeneration: UUID?
+	private var selfUpdateTunnelHandoffConfirmedGeneration: UUID?
+	private var selfUpdateTunnelHandoffFailureGeneration: UUID?
 	
 	private struct StoredInstallation: Codable {
 		let app: AppSnapshot
@@ -114,13 +117,23 @@ final class AppInstallationManager: ObservableObject {
 	private init() {
 		_foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
 			object: nil, queue: .main) { [weak self] _ in
-			Task { @MainActor in self?._startNextIfPossible() }
+			Task { @MainActor in
+				guard let self else { return }
+				if let generation = self.selfUpdateHandoffGeneration {
+					self._resolveSelfUpdateHandoffOnForeground(generation: generation)
+				}
+				self._startNextIfPossible()
+			}
 		}
 
 		_backgroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
 			object: nil, queue: .main) { [weak self] _ in
 			Task { @MainActor in
 				guard let self, UIApplication.shared.applicationState == .background, self.isInstalling else { return }
+				if self.selfUpdateHandoffGeneration == self.installGeneration {
+					self._log("Aether entered background during self-update handoff; not treating the expected task shutdown as interruption.", category: "Install", level: .notice)
+					return
+				}
 				#if !targetEnvironment(macCatalyst)
 				if self.execution?.hasExecution != true {
 					self._interruptInstallation(generation: self.installGeneration)
@@ -368,6 +381,9 @@ final class AppInstallationManager: ObservableObject {
 		let request = queuedInstalls.removeFirst()
 		let generation = UUID()
 		installGeneration = generation
+		selfUpdateHandoffGeneration = nil
+		selfUpdateTunnelHandoffConfirmedGeneration = nil
+		selfUpdateTunnelHandoffFailureGeneration = nil
 		let context = InstallationContext(method: request.method, serverMethod: request.serverMethod)
 		let statusVM = InstallerStatusViewModel(isIdevice: request.method == 1,
 			signsBeforeInstalling: request.signing != nil && request.installRequested)
@@ -611,8 +627,18 @@ final class AppInstallationManager: ObservableObject {
 					#if !targetEnvironment(macCatalyst)
 					self?.execution?.stopServerAudio()
 					#endif
-					self?.lastErrorMessage = String(describing: error)
-					statusVM.status = .broken(error)
+					if self?.selfUpdateHandoffGeneration == generation,
+						DeviceConnectionManager.shared.isSelfUpdateTunnelHandoffPending {
+						self?._log("Install-proxy connection ended during the deliberate self-update VPN shutdown; deferring the outcome to iOS installation progress and relaunch verification.", category: "Install", level: .notice)
+						return
+					}
+					if case .broken = statusVM.status {
+						// Preserve a more actionable handoff error already published by
+						// the self-update tunnel shutdown path.
+					} else {
+						self?.lastErrorMessage = String(describing: error)
+						statusVM.status = .broken(error)
+					}
 					self?._log("Install failed: \(error.localizedDescription)", category: "Install", level: .error)
 				}
 			}
@@ -623,6 +649,10 @@ final class AppInstallationManager: ObservableObject {
 		guard installGeneration == generation else { return }
 		installTask = nil
 		_releaseBackgroundConnectionIfIdle()
+		if selfUpdateHandoffGeneration == generation,
+			UIApplication.shared.applicationState == .active {
+			_resolveSelfUpdateHandoffOnForeground(generation: generation)
+		}
 	}
 
 	private func _releaseBackgroundConnectionIfIdle() {
@@ -701,6 +731,11 @@ final class AppInstallationManager: ObservableObject {
 			progressTask?.cancel()
 			progressTask = nil
 			settlementTask?.cancel()
+			if selfUpdateTunnelHandoffFailureGeneration == generation {
+				_persistInstallQueue()
+				_log("Keeping the self-update VPN shutdown error available for Retry/Cancel.", category: "Install", level: .notice)
+				return
+			}
 			let worker = installTask
 			settlementTask = Task { [weak self] in
 				await worker?.value
@@ -737,9 +772,123 @@ final class AppInstallationManager: ObservableObject {
 			currentRequest?.selfUpdateAttempt = attempt
 			_persistInstallQueue()
 		}
-		_log("Self-install command sent and flushed; backgrounding Aether for replacement. Service acceptance is not yet confirmed.", category: "Install", level: .notice)
-		guard UIApplication.shared.applicationState != .background else { return }
-		UIApplication.shared.perform(#selector(NSXPCConnection.suspend))
+		let connection = DeviceConnectionManager.shared
+		guard connection.tunnelMethod == .inApp else {
+			// Preserve the existing LocalDevVPN self-install behavior. LocalDevVPN
+			// belongs to its own app and is deliberately outside this shutdown path.
+			_log("Self-install command flushed through LocalDevVPN; preserving its existing handoff behavior.", category: "Install", level: .notice)
+			if UIApplication.shared.applicationState != .background {
+				UIApplication.shared.perform(#selector(NSXPCConnection.suspend))
+			}
+			return
+		}
+
+		selfUpdateHandoffGeneration = generation
+		selfUpdateTunnelHandoffConfirmedGeneration = nil
+		selfUpdateTunnelHandoffFailureGeneration = nil
+		guard connection.beginSelfUpdateTunnelHandoff() else {
+			selfUpdateHandoffGeneration = nil
+			_log("Self-install command flushed, but the embedded VPN handoff could not start.", category: "Install", level: .error)
+			return
+		}
+		_log("Self-install command flushed; ending Aether's continued task and stopping its embedded VPN before suspension. Install acceptance remains unconfirmed.", category: "Install", level: .notice)
+		execution?.finishForHandoff()
+		execution = nil
+		Task { @MainActor [weak self, weak connection] in
+			guard let connection else { return }
+			let tunnelStopped = await connection.waitForSelfUpdateTunnelHandoff()
+			guard let self, self.installGeneration == generation,
+				self.selfUpdateHandoffGeneration == generation else { return }
+			guard tunnelStopped else {
+				connection.endSelfUpdateTunnelHandoff()
+				self.selfUpdateTunnelHandoffFailureGeneration = generation
+				if case .completed(.success) = self.viewModel?.status {
+					self.selfUpdateHandoffGeneration = nil
+					self.selfUpdateTunnelHandoffConfirmedGeneration = nil
+					self.selfUpdateTunnelHandoffFailureGeneration = nil
+					self._log("The install completed before VPN shutdown was confirmed; leaving its successful result intact.", category: "Install", level: .warning)
+					return
+				}
+				let error = NSError(domain: "Aether.SelfUpdate", code: 1,
+					userInfo: [NSLocalizedDescriptionKey: String.localized("Could not disconnect Aether VPN. Turn it off and retry.")])
+				self.lastErrorMessage = error.localizedDescription
+				self.viewModel?.status = .broken(error)
+				self._log("Self-update handoff stopped because the embedded VPN did not disconnect. The install result remains unconfirmed.", category: "Install", level: .error)
+				return
+			}
+			self.selfUpdateTunnelHandoffConfirmedGeneration = generation
+			self._log("Embedded VPN is disconnected; suspending Aether so iOS can replace it.", category: "Install", level: .notice)
+			if UIApplication.shared.applicationState != .background {
+				UIApplication.shared.perform(#selector(NSXPCConnection.suspend))
+			}
+		}
+	}
+
+	private func _resolveSelfUpdateHandoffOnForeground(generation: UUID) {
+		guard selfUpdateHandoffGeneration == generation, installGeneration == generation,
+			currentRequest?.app.identifier == Bundle.main.bundleIdentifier,
+			let statusVM = viewModel else { return }
+
+		guard selfUpdateTunnelHandoffConfirmedGeneration == generation
+			|| selfUpdateTunnelHandoffFailureGeneration == generation else {
+			_log("Self-update foreground recovery is waiting for the embedded VPN shutdown result.", category: "Install", level: .notice)
+			return
+		}
+		if case .completed(.success) = statusVM.status {
+			DeviceConnectionManager.shared.endSelfUpdateTunnelHandoff()
+			selfUpdateHandoffGeneration = nil
+			selfUpdateTunnelHandoffConfirmedGeneration = nil
+			selfUpdateTunnelHandoffFailureGeneration = nil
+			return
+		}
+		if let bundleID = currentRequest?.app.identifier,
+			let progress = UIApplication.installProgress(for: bundleID, makeSynchronous: false), progress > 0 {
+			if selfUpdateTunnelHandoffFailureGeneration == generation, case .broken = statusVM.status {
+				statusVM.status = .installing
+				lastErrorMessage = nil
+			}
+			if progressTask == nil {
+				progressTask = startInstallProgressPolling(bundleID: bundleID, viewModel: statusVM, generation: generation)
+			}
+			_log("Self-update resumed with iOS installation progress; monitoring completion.", category: "Install", level: .notice)
+			return
+		}
+		guard installTask == nil else {
+			_log("Self-update resumed while its install request is still unwinding; deferring recovery until the worker exits.", category: "Install", level: .notice)
+			return
+		}
+
+		DeviceConnectionManager.shared.endSelfUpdateTunnelHandoff()
+		let tunnelHandoffFailed = selfUpdateTunnelHandoffFailureGeneration == generation
+		selfUpdateHandoffGeneration = nil
+		selfUpdateTunnelHandoffConfirmedGeneration = nil
+		if !tunnelHandoffFailed { selfUpdateTunnelHandoffFailureGeneration = nil }
+		if tunnelHandoffFailed, case .broken = statusVM.status {
+			_persistInstallQueue()
+			return
+		}
+
+		if currentRequest?.selfUpdateAttempt?.isUnconfirmedSameBuildReinstall(runningInfo: Bundle.main.infoDictionary ?? [:]) == true,
+			let request = currentRequest {
+			completedArtifacts.insert(request.appKey)
+			UserDefaults.standard.set(Array(completedArtifacts), forKey: "Aether.completedInstallArtifacts")
+			currentRequest = nil
+			activeApp = nil
+			viewModel = nil
+			_persistInstallQueue()
+			_log("Self-update returned to the same build without observable installation progress. Restored Reinstall and retained the IPA.", category: "Install", level: .notice)
+			_startNextIfPossible()
+			return
+		}
+
+		if case .broken = statusVM.status {
+			_persistInstallQueue()
+			return
+		}
+		lastErrorMessage = InstallationBackgroundError().localizedDescription
+		statusVM.status = .broken(InstallationBackgroundError())
+		_persistInstallQueue()
+		_log("Self-update resumed in the old process with no iOS install progress. Restored Retry/Cancel; installation was not claimed successful.", category: "Install", level: .notice)
 	}
 
 	private func _finishCompletedInstall(generation: UUID) {
@@ -805,6 +954,12 @@ final class AppInstallationManager: ObservableObject {
 		} else if !hasCompletedSuccessfully { execution?.completeJob() }
 		guard currentRequest != nil || activeApp != nil || installTask != nil || iDevicePreflightTask != nil else { return }
 		installGeneration = UUID()
+		if selfUpdateHandoffGeneration != nil {
+			DeviceConnectionManager.shared.endSelfUpdateTunnelHandoff()
+			selfUpdateHandoffGeneration = nil
+			selfUpdateTunnelHandoffConfirmedGeneration = nil
+		}
+		selfUpdateTunnelHandoffFailureGeneration = nil
 		settlementTask?.cancel()
 		settlementTask = nil
 		let worker = installTask

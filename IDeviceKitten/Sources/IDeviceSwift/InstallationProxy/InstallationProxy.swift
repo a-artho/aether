@@ -57,13 +57,15 @@ private final class UploadProgressContext {
  }
 }
 
-/// Progress is independent of the command-sent handoff. Retire queued delivery
-/// on native completion/cancellation so an old job cannot background a new one.
+/// Progress is independent of the command-sent handoff. Progress updates stop
+/// on native completion/cancellation; a command-sent handoff already queued to
+/// the main actor must still run because the Install command was flushed.
 private final class InstallationProgressContext: @unchecked Sendable {
 	private let lock = NSLock()
 	private let publisher: UploadProgressPublisher
 	private let onCommandSent: (@MainActor @Sendable () -> Void)?
 	private var handoffScheduled = false
+	private var handoffDelivered = false
 	private var closed = false
 
 	init(publisher: UploadProgressPublisher, onCommandSent: (@MainActor @Sendable () -> Void)?) {
@@ -77,7 +79,7 @@ private final class InstallationProgressContext: @unchecked Sendable {
 
 	func commandSent() {
 		lock.lock()
-		let shouldSchedule = !closed && !handoffScheduled && onCommandSent != nil
+		let shouldSchedule = !closed && !handoffScheduled && !handoffDelivered && onCommandSent != nil
 		if shouldSchedule { handoffScheduled = true }
 		lock.unlock()
 		if shouldSchedule { DispatchQueue.main.async { [self] in deliverHandoff() } }
@@ -85,7 +87,11 @@ private final class InstallationProgressContext: @unchecked Sendable {
 
 	@MainActor private func deliverHandoff() {
 		lock.lock()
-		let shouldDeliver = !closed
+		let shouldDeliver = handoffScheduled && !handoffDelivered
+		if shouldDeliver {
+			handoffScheduled = false
+			handoffDelivered = true
+		}
 		lock.unlock()
 		if shouldDeliver { onCommandSent?() }
 	}

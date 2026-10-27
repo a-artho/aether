@@ -73,6 +73,8 @@ final class Connection {
  var connectionEpoch: UInt64 = 0; var activeVerificationID: UUID?
  var localDevVPNHandoffGeneration:UUID?;var automaticAttemptEpoch:UInt64?;var hasReturnedFromLocalDevVPN=false
  var preparationTask:Task<Void,Never>?;var connectionTask:Task<Void,Never>?;var rsdCleanupTask:Task<Void,Never>?
+ var selfUpdateHandoffPending=false
+ func _log(_ message:String,category:String,level:Level) {}
  func _cancelReconciliation() {}
  func _cancelForegroundRecovery() {}
  var awaitingInitialActivation=false;var awaitingIdleReconnect=false
@@ -162,6 +164,9 @@ source += '''
  check(!connection.proceeded, "Ordinary toggle must respect active transition")
  connection.setConnection(enabled: false, force: true)
  check(connection.proceeded, "Forced disconnect must supersede connecting transition")
+ connection.proceeded = false; connection.selfUpdateHandoffPending = true
+ connection.setConnection(enabled: true)
+ check(!connection.proceeded, "Self-update handoff blocks tunnel restart")
  var validStart = true
  let cancelledTunnel = TunnelProbe(); cancelledTunnel.prepared = { validStart = false }
  do { try await cancelledTunnel.start { validStart }; preconditionFailure("Superseded start must stop") }

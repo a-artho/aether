@@ -42,8 +42,11 @@ final class Download {
 }
 final class Execution {let hasExecution=false}
 @MainActor final class Installation {
- let isInstalling=true;let execution:Execution?=nil;let installGeneration=UUID();var interrupted=0
+ enum Level {case notice}
+ let isInstalling=true;let execution:Execution?=nil;let installGeneration=UUID()
+ var selfUpdateHandoffGeneration:UUID?=nil;var interrupted=0;var logs:[String]=[]
  func _interruptInstallation(generation:UUID){interrupted+=1}
+ func _log(_ message:String,category:String,level:Level){logs.append(message)}
  INSTALLATION
 }
 @MainActor final class Grants {
@@ -68,6 +71,12 @@ final class Execution {let hasExecution=false}
    precondition(foreground.resumes == (state == .active ? 1:0))
    precondition(foreground._foregroundGeneration == (state == .active ? 1:0))
   }
+  UIApplication.shared.applicationState = .background
+  let selfUpdate = Installation()
+  selfUpdate.selfUpdateHandoffGeneration = selfUpdate.installGeneration
+  selfUpdate.deliver()
+  precondition(selfUpdate.interrupted == 0, "The expected backgrounding during self-update handoff must not be recorded as an interrupted install")
+  precondition(selfUpdate.logs.contains(where: { $0.contains("expected task shutdown as interruption") }), "The self-update handoff path should be observable in diagnostics")
   print("Lifecycle event checks passed: delayed foreground/background delivery, processing, installation and execution ownership")
  }
 }

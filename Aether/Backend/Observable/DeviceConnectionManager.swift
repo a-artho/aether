@@ -167,6 +167,10 @@ public final class DeviceConnectionManager: ObservableObject {
 	private var lastVerifiedRecord: PairingRecordIdentity?
 	private var automaticRetryBlocked = false
 	private var localDevVPNHandoffGeneration: UUID?
+	/// A self-update must release Aether's embedded VPN before iOS can replace
+	/// this process. This is process-local; a fresh launch resumes normal recovery.
+	private var selfUpdateHandoffPending = false
+	var isSelfUpdateTunnelHandoffPending: Bool { selfUpdateHandoffPending }
 
 	public init() {
 		hasPairingFile = HeartbeatManager.hasPairingFile()
@@ -470,6 +474,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	/// App-shell bootstrap; shares the existing guarded connection path with activation.
 	public func connectAutomaticallyIfNeeded() {
 		guard UIApplication.shared.applicationState == .active,
+			!selfUpdateHandoffPending,
 			isConnectAutomaticallyEnabled, isIDeviceInstallationMode,
 			!CellularAssistManager.shared.isBusy,
 			_automaticConnectionPrerequisitesReady() else { return }
@@ -520,6 +525,10 @@ public final class DeviceConnectionManager: ObservableObject {
 		awaitingIdleReconnect = false
 		lastVerifiedAt = 0
 		CellularAssistManager.shared.handleApplicationDidBecomeActive()
+		guard !selfUpdateHandoffPending else {
+			_log("Foreground tunnel recovery deferred during Aether self-update handoff.", category: "Tunnel", level: .notice)
+			return
+		}
 		guard !CellularAssistManager.shared.isBusy else { return }
 		if let generation = localDevVPNHandoffGeneration, transitionGeneration == generation {
 			localDevVPNHandoffGeneration = nil
@@ -661,6 +670,10 @@ public final class DeviceConnectionManager: ObservableObject {
 	public func handleAppBackground() {
 		// A delayed background notification must not close a resumed app's tunnel.
 		guard UIApplication.shared.applicationState == .background else { return }
+		guard !selfUpdateHandoffPending else {
+			_log("App backgrounded during the explicit Aether self-update tunnel handoff.", category: "Tunnel", level: .notice)
+			return
+		}
 		let wasExpectingConnection = (transitionExpectedState != false || awaitingIdleReconnect)
 			&& (isAwaitingAutomaticConnection || isConnected || isUpdating
 				|| EmbeddedTunnelManager.shared.isRunning)
@@ -716,7 +729,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _connectForIDeviceMode(automatically: Bool = true) {
-		guard hasCompletedInitialActivation else { return }
+		guard hasCompletedInitialActivation, !selfUpdateHandoffPending else { return }
 		guard UIApplication.shared.applicationState != .background else { return }
 		guard isIDeviceInstallationMode, !isUpdating, !isConnected else { return }
 		guard _providerIsAvailable() else { return }
@@ -765,6 +778,10 @@ public final class DeviceConnectionManager: ObservableObject {
 	// MARK: - Toggle Connection
 
 	public func setConnection(enabled: Bool, force: Bool = false, deadline: TimeInterval? = nil, automatically: Bool = false) {
+		guard !enabled || !selfUpdateHandoffPending else {
+			_log("Ignored tunnel start during Aether self-update handoff.", category: "Tunnel", level: .notice)
+			return
+		}
 		awaitingInitialActivation = false
 		if !enabled && UIApplication.shared.applicationState != .background {
 			awaitingIdleReconnect = false
@@ -839,10 +856,61 @@ public final class DeviceConnectionManager: ObservableObject {
 		}
 	}
 
+	/// Starts the scoped shutdown needed before iOS replaces Aether. The stop
+	/// request is sent synchronously before the caller releases BGContinued.
+	@discardableResult
+	func beginSelfUpdateTunnelHandoff() -> Bool {
+		guard tunnelMethod == .inApp else { return false }
+		selfUpdateHandoffPending = true
+		awaitingInitialActivation = false
+		awaitingIdleReconnect = false
+		automaticAttemptEpoch = nil
+		_cancelForegroundRecovery()
+		appRefreshConnectionTask?.cancel()
+		appRefreshConnectionTask = nil
+		appRefreshConnectionID = nil
+		_cancelReconciliation()
+
+		if state == .disconnected, !EmbeddedTunnelManager.shared.isRunning {
+			_log("Self-update handoff found the embedded VPN already stopped.", category: "Tunnel", level: .notice)
+			return true
+		}
+
+		// Issue stop before ending the continued task; iOS can suspend Aether as
+		// soon as that task is completed.
+		EmbeddedTunnelManager.shared.requestStopIfRunning()
+		// NetworkExtension's stop confirmation can take up to six seconds. Give
+		// this disconnect its own bounded window without changing connect timeouts.
+		setConnection(enabled: false, force: true, deadline: CACurrentMediaTime() + 7)
+		_log("Started embedded VPN shutdown for Aether self-update.", category: "Tunnel", level: .notice)
+		return true
+	}
+
+	/// Wait for NetworkExtension to report that the embedded VPN has stopped.
+	func waitForSelfUpdateTunnelHandoff() async -> Bool {
+		guard selfUpdateHandoffPending else { return false }
+		if let task = connectionTask { await task.value }
+		if EmbeddedTunnelManager.shared.state == .disconnecting {
+			_ = await EmbeddedTunnelManager.shared.waitForDisconnected()
+		}
+		let stopped = EmbeddedTunnelManager.shared.state == .disconnected
+			&& !EmbeddedTunnelManager.shared.isRunning
+		_log("Self-update embedded VPN shutdown \(stopped ? "confirmed" : "not confirmed").",
+			category: "Tunnel", level: stopped ? .notice : .warning)
+		return stopped
+	}
+
+	func endSelfUpdateTunnelHandoff() {
+		guard selfUpdateHandoffPending else { return }
+		selfUpdateHandoffPending = false
+		_log("Ended Aether self-update tunnel handoff state.", category: "Tunnel", level: .notice)
+	}
+
 	// MARK: - Ensure Connected (for Installation & Operations)
 
 	@discardableResult
 	public func ensureConnected() async throws -> Bool {
+		guard !selfUpdateHandoffPending else { throw CancellationError() }
 		// An explicit device operation adopts the connection. Disabling automatic
 		// launch must not cancel an installation or spoofing operation's work.
 		automaticAttemptEpoch = nil
@@ -947,6 +1015,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	/// Library and foreground recovery share one operation and an explicit result.
 	public func verifyForAppRefresh() async -> Bool {
+		guard !selfUpdateHandoffPending else { return false }
 		guard await _waitForInitialActivation() else { return false }
 		if let task = appRefreshConnectionTask {
 			return await _joinAppRefreshConnection(task)
@@ -997,7 +1066,8 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _verifyAndRecoverForAppRefresh() async -> Bool {
-		guard UIApplication.shared.applicationState == .active, isIDeviceInstallationMode else { return false }
+		guard UIApplication.shared.applicationState == .active, isIDeviceInstallationMode,
+			!selfUpdateHandoffPending else { return false }
 		if isUpdating || CellularAssistManager.shared.isBusy {
 			let wasStopping = state == .disconnecting
 			if await _waitForRefreshConnection() { return !Task.isCancelled }
@@ -1038,7 +1108,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	@discardableResult
 	public func reconcile(force: Bool = false, cellularAssistTransaction: Bool = false) async -> Bool {
-		guard hasCompletedInitialActivation else { return false }
+		guard hasCompletedInitialActivation, !selfUpdateHandoffPending else { return false }
 		guard UIApplication.shared.applicationState != .background || hasActiveTunnelDependencies
 			|| (tunnelMethod == .localDevVPN && transitionExpectedState != nil)
 			|| (force && transitionExpectedState == false) else { return false }

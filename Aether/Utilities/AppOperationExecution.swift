@@ -131,4 +131,15 @@ final class AppOperationExecution {
 		BackgroundTaskManager.shared.stopTask(for: token, success: success)
 		#endif
 	}
+
+	/// Finishes this app-owned task after handing installation responsibility to
+	/// iOS. The Live Activity ends successfully but does not claim install success.
+	func finishForHandoff() {
+		guard !isFinished else { return }
+		isFinished = true
+		stopServerAudio()
+		#if !targetEnvironment(macCatalyst)
+		BackgroundTaskManager.shared.finishTaskForHandoff(for: token)
+		#endif
+	}
 }
