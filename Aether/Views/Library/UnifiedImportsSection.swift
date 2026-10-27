@@ -936,6 +936,7 @@ private struct UnifiedImportAccessory: View {
 	@ObservedObject var controller: UnifiedImportsController
 	@StateObject private var activity: UnifiedImportActivity
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@Environment(\.nbButtonSurfaceStyle) private var actionButtonSurfaceStyle
 
 	init(entry: UnifiedImportEntry, model: InstallerStatusViewModel?, controller: UnifiedImportsController) {
 		self.entry = entry
@@ -957,9 +958,9 @@ private struct UnifiedImportAccessory: View {
 	/// progress and completion, so the metadata never shifts during the morph.
 	private var actionWidthReservation: some View {
 		ZStack(alignment: .trailing) {
-			NBButton(.localized("Sign"), style: .text).hidden().allowsHitTesting(false).accessibilityHidden(true)
-			NBButton(.localized("Install"), style: .text).hidden().allowsHitTesting(false).accessibilityHidden(true)
-			NBButton(.localized("Reinstall"), style: .text).hidden().allowsHitTesting(false).accessibilityHidden(true)
+			NBButton(.localized("Sign"), style: .text, showsBackground: false).hidden().allowsHitTesting(false).accessibilityHidden(true)
+			NBButton(.localized("Install"), style: .text, showsBackground: false).hidden().allowsHitTesting(false).accessibilityHidden(true)
+			NBButton(.localized("Reinstall"), style: .text, showsBackground: false).hidden().allowsHitTesting(false).accessibilityHidden(true)
 		}
 	}
 
@@ -969,6 +970,31 @@ private struct UnifiedImportAccessory: View {
 
 	private var isActionStage: Bool {
 		!isProgressStage && entry.app != nil
+	}
+
+	@ViewBuilder
+	private func morphingSurface(width: CGFloat, actionStage: Bool, progressStage: Bool, isVisible: Bool) -> some View {
+		if actionButtonSurfaceStyle == .glass, #available(iOS 26.0, *) {
+			Capsule()
+				.fill(.clear)
+				.frame(width: width, height: 35)
+				.glassEffect(actionStage ? .regular.interactive() : .regular, in: Capsule())
+				.overlay {
+					Capsule()
+						.stroke(ringTint.opacity(progressStage ? 0.2 : 0), lineWidth: 2.3)
+				}
+				.opacity(isVisible ? 1 : 0)
+		} else {
+			// Preserve the existing Default surface and its exact rendering.
+			Capsule()
+				.fill(actionStage ? NBButton.textPillBackground : .clear)
+				.overlay {
+					Capsule()
+						.stroke(ringTint.opacity(progressStage ? 0.2 : 0), lineWidth: 2.3)
+				}
+				.frame(width: width, height: 35)
+				.opacity(isVisible ? 1 : 0)
+		}
 	}
 
 	private var ringTint: Color {
@@ -990,14 +1016,12 @@ private struct UnifiedImportAccessory: View {
 					let hasActionVisual = actionStage || progressStage
 
 					ZStack(alignment: .trailing) {
-						Capsule()
-							.fill(actionStage ? NBButton.textPillBackground : .clear)
-							.overlay {
-								Capsule()
-									.stroke(ringTint.opacity(progressStage ? 0.2 : 0), lineWidth: 2.3)
-							}
-							.frame(width: morphWidth, height: 35)
-							.opacity(hasActionVisual ? 1 : 0)
+						morphingSurface(
+							width: morphWidth,
+							actionStage: actionStage,
+							progressStage: progressStage,
+							isVisible: hasActionVisual
+						)
 
 						ringAccessory
 							.frame(width: 44, height: 44, alignment: .trailing)

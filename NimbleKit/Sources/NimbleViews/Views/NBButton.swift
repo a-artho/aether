@@ -8,6 +8,30 @@
 import SwiftUI
 import NimbleExtensions
 
+public enum NBButtonSurfaceStyle: String, CaseIterable, Identifiable {
+	case standard, glass
+
+	public var id: Self { self }
+
+	public var title: String {
+		switch self {
+		case .standard: .localized("Default")
+		case .glass: .localized("Glass")
+		}
+	}
+}
+
+private struct NBButtonSurfaceStyleKey: EnvironmentKey {
+	static let defaultValue = NBButtonSurfaceStyle.standard
+}
+
+public extension EnvironmentValues {
+	var nbButtonSurfaceStyle: NBButtonSurfaceStyle {
+		get { self[NBButtonSurfaceStyleKey.self] }
+		set { self[NBButtonSurfaceStyleKey.self] = newValue }
+	}
+}
+
 public struct NBButton: View {
 	private var _title: String
 	private var _icon: String
@@ -15,6 +39,7 @@ public struct NBButton: View {
 	private var _isLoading: Bool
 	private var _showsBackground: Bool
 	private var _horizontalPadding: CGFloat
+	@Environment(\.nbButtonSurfaceStyle) private var _surfaceStyle
 	
 	public init(
 		_ title: String = "",
@@ -63,10 +88,36 @@ public struct NBButton: View {
 				}
 				.padding(.horizontal, _horizontalPadding)
 				.frame(height: 35)
-				.background(Self.textPillBackground.opacity(_showsBackground ? 1 : 0))
-				.clipShape(Capsule())
+				.modifier(TextPillSurface(style: _surfaceStyle, showsBackground: _showsBackground))
 				.frame(minHeight: 44)
 				.contentShape(Rectangle())
+		}
+	}
+}
+
+private struct TextPillSurface: ViewModifier {
+	let style: NBButtonSurfaceStyle
+	let showsBackground: Bool
+
+	@ViewBuilder
+	func body(content: Content) -> some View {
+		switch style {
+		case .standard:
+			content
+				.background(NBButton.textPillBackground.opacity(showsBackground ? 1 : 0))
+				.clipShape(Capsule())
+		case .glass:
+			if showsBackground {
+				if #available(iOS 26.0, *) {
+					content.glassEffect(.regular.interactive(), in: Capsule())
+				} else {
+					content
+						.background(NBButton.textPillBackground)
+						.clipShape(Capsule())
+				}
+			} else {
+				content
+			}
 		}
 	}
 }

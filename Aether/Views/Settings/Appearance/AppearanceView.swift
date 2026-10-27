@@ -19,7 +19,9 @@ struct AppearanceView: View {
 	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .sources
 	@AppStorage("Aether.settingsRowIconStyle") private var _settingsRowIconStyle: SettingsRowIconStyle = .colored
 	@AppStorage("Aether.deviceControlsStyle") private var _deviceControlsStyle: DeviceControlsStyle = .standard
+	@AppStorage("Aether.actionButtonStyle") private var _actionButtonSurfaceStyle: NBButtonSurfaceStyle = .standard
 	@AppStorage("Aether.ambientBackgroundEnabled") private var _ambientBackgroundEnabled = false
+	@AppStorage("Aether.ambientBackgroundVerticalReach") private var _ambientBackgroundVerticalReach = 0.0
 	@AppStorage("Aether.mutedSectionHeaders") private var _mutedSectionHeaders = false
 	@AppStorage("Aether.userInterfaceStyle")
 	private var _userInterfaceStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
@@ -42,9 +44,9 @@ struct AppearanceView: View {
 
 	@AppStorage("Aether.storeCellAppearance")
 	private var _storeCellAppearance: Int = 0
-	private let _storeCellAppearanceMethods: [(name: String, desc: String)] = [
-		(.localized("Standard"), .localized("Default style for the app, only includes subtitle.")),
-		(.localized("Big Description"), .localized("Adds the localized description of the app."))
+	private let _storeCellAppearanceOptions = [
+		.localized("Standard"),
+		.localized("Large")
 	]
 
 	@AppStorage("Aether.userTintColor")
@@ -93,8 +95,12 @@ struct AppearanceView: View {
 				Toggle(isOn: $_ambientBackgroundEnabled) {
 					SettingsRowLabel(.localized("Ambient Background"), systemImage: "circle.lefthalf.filled", backgroundColor: .indigo)
 				}
+				Slider(value: $_ambientBackgroundVerticalReach, in: 0...1) {
+					SettingsRowLabel(.localized("Glow Reach"), systemImage: "sun.max", backgroundColor: .orange)
+				}
+				.disabled(!_ambientBackgroundEnabled)
 			} footer: {
-				Text(.localized("Adds a subtle theme-colored glow to page backgrounds in dark mode."))
+				Text(.localized("Adds a subtle theme-colored glow in dark mode. Adjust Glow Reach to extend the top glow toward the bottom of the screen."))
 			}
 
 			NBSection(.localized("Settings")) {
@@ -130,13 +136,13 @@ struct AppearanceView: View {
 				.tint(.secondary)
 			}
 
-			NBSection(.localized("App Lists & Details")) {
-				Picker(selection: $_rowHorizontalInset) {
-					ForEach(RowHorizontalInset.allCases) { inset in
-						Text(inset.title).tag(inset)
+			NBSection(.localized("Action Buttons")) {
+				Picker(selection: $_actionButtonSurfaceStyle) {
+					ForEach(NBButtonSurfaceStyle.allCases) { style in
+						Text(style.title).tag(style)
 					}
 				} label: {
-					SettingsRowLabel(.localized("Horizontal Inset"), systemImage: "arrow.left.and.right", backgroundColor: .teal)
+					SettingsRowLabel(.localized("Action Button Style"), systemImage: "capsule", backgroundColor: .indigo)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)
@@ -239,19 +245,24 @@ struct AppearanceView: View {
 				Toggle(isOn: $_showRepoDownloadButtons) {
 					SettingsRowLabel(.localized("Show Download Buttons"), systemImage: "icloud.and.arrow.down", backgroundColor: .blue)
 				}
-				Picker(.localized("Store Cell Appearance"), selection: $_storeCellAppearance) {
-					ForEach(0..<_storeCellAppearanceMethods.count, id: \.self) { index in
-						let method = _storeCellAppearanceMethods[index]
-						NBTitleWithSubtitleView(
-							title: method.name,
-							subtitle: method.desc
-						)
-						.tag(index)
+				Picker(selection: $_rowHorizontalInset) {
+					ForEach(RowHorizontalInset.allCases) { inset in
+						Text(inset.title).tag(inset)
 					}
-
+				} label: {
+					SettingsRowLabel(.localized("Horizontal Inset"), systemImage: "arrow.left.and.right", backgroundColor: .teal)
 				}
-				.labelsHidden()
-				.pickerStyle(.inline)
+				.pickerStyle(.menu)
+				.tint(.secondary)
+				Picker(selection: $_storeCellAppearance) {
+					ForEach(0..<_storeCellAppearanceOptions.count, id: \.self) { index in
+						Text(_storeCellAppearanceOptions[index]).tag(index)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Description Size"), systemImage: "text.alignleft", backgroundColor: .blue)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
 			}
 
 			NBSection(.localized("Feedback")) {

@@ -23,6 +23,7 @@ checks = r'''
   precondition(results("nonexistentoptionxyz").isEmpty)
   precondition(has("HÁPTICS", "Haptics", .appearance))
   precondition(has("overview icons", "Overview Icons", .appearance))
+  precondition(has("action button style", "Action Button Style", .appearance))
   precondition(!SettingsSearchIndex.entries.contains {$0.key == "Match Repo Icons"}, "Removed controls must not remain searchable")
   precondition(has("all repos icon", "All Repos Icon", .appearance))
   precondition(has("row icon size", "Row Icon Size", .appearance))

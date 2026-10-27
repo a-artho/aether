@@ -49,6 +49,7 @@ enum SettingsSearchIndex {
 			("Card Style", "settings device controls tunnel pairing certificate default liquid glass native raised card tiles background"),
 			("Row Icons", "settings flat colored monochrome white muted theme tint custom color icons"),
 			("Overview Icons", "all apps all repos standalone glass frame border individual repo artwork icons"),
+			("Action Button Style", "buttons pills imports progress ring default glass liquid surface"),
 			("All Repos Icon", "app store globe books collection symbol"),
 			("Row Icon Size", "apps repos artwork default medium large 50 54 58"),
 			("Horizontal Inset", "repo app rows details all apps margins padding default medium large"),
@@ -60,8 +61,9 @@ enum SettingsSearchIndex {
 			("Status on Navigation Bar", "updated refresh installed apps subtitle navigation"),
 			("Muted Page Titles", "gray secondary nested navigation title"), ("Dynamic Icons", "app light dark"),
 			("Tinted Icons", "app color colour"), ("Show Download Buttons", "repo sources chevron"),
-			("Store Cell Appearance", "sources rows description"), ("Standard", "sources description layout"),
-			("Big Description", "sources rows layout"), ("Haptics", "click feedback strength")
+			("Description Size", "sources rows description standard big description layout"),
+			("Standard", "sources description layout"), ("Large", "sources rows large description layout"),
+			("Haptics", "click feedback strength")
 		])
 		add(.appIcon, "Appearance", [("App Icon", "aether dark alternate icon")])
 		add(.signing, "Signing Options", [

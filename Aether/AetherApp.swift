@@ -9,6 +9,7 @@ import SwiftUI
 import Nuke
 import IDeviceSwift
 import NimbleExtensions
+import NimbleViews
 import OSLog
 import UserNotifications
 
@@ -16,6 +17,7 @@ import UserNotifications
 struct AetherApp: App {
 	@UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 	@ObservedObject private var deviceConnection = DeviceConnectionManager.shared
+	@AppStorage("Aether.actionButtonStyle") private var actionButtonSurfaceStyle: NBButtonSurfaceStyle = .standard
 
 	let heartbeat = HeartbeatManager.shared
 
@@ -35,6 +37,7 @@ struct AetherApp: App {
 	var body: some Scene {
 		WindowGroup {
 			VariedTabbarView()
+				.environment(\.nbButtonSurfaceStyle, actionButtonSurfaceStyle)
 				.modifier(LibraryLifecycleModifier())
 				.environment(\.managedObjectContext, storage.context)
 				.onOpenURL(perform: _handleURL)

@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Action Buttons" : {
+      "extractionState" : "manual"
+    },
+    "Action Button Style" : {
+      "extractionState" : "manual"
+    },
     "Loading Installed Apps" : {
       "extractionState" : "manual"
     },

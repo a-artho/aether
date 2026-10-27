@@ -17,6 +17,7 @@ struct AetherAmbientBackground: View {
 	}
 
 	@AppStorage("Aether.ambientBackgroundEnabled") private var isEnabled = false
+	@AppStorage("Aether.ambientBackgroundVerticalReach") private var verticalReach = 0.0
 	@AppStorage("Aether.userTintColor") private var themeHex = "#848ef9"
 	@Environment(\.colorScheme) private var colorScheme
 
@@ -30,17 +31,29 @@ struct AetherAmbientBackground: View {
 
 			if isEnabled && colorScheme == .dark {
 				GeometryReader { geometry in
+					let normalizedReach = CGFloat(min(max(verticalReach, 0), 1))
+					let fullScreenRadius = hypot(geometry.size.width / 2, geometry.size.height * 1.04)
+					let maximumVerticalScale = max(1, fullScreenRadius / 450)
+					let verticalScale = 1 + normalizedReach * (maximumVerticalScale - 1)
+					let topGlow = RadialGradient(
+						stops: [
+							.init(color: accent.opacity(0.15), location: 0),
+							.init(color: accent.opacity(0.045), location: 0.5),
+							.init(color: .clear, location: 1)
+						],
+						center: UnitPoint(x: 0.5, y: -0.04),
+						startRadius: 0,
+						endRadius: 450
+					)
+
 					ZStack {
-						RadialGradient(
-							stops: [
-								.init(color: accent.opacity(0.15), location: 0),
-								.init(color: accent.opacity(0.045), location: 0.5),
-								.init(color: .clear, location: 1)
-							],
-							center: UnitPoint(x: 0.5, y: -0.04),
-							startRadius: 0,
-							endRadius: 450
-						)
+						Group {
+							if verticalScale == 1 {
+								topGlow
+							} else {
+								topGlow.scaleEffect(x: 1, y: verticalScale, anchor: UnitPoint(x: 0.5, y: -0.04))
+							}
+						}
 
 						RadialGradient(
 							stops: [
