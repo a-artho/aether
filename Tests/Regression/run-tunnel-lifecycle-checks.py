@@ -205,6 +205,18 @@ METHODS
   precondition(EmbeddedTunnelManager.shared.stops == stops + 1 && !stopping.isUpdating,
    "VPN stop must not wait behind RSD cleanup")
 
+  UIApplication.shared.applicationState = .active
+  EmbeddedTunnelManager.shared.state = .disconnected
+  let recovery = Driver(); recovery.delayReset = true
+  let startsBeforeRecovery = EmbeddedTunnelManager.shared.starts
+  recovery.setConnection(enabled: true); await drain()
+  precondition(EmbeddedTunnelManager.shared.starts == startsBeforeRecovery + 1 && !recovery.resetGate.replies.isEmpty,
+   "Retry must start the VPN before waiting for stale RSD cleanup")
+  recovery.setConnection(enabled: false, force: true); await drain()
+  recovery.resetGate.release(); await drain()
+  precondition(!recovery.isConnected && !EmbeddedTunnelManager.shared.isRunning,
+   "Late cleanup cannot revive a start cancelled by idle stop")
+  UIApplication.shared.applicationState = .background
   let retained = Driver(); retained.state = .connected; retained.hasActiveTunnelDependencies = true
   retained.handleAppBackground(); precondition(retained.isConnected)
   let off = Driver(); off.state = .connected; off.isDisconnectWhenIdleEnabled = false

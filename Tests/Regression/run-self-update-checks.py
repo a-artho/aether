@@ -19,12 +19,16 @@ checks = r'''
   precondition(!attempt.confirmsReplacement(runningInfo: info("3.0.2", "11", "other.app")))
   var reinstall = SelfUpdateAttempt(runningInfo: old, targetInfo: old)!
   precondition(!reinstall.confirmsReplacement(runningInfo: old), "Same-build reinstalls remain inconclusive")
-  precondition(!reinstall.isUnconfirmedSameBuildReinstall(runningInfo: old), "A prepared request without a service response keeps its interrupted state")
-  reinstall.receivedInstallationResponse=true
-  precondition(reinstall.isUnconfirmedSameBuildReinstall(runningInfo: old), "Accepted same-build reinstalls restore Reinstall")
+  precondition(!reinstall.isUnconfirmedSameBuildReinstall(runningInfo: old), "A prepared request without a sent command keeps its interrupted state")
+  reinstall.sentInstallationCommand=true
+  precondition(reinstall.isUnconfirmedSameBuildReinstall(runningInfo: old), "Sent same-build reinstalls restore Reinstall")
   precondition(!reinstall.confirmsReplacement(runningInfo: old), "Restoring Reinstall must not assert verified success")
   precondition(!reinstall.isUnconfirmedSameBuildReinstall(runningInfo: next))
   precondition(!reinstall.isUnconfirmedSameBuildReinstall(runningInfo: info("3.0.1", "10", "other.app")))
+  let legacyJSON=String(data:try JSONEncoder().encode(reinstall),encoding:.utf8)!
+    .replacingOccurrences(of:"sentInstallationCommand",with:"receivedInstallationResponse")
+  let legacyReinstall=try JSONDecoder().decode(SelfUpdateAttempt.self,from:Data(legacyJSON.utf8))
+  precondition(legacyReinstall.isUnconfirmedSameBuildReinstall(runningInfo:old), "Earlier persisted response evidence still restores Reinstall")
   let persistedReinstall=try JSONDecoder().decode(SelfUpdateAttempt.self, from: JSONEncoder().encode(reinstall))
   precondition(persistedReinstall.isUnconfirmedSameBuildReinstall(runningInfo: old))
   let buildOnly = SelfUpdateAttempt(runningInfo: old, targetInfo: info("3.0.1", "11"))!

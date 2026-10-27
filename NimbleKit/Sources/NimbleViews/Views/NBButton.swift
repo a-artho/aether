@@ -9,7 +9,7 @@ import SwiftUI
 import NimbleExtensions
 
 public enum NBButtonSurfaceStyle: String, CaseIterable, Identifiable, Sendable {
-	case standard, glass
+	case standard, glass, system
 
 	public var id: Self { self }
 
@@ -17,6 +17,7 @@ public enum NBButtonSurfaceStyle: String, CaseIterable, Identifiable, Sendable {
 		switch self {
 		case .standard: .localized("Default")
 		case .glass: .localized("Glass")
+		case .system: .localized("System")
 		}
 	}
 }
@@ -59,6 +60,10 @@ public struct NBButton: View {
 
 	public static var textPillBackground: Color {
 		Color.accentColor.opacity(0.2)
+	}
+
+	public static var systemTextPillBackground: Color {
+		Color(uiColor: .quaternarySystemFill)
 	}
 	
 	public var body: some View {
@@ -105,6 +110,10 @@ private struct TextPillSurface: ViewModifier {
 		case .standard:
 			content
 				.background(NBButton.textPillBackground.opacity(showsBackground ? 1 : 0))
+				.clipShape(Capsule())
+		case .system:
+			content
+				.background(NBButton.systemTextPillBackground.opacity(showsBackground ? 1 : 0))
 				.clipShape(Capsule())
 		case .glass:
 			if showsBackground {

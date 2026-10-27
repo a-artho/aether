@@ -57,24 +57,27 @@ private final class UploadProgressContext {
  }
 }
 
-/// Native callbacks follow installation-service responses. Keep a single handoff
-/// alive for the native call, and retire queued delivery on completion/cancel.
+/// Progress is independent of the command-sent handoff. Retire queued delivery
+/// on native completion/cancellation so an old job cannot background a new one.
 private final class InstallationProgressContext: @unchecked Sendable {
 	private let lock = NSLock()
 	private let publisher: UploadProgressPublisher
-	private let onFirstResponse: (@MainActor @Sendable () -> Void)?
+	private let onCommandSent: (@MainActor @Sendable () -> Void)?
 	private var handoffScheduled = false
 	private var closed = false
 
-	init(publisher: UploadProgressPublisher, onFirstResponse: (@MainActor @Sendable () -> Void)?) {
+	init(publisher: UploadProgressPublisher, onCommandSent: (@MainActor @Sendable () -> Void)?) {
 		self.publisher = publisher
-		self.onFirstResponse = onFirstResponse
+		self.onCommandSent = onCommandSent
 	}
 
 	func report(_ progress: UInt64) {
 		publisher.submit(Double(progress) / 100.0)
+	}
+
+	func commandSent() {
 		lock.lock()
-		let shouldSchedule = !closed && !handoffScheduled && onFirstResponse != nil
+		let shouldSchedule = !closed && !handoffScheduled && onCommandSent != nil
 		if shouldSchedule { handoffScheduled = true }
 		lock.unlock()
 		if shouldSchedule { DispatchQueue.main.async { [self] in deliverHandoff() } }
@@ -84,7 +87,7 @@ private final class InstallationProgressContext: @unchecked Sendable {
 		lock.lock()
 		let shouldDeliver = !closed
 		lock.unlock()
-		if shouldDeliver { onFirstResponse?() }
+		if shouldDeliver { onCommandSent?() }
 	}
 
 	func cancel() {
@@ -111,7 +114,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 	public func install(
 		at url: URL,
 		beforeInstallation: (@Sendable () async throws -> Void)? = nil,
-		onFirstInstallationResponse: (@MainActor @Sendable () -> Void)? = nil,
+		onInstallationCommandSent: (@MainActor @Sendable () -> Void)? = nil,
 		diagnosticID: String? = nil,
 		diagnosticLog: (@Sendable (String) -> Void)? = nil
 	) async throws {
@@ -131,7 +134,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			self?.viewModel.installProgress = value
 		}
 		let installationContext = InstallationProgressContext(publisher: installationProgressPublisher,
-			onFirstResponse: onFirstInstallationResponse)
+			onCommandSent: onInstallationCommandSent)
 		defer { progressPublisher.cancel(); installationProgressPublisher.cancel(); installationContext.cancel() }
 		let worker = Task.detached(priority: .utility) {
 			// Native handles belong exclusively to this worker and its cleanup.
@@ -268,12 +271,13 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			let installError: UnsafeMutablePointer<IdeviceFfiError>? = remoteDir.withCString { cString in
 				let context = Unmanaged.passUnretained(installationContext).toOpaque()
 
-				return withExtendedLifetime(installationContext) { installation_proxy_install_with_callback(
+				return withExtendedLifetime(installationContext) { installation_proxy_install_with_handoff(
 					installproxy,
 					cString,
 					nil, // options
 					Self._installationProgressCallback,
-					context
+					context,
+					Self._installationCommandSentCallback
 				) }
 			}
 			installationContext.cancel()
@@ -310,6 +314,14 @@ public class InstallationProxy: Identifiable, ObservableObject {
 	) -> Void = { bytes, context in
 		guard let context else { return }
 		Unmanaged<UploadProgressContext>.fromOpaque(context).takeUnretainedValue().report(bytes)
+	}
+
+	// Native code invokes this only after the full Install command is flushed.
+	nonisolated static private let _installationCommandSentCallback: @convention(c) (
+		UnsafeMutableRawPointer?
+	) -> Void = { context in
+		guard let context else { return }
+		Unmanaged<InstallationProgressContext>.fromOpaque(context).takeUnretainedValue().commandSent()
 	}
 
 	nonisolated static private let _installationProgressCallback: @convention(c) (

@@ -32,8 +32,16 @@ struct AetherAmbientBackground: View {
 			if isEnabled && colorScheme == .dark {
 				GeometryReader { geometry in
 					let normalizedReach = CGFloat(min(max(verticalReach, 0), 1))
-					let fullScreenRadius = hypot(geometry.size.width / 2, geometry.size.height * 1.04)
-					let maximumVerticalScale = max(1, fullScreenRadius / 450)
+					let glowRadius: CGFloat = 450
+					let midpointRadius = glowRadius * 0.5
+					let gradientCenterOffset = geometry.size.height * 0.04
+					// At full reach, the gradient's visible midpoint reaches the
+					// bottom edge. The previous diagonal-radius calculation put the
+					// bottom near the transparent end of the gradient instead.
+					let maximumVerticalScale = max(
+						1,
+						geometry.size.height / max(midpointRadius - gradientCenterOffset, 1)
+					)
 					let verticalScale = 1 + normalizedReach * (maximumVerticalScale - 1)
 					let topGlow = RadialGradient(
 						stops: [
@@ -43,7 +51,7 @@ struct AetherAmbientBackground: View {
 						],
 						center: UnitPoint(x: 0.5, y: -0.04),
 						startRadius: 0,
-						endRadius: 450
+						endRadius: glowRadius
 					)
 
 					ZStack {
@@ -51,7 +59,10 @@ struct AetherAmbientBackground: View {
 							if verticalScale == 1 {
 								topGlow
 							} else {
-								topGlow.scaleEffect(x: 1, y: verticalScale, anchor: UnitPoint(x: 0.5, y: -0.04))
+								// Keep the top edge pinned while extending the glow down;
+								// scaling around the offscreen gradient center exposed the
+								// black base layer above the shifted gradient.
+								topGlow.scaleEffect(x: 1, y: verticalScale, anchor: .top)
 							}
 						}
 

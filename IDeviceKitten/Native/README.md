@@ -34,3 +34,11 @@ Write records reuse their allocation, AES key schedule and pre-keyed HMAC state.
 ## Continuous payload progress
 
 `afc-upload-progress.patch` adds `afc_file_write_with_progress` on top of the existing 4 MiB writer. It reports payload bytes accepted by the socket transport, excludes AFC headers, and reserves each packet's last byte until its status reply succeeds. It keeps packet sizes, ordering, reply validation and hardware TLS unchanged. Swift receives updates at most four times per second and coalesces delivery. A blocked socket or reply produces no artificial advancement. The duplex tests cover progress inside packets, partial tails, monotonicity and failed acknowledgements that cannot report completion.
+
+## Self-install command handoff
+
+`self-install-handoff.patch` adds an independent FFI hook after the Install command has been fully written and flushed, before waiting for installation-service responses. Aether uses it only when installing over itself to request backgrounding without depending on percentage progress. A sent command is not proof of acceptance or success. The original install API and percentage callback remain available. Duplex tests withhold all responses until handoff, verify transmission failures never hand off, and preserve daemon errors after transmission. Swift tests retire stale/cancelled handoffs and keep progress independent.
+
+## Bounded RSD recovery
+
+`rsd-connection-timeout.patch` bounds native saved-pairing tunnel establishment and RSD service connection/check-in to two seconds each. The timeout drops the Rust connection future itself, so a silent service cannot indefinitely retain Swift's shared RSD lock after its four-second UI watchdog expires. Established service operations (AFC payload writes, install completion, icon reads and log streams) are not covered by this connection timeout. In-app VPN start/stop is delivered before stale RSD cleanup; startup still completes cleanup before probing the new transport. Native tests cover a stalled connect followed by a successful retry, a silent check-in that releases its stream, partial-resource cleanup and preservation of genuine service errors.

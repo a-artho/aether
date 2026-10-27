@@ -18,19 +18,24 @@ CONTEXTS
  @MainActor static func main() async throws {
   let counts=Counts()
   let publisher=UploadProgressPublisher {counts.progress.append($0)}
-  let context=InstallationProgressContext(publisher:publisher,onFirstResponse:{counts.handoffs+=1})
+  let context=InstallationProgressContext(publisher:publisher,onCommandSent:{counts.handoffs+=1})
   await Task.detached {
    DispatchQueue.concurrentPerform(iterations:200) {context.report(UInt64($0 % 100))}
   }.value
   try await drain()
-  precondition(counts.handoffs==1,"Concurrent native responses hand off once")
+  precondition(counts.handoffs==0,"Percentage responses must not trigger backgrounding")
+  await Task.detached {
+   DispatchQueue.concurrentPerform(iterations:200) {_ in context.commandSent()}
+  }.value
+  try await drain()
+  precondition(counts.handoffs==1,"Concurrent command notifications hand off once")
   precondition(counts.progress.last==0.99,"Progress still coalesces monotonically")
   context.cancel();publisher.cancel()
 
   for completed in [false,true] {
    let counts=Counts(), publisher=UploadProgressPublisher {_ in}
-   let context=InstallationProgressContext(publisher:publisher,onFirstResponse:{counts.handoffs+=1})
-   context.report(0)
+   let context=InstallationProgressContext(publisher:publisher,onCommandSent:{counts.handoffs+=1})
+   context.commandSent()
    context.cancel() // Either native completion or caller cancellation retires queued suspension.
    if !completed {context.report(80)}
    try await drain()
@@ -39,18 +44,18 @@ CONTEXTS
   }
 
   let zero=Counts(), zeroPublisher=UploadProgressPublisher {_ in}
-  let zeroContext=InstallationProgressContext(publisher:zeroPublisher,onFirstResponse:{zero.handoffs+=1})
-  zeroContext.report(0);try await drain()
-  precondition(zero.handoffs==1,"A genuine zero-percent response is sufficient; don't wait for percentage growth")
+  let zeroContext=InstallationProgressContext(publisher:zeroPublisher,onCommandSent:{zero.handoffs+=1})
+  zeroContext.commandSent();try await drain()
+  precondition(zero.handoffs==1,"Command transmission triggers handoff without any progress response")
   zeroContext.cancel();zeroPublisher.cancel()
 
   let normal=Counts()
   let normalPublisher=UploadProgressPublisher {normal.progress.append($0)}
-  let normalContext=InstallationProgressContext(publisher:normalPublisher,onFirstResponse:nil)
-  normalContext.report(50);try await drain()
+  let normalContext=InstallationProgressContext(publisher:normalPublisher,onCommandSent:nil)
+  normalContext.commandSent();normalContext.report(50);try await drain()
   precondition(normal.progress==[0.5] && normal.handoffs==0,"Other apps retain progress without a self-update handoff")
   normalContext.cancel();normalPublisher.cancel()
-  print("Self-update handoff checks passed: concurrent responses, one-shot delivery, zero-percent response, completion/cancellation retirement and normal-app progress")
+  print("Self-update handoff checks passed: progress independence, one-shot command delivery, no-response handoff, completion/cancellation retirement and normal-app progress")
  }
 }
 '''.replace('CONTEXTS', contexts)

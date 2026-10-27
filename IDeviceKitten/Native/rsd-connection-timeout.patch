@@ -1,0 +1,149 @@
+--- a/idevice/src/services/rsd.rs
++++ b/idevice/src/services/rsd.rs
+@@ -8,6 +8,18 @@ use tracing::{debug, warn};
+ 
+ use crate::{IdeviceError, ReadWrite, RemoteXpcClient, provider::RsdProvider};
+ 
++/// Bound connection establishment itself, so a cancelled Swift caller cannot
++/// leave a native handshake holding the shared RSD lock indefinitely. This does
++/// not impose a timeout on reads/writes after the service has been established.
++/// Two establishment steps fit within Aether's four-second attempt budget.
++pub async fn with_connection_timeout<T>(
++    operation: impl std::future::Future<Output = Result<T, IdeviceError>>,
++) -> Result<T, IdeviceError> {
++    tokio::time::timeout(std::time::Duration::from_secs(2), operation)
++        .await
++        .map_err(|_| IdeviceError::Timeout)?
++}
++
+ /// Describes an available XPC service
+ #[derive(Debug, Clone, Deserialize)]
+ pub struct RsdService {
+@@ -184,7 +196,9 @@ impl RsdHandshake {
+             "Connecting to RSD service {service_name} on port {}",
+             service.port
+         );
+-        let stream = provider.connect_to_service_port(service.port).await?;
+-        T::from_stream(stream).await
++        with_connection_timeout(async {
++            let stream = provider.connect_to_service_port(service.port).await?;
++            T::from_stream(stream).await
++        }).await
+     }
+ }
+--- a/ffi/src/tunnel_provider.rs
++++ b/ffi/src/tunnel_provider.rs
+@@ -324,7 +324,7 @@ pub unsafe extern "C" fn tunnel_create_rppairing(
+     // remains available through the pairing APIs.
+     let _ = (pin_callback, pin_context);
+ 
+-    let res = run_sync_local(async {
++    let res = run_sync_local(idevice::rsd::with_connection_timeout(async {
+         // Connect directly and use raw RPPairing protocol
+         let stream = run_global_timeout(|| tokio::net::TcpStream::connect(socket_addr))
+             .await
+@@ -336,7 +336,7 @@ pub unsafe extern "C" fn tunnel_create_rppairing(
+             .await?;
+ 
+         finish_tunnel(&mut rpc, socket_addr).await
+-    });
++    }));
+ 
+     match res {
+         Ok((adapter, handshake)) => {
+--- a/idevice/src/services/rsd.rs
++++ b/idevice/src/services/rsd.rs
+@@ -202,3 +202,93 @@ impl RsdHandshake {
+         }).await
+     }
+ }
++
++#[cfg(test)]
++mod rsd_connection_timeout_tests {
++    use super::*;
++    use crate::{Idevice, RsdService};
++    use std::borrow::Cow;
++    use tokio::io::DuplexStream;
++
++    #[derive(Debug)]
++    struct Provider { stream: Option<DuplexStream>, stall: bool }
++    impl RsdProvider for Provider {
++        async fn connect_to_service_port(&mut self, _port: u16) -> Result<Box<dyn ReadWrite>, IdeviceError> {
++            if self.stall { std::future::pending::<()>().await; }
++            Ok(Box::new(self.stream.take().unwrap()))
++        }
++    }
++    struct CheckedService;
++    impl RsdService for CheckedService {
++        fn rsd_service_name() -> Cow<'static, str> { Cow::Borrowed("test.service") }
++        async fn from_stream(stream: Box<dyn ReadWrite>) -> Result<Self, IdeviceError> {
++            Idevice::new(stream, "test").rsd_checkin().await?;
++            Ok(Self)
++        }
++    }
++    fn handshake() -> RsdHandshake {
++        RsdHandshake {
++            services: HashMap::from([("test.service".into(), RsdServiceInfo {
++                entitlement: String::new(), port: 1234, uses_remote_xpc: false,
++                features: None, service_version: None,
++            })]),
++            protocol_version: 1, properties: HashMap::new(), uuid: String::new(),
++        }
++    }
++    // Avoid shadowing the RsdService trait with the advertised-service structure.
++    type RsdServiceInfo = super::RsdService;
++
++    #[tokio::test]
++    async fn stalled_native_connect_releases_owner_and_allows_retry() {
++        let mut handshake = handshake();
++        let mut stalled = Provider { stream: None, stall: true };
++        let start = std::time::Instant::now();
++        let result = handshake.connect::<CheckedService>(&mut stalled).await;
++        assert!(matches!(result, Err(IdeviceError::Timeout)));
++        assert!(start.elapsed() < std::time::Duration::from_secs(4));
++
++        // The same owner can connect again after the native future was dropped.
++        let (stream, peer) = tokio::io::duplex(4096);
++        let server = tokio::spawn(async move {
++            let mut peer = Idevice::new(Box::new(peer), "peer");
++            peer.read_plist().await.unwrap();
++            peer.send_plist(crate::plist!({"Request": "RSDCheckin"})).await.unwrap();
++            peer.send_plist(crate::plist!({"Request": "StartService"})).await.unwrap();
++        });
++        let mut healthy = Provider { stream: Some(stream), stall: false };
++        handshake.connect::<CheckedService>(&mut healthy).await.unwrap();
++        server.await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn silent_service_checkin_is_bounded_and_drops_its_stream() {
++        let (stream, peer) = tokio::io::duplex(4096);
++        let server = tokio::spawn(async move {
++            let mut peer = Idevice::new(Box::new(peer), "silent-peer");
++            peer.read_plist().await.unwrap();
++            // No response: timeout must drop the client rather than leave a reader alive.
++            assert!(peer.read_plist().await.is_err());
++        });
++        let mut provider = Provider { stream: Some(stream), stall: false };
++        let result = handshake().connect::<CheckedService>(&mut provider).await;
++        assert!(matches!(result, Err(IdeviceError::Timeout)));
++        tokio::time::timeout(std::time::Duration::from_secs(1), server).await.unwrap().unwrap();
++    }
++
++    #[tokio::test]
++    async fn timeout_drops_partial_tunnel_resources_and_preserves_real_errors() {
++        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
++        struct Resource(Arc<AtomicBool>);
++        impl Drop for Resource { fn drop(&mut self) { self.0.store(true, Ordering::SeqCst); } }
++        let released = Arc::new(AtomicBool::new(false));
++        let marker = released.clone();
++        let result: Result<(), IdeviceError> = with_connection_timeout(async move {
++            let _resource = Resource(marker);
++            std::future::pending().await
++        }).await;
++        assert!(matches!(result, Err(IdeviceError::Timeout)));
++        assert!(released.load(Ordering::SeqCst));
++        let rejected: Result<(), IdeviceError> = with_connection_timeout(async { Err(IdeviceError::ServiceNotFound) }).await;
++        assert!(matches!(rejected, Err(IdeviceError::ServiceNotFound)));
++    }
++}

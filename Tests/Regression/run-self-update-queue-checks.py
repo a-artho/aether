@@ -107,7 +107,7 @@ INITIALIZER
   precondition(try persisted().map(\.app.uuid)==["queued"],"Verified job retires from persistence without dropping the next job")
 
   var same=SelfUpdateAttempt(runningInfo:next,targetInfo:next)!
-  same.receivedInstallationResponse=true
+  same.sentInstallationCommand=true
   try prepare(same)
   let unconfirmed=Fixture()
   for _ in 0..<100 {await Task.yield()}
@@ -126,7 +126,7 @@ INITIALIZER
    precondition(interrupted.currentRequest?.app.uuid=="signed" && interrupted.queuedInstalls.count==1)
    precondition(interrupted.completedArtifacts.isEmpty,"A different app or unchanged old build cannot inherit self-update success")
   }
-  same.receivedInstallationResponse=nil;RunningApp.infoDictionary=next;try prepare(same)
+  same.sentInstallationCommand=nil;RunningApp.infoDictionary=next;try prepare(same)
   let notAccepted=Fixture()
   precondition(notAccepted.lastErrorMessage != nil,"Preparation alone cannot clear an interrupted job")
   try prepare(nil)

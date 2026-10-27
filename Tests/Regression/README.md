@@ -36,11 +36,11 @@ handoff once, and a genuinely missing provider remains actionable afterward.
 activation, cancellation/backgrounding while waiting, shared verification,
 single recovery, and stale reply rejection. Both run in the release gate.
 
-Self-update checks exercise version/build evidence, one-shot installation-service
-response delivery, zero-percent responses, and retiring queued suspension after
+Self-update checks exercise version/build evidence, one-shot command-sent
+delivery without percentage responses, and retiring queued backgrounding after
 completion or cancellation. `run-self-update-queue-checks.py` executes the actual
 queue initializer and persistence method with isolated defaults: confirmed
-replacement uses normal completion; accepted same-build reinstall restores
+replacement uses normal completion; unconfirmed sent same-build reinstall restores
 Reinstall without completion-driven deletion; unrelated/interrupted jobs keep
 Retry/Cancel; subsequent queued jobs remain persisted. Native callbacks,
 artifact lookup and completion side effects are controlled substitutes. Whether
@@ -71,3 +71,5 @@ Signed-row handoff: `python3 Tests/Regression/run-unified-handoff-checks.py` exe
 ### Focused tunnel-flow handoff
 
 Run `python3 Tests/Regression/run-tunnel-flow-suite.py` for repeated local lifecycle/cellular harness checks with retained logs and a per-suite watchdog. See [TUNNEL-FLOW-HANDOFF.md](TUNNEL-FLOW-HANDOFF.md) for coverage, limits, and instructions for a lower-cost execution model. This does not build or install Aether.
+
+Native RSD establishment recovery is covered by `rsd_connection_timeout_tests` in the native build: stalled connect → timeout → successful retry, silent service check-in and resource disposal. The connection-lifecycle harness additionally holds RSD cleanup pending while asserting that in-app VPN startup proceeds, and verifies cancellation prevents late cleanup from reviving that start.

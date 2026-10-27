@@ -1,0 +1,152 @@
+--- a/idevice/src/services/installation_proxy.rs
++++ b/idevice/src/services/installation_proxy.rs
+@@ -166,6 +166,25 @@ impl InstallationProxyClient {
+     where
+         Fut: std::future::Future<Output = ()>,
+         S: Clone,
++    {
++        self.install_with_callback_and_handoff(package_path, options, callback, state, || async {}).await
++    }
++
++    /// Notify the caller after the Install command is fully written and flushed.
++    /// This is transport evidence, not installation-service acceptance or success.
++    pub async fn install_with_callback_and_handoff<Fut, S, Handoff, HandoffFuture>(
++        &mut self,
++        package_path: impl Into<String>,
++        options: Option<plist::Value>,
++        callback: impl Fn((u64, S)) -> Fut,
++        state: S,
++        on_command_sent: Handoff,
++    ) -> Result<(), IdeviceError>
++    where
++        Fut: std::future::Future<Output = ()>,
++        S: Clone,
++        Handoff: FnOnce() -> HandoffFuture,
++        HandoffFuture: std::future::Future<Output = ()>,
+     {
+         let package_path = package_path.into();
+         let options = options.unwrap_or(plist::Value::Dictionary(Dictionary::new()));
+@@ -177,6 +196,7 @@ impl InstallationProxyClient {
+         });
+ 
+         self.idevice.send_plist(command).await?;
++        on_command_sent().await;
+ 
+         self.watch_completion(callback, state).await
+     }
+@@ -455,3 +475,62 @@ impl crate::RsdService for InstallationProxyClient {
+         Ok(Self::new(idevice))
+     }
+ }
++
++#[cfg(test)]
++mod self_install_handoff_tests {
++    use super::*;
++    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
++
++    #[tokio::test]
++    async fn command_sent_handoff_does_not_wait_for_progress_or_completion() {
++        // Small capacity forces the whole command to be consumed before the write completes.
++        let (client, peer) = tokio::io::duplex(32);
++        let (sent_tx, sent_rx) = tokio::sync::oneshot::channel();
++        let peer = tokio::spawn(async move {
++            let mut peer = Idevice::new(Box::new(peer), "test-peer");
++            let request = peer.read_plist().await.unwrap();
++            assert_eq!(request.get("Command").and_then(|x| x.as_string()), Some("Install"));
++            assert_eq!(request.get("PackagePath").and_then(|x| x.as_string()), Some("PublicStaging/Self.ipa"));
++            // No percentage or acknowledgement is sent until handoff has happened.
++            sent_rx.await.unwrap();
++            peer.send_plist(crate::plist!({"Status": "Complete"})).await.unwrap();
++        });
++        let progress = Arc::new(AtomicUsize::new(0));
++        let mut client = InstallationProxyClient::new(Idevice::new(Box::new(client), "test"));
++        tokio::time::timeout(std::time::Duration::from_secs(2),
++            client.install_with_callback_and_handoff("PublicStaging/Self.ipa", None,
++                |(_, count)| async move { count.fetch_add(1, Ordering::SeqCst); }, progress.clone(),
++                || async move { sent_tx.send(()).unwrap(); })
++        ).await.expect("handoff must not wait for a response").unwrap();
++        peer.await.unwrap();
++        assert_eq!(progress.load(Ordering::SeqCst), 0);
++    }
++
++    #[tokio::test]
++    async fn failed_transmission_does_not_handoff() {
++        let (client, peer) = tokio::io::duplex(32);
++        drop(peer);
++        let count = AtomicUsize::new(0);
++        let mut client = InstallationProxyClient::new(Idevice::new(Box::new(client), "test"));
++        assert!(client.install_with_callback_and_handoff("PublicStaging/Self.ipa", None,
++            |_| async {}, (), || async { count.fetch_add(1, Ordering::SeqCst); }).await.is_err());
++        assert_eq!(count.load(Ordering::SeqCst), 0);
++    }
++
++    #[tokio::test]
++    async fn command_sent_does_not_assert_service_success() {
++        let (client, peer) = tokio::io::duplex(4096);
++        let peer = tokio::spawn(async move {
++            let mut peer = Idevice::new(Box::new(peer), "test-peer");
++            peer.read_plist().await.unwrap();
++            peer.send_plist(crate::plist!({"ErrorDescription": "Rejected test package"})).await.unwrap();
++        });
++        let count = AtomicUsize::new(0);
++        let mut client = InstallationProxyClient::new(Idevice::new(Box::new(client), "test"));
++        let result = client.install_with_callback_and_handoff("PublicStaging/Self.ipa", None,
++            |_| async {}, (), || async { count.fetch_add(1, Ordering::SeqCst); }).await;
++        assert!(result.is_err(), "a flushed command can still be rejected");
++        assert_eq!(count.load(Ordering::SeqCst), 1);
++        peer.await.unwrap();
++    }
++}
+--- a/ffi/src/installation_proxy.rs
++++ b/ffi/src/installation_proxy.rs
+@@ -325,6 +325,50 @@ pub unsafe extern "C" fn installation_proxy_install_with_callback(
+     }
+ }
+ 
++/// Install with an independent command-sent hook. The hook runs only after
++/// successful transport flush, before reading progress or completion responses.
++/// Safety: pointers and callback context must remain valid until this call returns.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn installation_proxy_install_with_handoff(
++    client: *mut InstallationProxyClientHandle,
++    package_path: *const libc::c_char,
++    options: plist_t,
++    callback: extern "C" fn(progress: u64, context: *mut c_void),
++    context: *mut c_void,
++    on_command_sent: extern "C" fn(context: *mut c_void),
++) -> *mut IdeviceFfiError {
++    if client.is_null() || package_path.is_null() {
++        return ffi_err!(IdeviceError::FfiInvalidArg);
++    }
++
++    let package_path = unsafe { std::ffi::CStr::from_ptr(package_path) }
++        .to_string_lossy()
++        .into_owned();
++    let options = if options.is_null() {
++        None
++    } else {
++        Some(unsafe { &mut *options })
++    }
++    .map(|x| x.borrow_self().clone());
++
++    let res = run_sync_local(async {
++        let callback_wrapper = |(progress, context)| async move {
++            callback(progress, context);
++        };
++
++        unsafe { &mut *client }
++            .0
++            .install_with_callback_and_handoff(package_path, options, callback_wrapper, context,
++                || async move { on_command_sent(context); })
++            .await
++    });
++
++    match res {
++        Ok(_) => null_mut(),
++        Err(e) => ffi_err!(e),
++    }
++}
++
+ /// Upgrades an existing application on the device
+ ///
+ /// # Arguments

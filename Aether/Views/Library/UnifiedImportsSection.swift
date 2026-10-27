@@ -985,9 +985,11 @@ private struct UnifiedImportAccessory: View {
 				}
 				.opacity(isVisible ? 1 : 0)
 		} else {
-			// Preserve the existing Default surface and its exact rendering.
+			let pillBackground = actionButtonSurfaceStyle == .system
+				? NBButton.systemTextPillBackground
+				: NBButton.textPillBackground
 			Capsule()
-				.fill(actionStage ? NBButton.textPillBackground : .clear)
+				.fill(actionStage ? pillBackground : .clear)
 				.overlay {
 					Capsule()
 						.stroke(ringTint.opacity(progressStage ? 0.2 : 0), lineWidth: 2.3)

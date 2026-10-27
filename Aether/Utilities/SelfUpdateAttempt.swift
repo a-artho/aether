@@ -8,7 +8,9 @@ struct SelfUpdateAttempt: Codable, Sendable {
 	let previousBuild: String
 	let targetVersion: String
 	let targetBuild: String
-	var receivedInstallationResponse: Bool?
+	var sentInstallationCommand: Bool?
+	// Persisted by earlier builds; a service response also proves transmission.
+	private var receivedInstallationResponse: Bool?
 
 	init?(runningInfo: [String: Any], targetInfo: [String: Any]) {
 		func value(_ info: [String: Any], _ key: String) -> String? {
@@ -36,7 +38,7 @@ struct SelfUpdateAttempt: Codable, Sendable {
 	/// The target is already running, but identical metadata cannot prove that
 	/// this particular reinstall completed. Restore its action without deleting it.
 	func isUnconfirmedSameBuildReinstall(runningInfo: [String: Any]) -> Bool {
-		receivedInstallationResponse == true
+		(sentInstallationCommand == true || receivedInstallationResponse == true)
 			&& previousVersion == targetVersion && previousBuild == targetBuild
 			&& matchesTarget(runningInfo: runningInfo)
 	}

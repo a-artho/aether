@@ -24,6 +24,8 @@ patch -d "$source_dir" -p1 < "$native_dir/afc-large-writes.patch"
 patch -d "$source_dir" -p1 < "$native_dir/afc-transfer-diagnostics.patch"
 patch -d "$source_dir" -p1 < "$native_dir/tls-stream-optimization.patch"
 patch -d "$source_dir" -p1 < "$native_dir/afc-upload-progress.patch"
+patch -d "$source_dir" -p1 < "$native_dir/self-install-handoff.patch"
+patch -d "$source_dir" -p1 < "$native_dir/rsd-connection-timeout.patch"
 export CARGO_TARGET_DIR="$work_dir/target"
 export IPHONEOS_DEPLOYMENT_TARGET=15.0
 export MACOSX_DEPLOYMENT_TARGET=12.0
@@ -60,6 +62,8 @@ cargo_for_target "$host_target" test --locked -p idevice --no-default-features -
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features remote_pairing,rustcrypto verification_only_wire_tests
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features afc,remote_pairing,rustcrypto afc_large_write_tests
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features afc,remote_pairing,rustcrypto tls_stream_tests
+cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features installation_proxy,rustcrypto self_install_handoff_tests
+cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features rsd,rustcrypto rsd_connection_timeout_tests
 for target in "${targets[@]}"; do
   cargo_for_target "$target" build --locked --release -p idevice-ffi --target "$target"
 done

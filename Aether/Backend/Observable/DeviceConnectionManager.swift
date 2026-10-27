@@ -813,9 +813,10 @@ public final class DeviceConnectionManager: ObservableObject {
 			defer { stopLease?.end() }
 			#endif
 			guard let self else { return }
-			// An idle stop must reach NetworkExtension before native RSD cleanup,
-			// which can be waiting for an older service connection's lock.
-			if enabled || method != .inApp {
+			// NetworkExtension start/stop must not queue behind an old RSD
+			// connection. In-app starts clean the transport after VPN readiness,
+			// before probing services; stops retire it after delivering VPN stop.
+			if method != .inApp {
 				guard await self._resetRSDTunnel() else {
 					if self.transitionGeneration == generation { self._expireConnectionAttempt() }
 					return
@@ -1579,7 +1580,12 @@ public final class DeviceConnectionManager: ObservableObject {
 					self.transitionGeneration == generation && !Task.isCancelled
 						&& (CellularAssistManager.shared.requiresTunnelConnection || CACurrentMediaTime() < self.transitionDeadline)
 				}
-				guard transitionGeneration == generation else { return }
+				guard transitionGeneration == generation, !Task.isCancelled else { return }
+				guard await _resetRSDTunnel() else {
+					if transitionGeneration == generation { _expireConnectionAttempt() }
+					return
+				}
+				guard transitionGeneration == generation, !Task.isCancelled else { return }
 				guard !CellularAssistManager.shared.requiresTunnelConnection else { return }
 				// start() returns after NetworkExtension reports Connected. Only
 				// now may cellular recovery change the route for service verification.

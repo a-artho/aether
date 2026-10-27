@@ -520,19 +520,19 @@ final class AppInstallationManager: ObservableObject {
 			_log("transfer[\(generation.uuidString)] app=\(appSnapshot.name ?? "unknown") version=\(appSnapshot.version ?? "unknown") provider=\(diagnosticProvider) compression=\(ArchiveHandler.compressionLevel().rawValue) diagnosticSchema=2", category: "Install Transfer", level: .notice)
 		}
 		let beforeInstallation: (@Sendable () async throws -> Void)?
-		let onFirstInstallationResponse: (@MainActor @Sendable () -> Void)?
+		let onInstallationCommandSent: (@MainActor @Sendable () -> Void)?
 		if context.method == 1, appSnapshot.identifier == Bundle.main.bundleIdentifier {
 			beforeInstallation = { @MainActor [weak self] in
 				guard let self, self.installGeneration == generation else { throw CancellationError() }
 				try Task.checkCancellation()
 				self._recordSelfUpdateAttempt(for: appSnapshot)
 			}
-			onFirstInstallationResponse = { [weak self] in
-				self?._handoffSelfUpdateAfterServiceResponse(generation: generation)
+			onInstallationCommandSent = { [weak self] in
+				self?._handoffSelfUpdateAfterCommandSent(generation: generation)
 			}
 		} else {
 			beforeInstallation = nil
-			onFirstInstallationResponse = nil
+			onInstallationCommandSent = nil
 		}
 		installTask = Task.detached { [weak self, appSnapshot] in
 			defer {
@@ -591,7 +591,7 @@ final class AppInstallationManager: ObservableObject {
 					try await proxy.install(
 						at: packageUrl,
 						beforeInstallation: beforeInstallation,
-						onFirstInstallationResponse: onFirstInstallationResponse,
+						onInstallationCommandSent: onInstallationCommandSent,
 						diagnosticID: generation.uuidString,
 						diagnosticLog: diagnosticLog
 					)
@@ -725,19 +725,19 @@ final class AppInstallationManager: ObservableObject {
 		}
 		currentRequest?.selfUpdateAttempt = attempt
 		_persistInstallQueue()
-		_log("Starting self-install; waiting for a service response before suspension. Target=\(attempt.targetVersion) build=\(attempt.targetBuild).", category: "Install", level: .notice)
+		_log("Starting self-install; waiting for the Install command to be sent before backgrounding. Target=\(attempt.targetVersion) build=\(attempt.targetBuild).", category: "Install", level: .notice)
 	}
 
-	private func _handoffSelfUpdateAfterServiceResponse(generation: UUID) {
+	private func _handoffSelfUpdateAfterCommandSent(generation: UUID) {
 		guard installGeneration == generation, currentRequest?.method == 1,
 			currentRequest?.app.identifier == Bundle.main.bundleIdentifier,
 			case .installing = viewModel?.status else { return }
 		if var attempt = currentRequest?.selfUpdateAttempt {
-			attempt.receivedInstallationResponse = true
+			attempt.sentInstallationCommand = true
 			currentRequest?.selfUpdateAttempt = attempt
 			_persistInstallQueue()
 		}
-		_log("Self-install received its first service progress response; handing replacement to iOS.", category: "Install", level: .notice)
+		_log("Self-install command sent and flushed; backgrounding Aether for replacement. Service acceptance is not yet confirmed.", category: "Install", level: .notice)
 		guard UIApplication.shared.applicationState != .background else { return }
 		UIApplication.shared.perform(#selector(NSXPCConnection.suspend))
 	}
