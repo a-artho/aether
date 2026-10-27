@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AppIcon.appiconset/aether.png",
-      "version": "3.0.3",
-      "versionDate": "2026-10-27T16:49:00Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.3/Aether.ipa",
-      "size": 18255589,
-      "versionDescription": "# Aether 3.0.3\n\n- Add an optional Liquid Glass style for action buttons while keeping the existing style as the default.\n- Extend the ambient background setting with an adjustable top-glow reach.\n- Refine Appearance settings for source list insets and description sizing.\n- Add regression coverage to keep Action Button Style discoverable in Settings search.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.4",
+      "versionDate": "2026-10-27T19:16:00Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.4/Aether.ipa",
+      "size": 18259151,
+      "versionDescription": "# Aether 3.0.4\n\n- Improve in-app tunnel recovery when returning from background or retrying after a stalled RSD connection.\n- Bound native RSD connection and service check-in waits so timed-out attempts release resources and can retry.\n- Hand off self-install backgrounding after the Install command is sent, without waiting for a progress callback.\n- Refine the ambient top glow scaling and add the system action-button surface option.\n- Extend tunnel lifecycle and self-update regression coverage.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.4",
+          "date": "2026-10-27T19:16:00Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.4/Aether.ipa",
+          "size": 18259151,
+          "localizedDescription": "# Aether 3.0.4\n\n- Improve in-app tunnel recovery when returning from background or retrying after a stalled RSD connection.\n- Bound native RSD connection and service check-in waits so timed-out attempts release resources and can retry.\n- Hand off self-install backgrounding after the Install command is sent, without waiting for a progress callback.\n- Refine the ambient top glow scaling and add the system action-button surface option.\n- Extend tunnel lifecycle and self-update regression coverage.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.3",
           "date": "2026-10-27T16:49:00Z",
