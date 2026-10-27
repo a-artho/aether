@@ -219,11 +219,14 @@ checks = r'''
   await idle(coordinator)
   precondition(coordinator.updateContexts.isEmpty, "An app removed during matching cannot reappear as an update")
 
-  // Disconnect-on-idle invalidates synchronously; no canceled result can restore it.
+  // An intentional idle stop keeps Updates visible but requires a fresh app read.
   connection.isDisconnectWhenIdleEnabled = true
+  connection.isAwaitingAutomaticConnection = true
   coordinator.didEnterBackground()
-  precondition(!coordinator.hasVerifiedUpdates && coordinator.phase == .idle)
+  precondition(coordinator.hasVerifiedUpdates && coordinator.phase == .idle && !installed.hasLoadedApps)
   connection.state = .disconnected
+  await drain()
+  precondition(coordinator.hasVerifiedUpdates, "Pending idle reconnect must retain Updates")
   coordinator.activate()
   await idle(coordinator)
   precondition(connection.connections == 1 && installed.calls == 4, "Foreground reconnect browses once even with many state publications")
@@ -253,17 +256,19 @@ checks = r'''
   while await catalog.waiter == nil { await Task.yield() }
   let canceledOwner = coordinator.refreshTask!
   coordinator.didEnterBackground()
-  precondition(coordinator.phase == .idle && !coordinator.hasVerifiedUpdates)
+  precondition(coordinator.phase == .idle && coordinator.hasVerifiedUpdates)
   await catalog.resume(); await canceledOwner.value
-  precondition(!coordinator.hasVerifiedUpdates, "A canceled background scan cannot restore verified updates")
+  precondition(coordinator.hasVerifiedUpdates, "A canceled background scan keeps the last verified Updates")
   await catalog.configure(["app": [context]])
   coordinator.activate(); await idle(coordinator)
   precondition(coordinator.hasVerifiedUpdates, "Foreground refresh recovers after cancellation")
   coordinator.didEnterBackground()
   connection.automatic = false; connection.state = .disconnected
+  await drain()
+  precondition(coordinator.hasVerifiedUpdates, "Pending presentation retains Updates until verification finishes")
   coordinator.activate(); await idle(coordinator)
   precondition(coordinator.phase == .idle && !coordinator.hasVerifiedUpdates,
-   "A missing connection with automatic tunneling off must settle without a stuck spinner")
+   "Failed connection verification clears retained Updates")
   print("Library coordinator checks passed: lifecycle, deduplication, cache reuse, forced pulls, source changes, install/uninstall, ignored updates, stale matches and reconnect")
  }
 }

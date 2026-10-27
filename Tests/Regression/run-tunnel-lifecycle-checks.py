@@ -122,7 +122,7 @@ NATIVE_RESET
  var connectionEpoch: UInt64 = 0; var transitionDeadline = 0.0; var lastVerifiedAt = 0.0
  var hasReturnedFromLocalDevVPN=false
  var automaticRetryBlocked=false;var localDevVPNHandoffGeneration:UUID?
- var awaitingInitialActivation = false; var tunnelMethod = Method.inApp
+ var awaitingInitialActivation = false; var awaitingIdleReconnect = false; var tunnelMethod = Method.inApp
  var hasCompletedInitialActivation=true
  enum Network { case wifi, cellularOnly }; var physicalNetworkState = Network.wifi
  var cellularPauses = 0

@@ -157,7 +157,8 @@ private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UU
  var appRefreshConnectionTask:Task<Bool,Never>?;var appRefreshConnectionID:UUID?
  static let disconnectWhenIdleKey="Aether.autoTunnelLifecycle",connectAutomaticallyKey="Aether.connectAutomatically",unresolvedSimulationKey="AutoTestSimulation"
  var isDisconnectWhenIdleEnabled:Bool;var isConnectAutomaticallyEnabled:Bool
- var awaitingInitialActivation=false;var hasPairingFile=true;var requiresInAppTunnelSetup=false
+ var awaitingInitialActivation=false;var awaitingIdleReconnect=false;var hasPairingFile=true;var requiresInAppTunnelSetup=false
+ var isAwaitingAutomaticConnection:Bool {awaitingInitialActivation || awaitingIdleReconnect}
  var automaticAttemptEpoch:UInt64?;var connectionEpoch:UInt64=0
  var localDevVPNHandoffGeneration:UUID?;var transitionGeneration:UUID?;var transitionExpectedState:Bool?
  var hasReturnedFromLocalDevVPN=false;var needsLocalDevVPNCellularRecovery=false;var transitionDeadline:TimeInterval=0

@@ -35,7 +35,9 @@ final class LibraryUpdatesStore: ObservableObject {
 			MainActor.assumeIsolated {
 				guard let self else { return }
 				if state != .connected {
-					self.invalidateVerification()
+					if !DeviceConnectionManager.shared.isAwaitingAutomaticConnection {
+						self.invalidateVerification()
+					}
 					InstalledAppsStore.shared.invalidateConnection()
 					if self.phase == .checking { self.cancelRefresh() }
 				} else if self.refreshTask == nil {
@@ -96,7 +98,6 @@ final class LibraryUpdatesStore: ObservableObject {
 		clearAnnouncement()
 		let connection = DeviceConnectionManager.shared
 		if installationMode == 1, connection.tunnelMethod == .inApp, connection.isDisconnectWhenIdleEnabled, !connection.hasActiveTunnelDependencies {
-			invalidateVerification()
 			InstalledAppsStore.shared.invalidateConnection()
 		}
 	}
@@ -241,8 +242,13 @@ final class LibraryUpdatesStore: ObservableObject {
 		// The connection manager owns verification, recovery and handoff waits.
 		// Library never treats a previously published Connected value as proof.
 		phase = .connecting
-		guard await connection.verifyForAppRefresh(), !Task.isCancelled,
-			!connection.isUpdating, !cellular.isBusy else { return false }
+		let verified = await connection.verifyForAppRefresh()
+		guard !Task.isCancelled else { return false }
+		guard verified else {
+			invalidateVerification()
+			return false
+		}
+		guard !connection.isUpdating, !cellular.isBusy else { return false }
 		let installed = InstalledAppsStore.shared
 		if reason == .inputs, !installed.hasLoadedApps, !installed.isLoading { return false }
 		if phase != .checking { checkingStarted = .now; phase = .checking }

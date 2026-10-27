@@ -91,6 +91,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 	@Published public private(set) var diagnostic: DeviceDiagnosticStatus = .tunnelUnavailable
 	@Published private var awaitingInitialActivation = false
+	@Published private var awaitingIdleReconnect = false
 	// UIApplication can report Active while the app/scene is still being built.
 	// Provider queries must wait for a real activation callback, not that value alone.
 	private var hasCompletedInitialActivation = false
@@ -98,7 +99,8 @@ public final class DeviceConnectionManager: ObservableObject {
 	/// Keep the UI pending across activation, idle-disconnect completion, and verification.
 	/// This is presentation state, separate from the guards that permit a connection to start.
 	public var isAwaitingAutomaticConnection: Bool {
-		awaitingInitialActivation || ((foregroundRecoveryID != nil || appRefreshConnectionID != nil) && !isConnected)
+		awaitingInitialActivation || awaitingIdleReconnect
+			|| ((foregroundRecoveryID != nil || appRefreshConnectionID != nil) && !isConnected)
 	}
 	@Published public private(set) var hasPairingFile: Bool = false
 	@Published public private(set) var pairingVerification = PairingVerificationState()
@@ -438,6 +440,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	public func setDisconnectWhenIdle(_ enabled: Bool) {
 		guard isDisconnectWhenIdleEnabled != enabled else { return }
 		isDisconnectWhenIdleEnabled = enabled
+		if !enabled { awaitingIdleReconnect = false }
 		UserDefaults.standard.set(enabled, forKey: Self.disconnectWhenIdleKey)
 		_log("Disconnect when idle set to \(enabled).", category: "Tunnel", level: .notice)
 	}
@@ -448,6 +451,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		UserDefaults.standard.set(enabled, forKey: Self.connectAutomaticallyKey)
 		if !enabled {
 			awaitingInitialActivation = false
+			awaitingIdleReconnect = false
 			_cancelForegroundRecovery()
 			if automaticAttemptEpoch == connectionEpoch {
 				_cancelTransition()
@@ -513,6 +517,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		hasCompletedInitialActivation = true
 		_signalConnectionWorkChanged()
 		awaitingInitialActivation = false
+		awaitingIdleReconnect = false
 		lastVerifiedAt = 0
 		CellularAssistManager.shared.handleApplicationDidBecomeActive()
 		guard !CellularAssistManager.shared.isBusy else { return }
@@ -656,6 +661,9 @@ public final class DeviceConnectionManager: ObservableObject {
 	public func handleAppBackground() {
 		// A delayed background notification must not close a resumed app's tunnel.
 		guard UIApplication.shared.applicationState == .background else { return }
+		let wasExpectingConnection = (transitionExpectedState != false || awaitingIdleReconnect)
+			&& (isAwaitingAutomaticConnection || isConnected || isUpdating
+				|| EmbeddedTunnelManager.shared.isRunning)
 		_signalConnectionWorkChanged()
 		CellularAssistManager.shared.handleApplicationDidEnterBackground()
 		awaitingInitialActivation = false
@@ -665,8 +673,12 @@ public final class DeviceConnectionManager: ObservableObject {
 			appRefreshConnectionTask = nil
 			appRefreshConnectionID = nil
 		}
-		guard tunnelMethod == .inApp, isDisconnectWhenIdleEnabled, isIDeviceInstallationMode else { return }
+		guard tunnelMethod == .inApp, isDisconnectWhenIdleEnabled, isIDeviceInstallationMode else {
+			awaitingIdleReconnect = false
+			return
+		}
 		if hasActiveTunnelDependencies {
+			awaitingIdleReconnect = false
 			_log(
 				"App backgrounded; keeping device tunnel active because an operation is in progress (spoofing: \(SpoofSession.existing?.requiresBackgroundExecution == true), locationUnverified: \(UserDefaults.standard.bool(forKey: Self.unresolvedSimulationKey)), installing: \(AppInstallationManager.shared.isInstalling), pairing: \(OnDevicePairingManager.shared.isActive), cellular assist: \(CellularAssistManager.shared.isBusy)).",
 				category: "Tunnel",
@@ -674,6 +686,11 @@ public final class DeviceConnectionManager: ObservableObject {
 			)
 			return
 		}
+		// A deliberate idle stop is pending foreground recovery, including when
+		// backgrounding interrupted the first connection before the VPN started.
+		// Keep Library from presenting this expected disconnection as a failure.
+		awaitingIdleReconnect = isConnectAutomaticallyEnabled && hasPairingFile
+			&& !requiresInAppTunnelSetup && wasExpectingConnection
 		// LocalDevVPN uses a foreground app handoff to connect. Do not interrupt
 		// that handoff; an in-app VPN has no such requirement and must also stop
 		// while preparation / start is pending, not just after it is Connected.
@@ -749,6 +766,9 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	public func setConnection(enabled: Bool, force: Bool = false, deadline: TimeInterval? = nil, automatically: Bool = false) {
 		awaitingInitialActivation = false
+		if !enabled && UIApplication.shared.applicationState != .background {
+			awaitingIdleReconnect = false
+		}
 		if !enabled {
 			appRefreshConnectionTask?.cancel()
 			appRefreshConnectionTask = nil

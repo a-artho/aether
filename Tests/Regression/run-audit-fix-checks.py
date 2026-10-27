@@ -67,6 +67,7 @@ connection = declaration('Aether/Backend/Observable/DeviceConnectionManager.swif
 guards = connection[:connection.index('\n\t\tlet method')]
 source += '''
 enum State { case connected, disconnected, connecting, disconnecting }
+final class UIApplication { static let shared = UIApplication(); enum AppState { case active, background }; var applicationState = AppState.active }
 final class Connection {
  var appRefreshConnectionTask:Task<Bool,Never>?;var appRefreshConnectionID:UUID?
  var connectionEpoch: UInt64 = 0; var activeVerificationID: UUID?
@@ -74,7 +75,7 @@ final class Connection {
  var preparationTask:Task<Void,Never>?;var connectionTask:Task<Void,Never>?;var rsdCleanupTask:Task<Void,Never>?
  func _cancelReconciliation() {}
  func _cancelForegroundRecovery() {}
- var awaitingInitialActivation=false
+ var awaitingInitialActivation=false;var awaitingIdleReconnect=false
  var connectionPreparation: UUID? = UUID(); var state: State = .connecting; var proceeded = false
  var isUpdating: Bool { state == .connecting || state == .disconnecting }
 '''+guards+'\n proceeded = true\n}\n}\n'

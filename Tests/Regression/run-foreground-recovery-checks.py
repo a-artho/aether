@@ -25,7 +25,7 @@ func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
  enum Diagnostic {case tunnelUnavailable,providerMissing(Method)};var diagnostic=Diagnostic.tunnelUnavailable
  enum Method {case inApp,localDevVPN};var tunnelMethod=Method.inApp
  var hasPairingFile=true
- var awaitingInitialActivation=false;var requiresInAppTunnelSetup=false;var hasCompletedInitialActivation=false
+ var awaitingInitialActivation=false;var awaitingIdleReconnect=false;var requiresInAppTunnelSetup=false;var hasCompletedInitialActivation=false
  var isConnectAutomaticallyEnabled=true;var isIDeviceInstallationMode=true
  var isConnected=true;var isUpdating=false {didSet {_signalConnectionWorkChanged()}};var starts=0;var checks=0;var verified=false
  var isDisconnectWhenIdleEnabled=true;var hasActiveTunnelDependencies=false;var stops=0
@@ -99,7 +99,8 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   let backgroundLaunch=Driver();backgroundLaunch._restoreInstallationMode()
   check(backgroundLaunch.isAwaitingAutomaticConnection && backgroundLaunch.starts==0,"Cold scene construction reserves presentation without starting a VPN in background")
   backgroundLaunch.handleAppBackground()
-  check(!backgroundLaunch.isAwaitingAutomaticConnection,"Actual background lifecycle retires the startup presentation")
+  check(backgroundLaunch.awaitingIdleReconnect && backgroundLaunch.isAwaitingAutomaticConnection,
+   "Backgrounded cold start remains pending until foreground recovery")
   UIApplication.shared.applicationState = .active
   let returning=Driver();returning.isConnected=false
   UIApplication.shared.applicationState = .inactive
@@ -120,9 +121,24 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   UIApplication.shared.applicationState = .background;delayed.handleAppForeground()
   check(delayed.foregroundRecoveryTask == nil,"Delayed foreground event cannot start recovery in background")
   delayed.handleAppBackground();check(delayed.stops==1,"Real background event still disconnects an idle tunnel")
+  check(delayed.awaitingIdleReconnect && delayed.isAwaitingAutomaticConnection,
+   "Intentional idle stop never becomes a temporary unavailable placeholder")
+  UIApplication.shared.applicationState = .active;delayed.isConnected=false;delayed.handleAppForeground()
+  check(!delayed.awaitingIdleReconnect && delayed.starts==1,
+   "Foreground transfers pending presentation to the normal connection attempt")
+  delayed.finishStart();try await settled(delayed)
+  UIApplication.shared.applicationState = .background
 
   let connecting=Driver();connecting.isConnected=false;connecting.isUpdating=true;connecting.handleAppBackground()
   check(connecting.stops==1 && connecting.forcedStop,"Background idle stop supersedes an in-app connection still in progress")
+  check(connecting.awaitingIdleReconnect,"Interrupted automatic start remains pending across background")
+  let manualStop=Driver();manualStop.isConnected=false;manualStop.isUpdating=true;manualStop.transitionExpectedState=false
+  manualStop.handleAppBackground()
+  check(!manualStop.awaitingIdleReconnect,"An explicit disconnect is not mistaken for idle recovery")
+  let noAuto=Driver();noAuto.isConnectAutomaticallyEnabled=false;noAuto.handleAppBackground()
+  check(!noAuto.awaitingIdleReconnect,"Automatic connection off never retains an idle pending state")
+  let missingPair=Driver();missingPair.hasPairingFile=false;missingPair.handleAppBackground()
+  check(!missingPair.awaitingIdleReconnect,"Missing pairing remains actionable after backgrounding")
   let helper=Driver();helper.isConnected=false;helper.isUpdating=true;helper.tunnelMethod = .localDevVPN;helper.handleAppBackground()
   check(helper.stops==0,"LocalDevVPN's required app handoff is not interrupted")
   let stoppingAgain=Driver();stoppingAgain.state = .disconnecting;stoppingAgain.handleAppBackground()
