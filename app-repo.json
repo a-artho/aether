@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AppIcon.appiconset/aether.png",
-      "version": "3.0.2",
-      "versionDate": "2026-10-26T23:37:18Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.2/Aether.ipa",
-      "size": 18245135,
-      "versionDescription": "# Aether 3.0.2\n\n- Improve automatic tunnel connection and recovery across cold launches, foreground transitions, and cellular changes.\n- Fix brief incorrect tunnel and setup placeholders while a connection is starting.\n- Improve self-update installation handoff and recovery when iOS suspends Aether.\n- Refine Library installation cleanup and strengthen lifecycle regression checks.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.3",
+      "versionDate": "2026-10-27T16:49:00Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.3/Aether.ipa",
+      "size": 18255589,
+      "versionDescription": "# Aether 3.0.3\n\n- Add an optional Liquid Glass style for action buttons while keeping the existing style as the default.\n- Extend the ambient background setting with an adjustable top-glow reach.\n- Refine Appearance settings for source list insets and description sizing.\n- Add regression coverage to keep Action Button Style discoverable in Settings search.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.3",
+          "date": "2026-10-27T16:49:00Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.3/Aether.ipa",
+          "size": 18255589,
+          "localizedDescription": "# Aether 3.0.3\n\n- Add an optional Liquid Glass style for action buttons while keeping the existing style as the default.\n- Extend the ambient background setting with an adjustable top-glow reach.\n- Refine Appearance settings for source list insets and description sizing.\n- Add regression coverage to keep Action Button Style discoverable in Settings search.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.2",
           "date": "2026-10-26T23:37:18Z",
