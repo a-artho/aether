@@ -83,6 +83,7 @@ with tempfile.TemporaryDirectory(prefix='aether-self-handoff-') as directory:
 # continued task ends, and suspension waits for the stop confirmation.
 installation = (root / 'Aether/Backend/Observable/AppInstallationManager.swift').read_text()
 device = (root / 'Aether/Backend/Observable/DeviceConnectionManager.swift').read_text()
+tunnel = (root / 'Aether/Backend/Observable/EmbeddedTunnelManager.swift').read_text()
 execution = (root / 'Aether/Utilities/AppOperationExecution.swift').read_text()
 background = (root / 'Aether/Utilities/BackgroundTaskManager.swift').read_text()
 begin_install = swift_method(installation, 'private func _beginInstall(')
@@ -108,6 +109,9 @@ assert 'guard tunnelMethod == .inApp else { return false }' in begin_tunnel_hand
 assert begin_tunnel_handoff.index('EmbeddedTunnelManager.shared.requestStopIfRunning()') < begin_tunnel_handoff.index('setConnection(enabled: false'), 'Issue the immediate stop request before asynchronous tunnel cleanup'
 wait_tunnel_handoff = swift_method(device, 'func waitForSelfUpdateTunnelHandoff()')
 assert 'state == .disconnected' in wait_tunnel_handoff and '!EmbeddedTunnelManager.shared.isRunning' in wait_tunnel_handoff
+assert 'EmbeddedTunnelManager.shared.waitForSelfUpdateDisconnection()' in wait_tunnel_handoff
+waiter = swift_method(tunnel, 'func waitForSelfUpdateDisconnection()')
+assert 'await waitForDisconnected()' in waiter, 'Self-update handoff must use the existing NetworkExtension status waiter'
 for signature in ('public func connectAutomaticallyIfNeeded()', 'private func _connectForIDeviceMode(',
                   'public func handleAppForeground()', 'public func handleAppBackground()',
                   'public func setConnection(', 'public func verifyForAppRefresh()',

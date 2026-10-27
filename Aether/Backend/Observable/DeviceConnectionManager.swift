@@ -891,7 +891,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		guard selfUpdateHandoffPending else { return false }
 		if let task = connectionTask { await task.value }
 		if EmbeddedTunnelManager.shared.state == .disconnecting {
-			_ = await EmbeddedTunnelManager.shared.waitForDisconnected()
+			_ = await EmbeddedTunnelManager.shared.waitForSelfUpdateDisconnection()
 		}
 		let stopped = EmbeddedTunnelManager.shared.state == .disconnected
 			&& !EmbeddedTunnelManager.shared.isRunning

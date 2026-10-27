@@ -220,6 +220,16 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		#endif
 	}
 
+	/// Wait for the embedded VPN shutdown confirmation needed before iOS
+	/// replaces Aether. Keep the NetworkExtension-specific waiter private.
+	func waitForSelfUpdateDisconnection() async -> Bool {
+		#if os(iOS) && !targetEnvironment(macCatalyst)
+		await waitForDisconnected()
+		#else
+		state == .disconnected
+		#endif
+	}
+
 	public var isProviderAvailable: Bool {
 		#if targetEnvironment(simulator)
 		return true
