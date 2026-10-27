@@ -31,6 +31,10 @@ public struct NBButton: View {
 		self._style = style
 		self._horizontalPadding = horizontalPadding
 	}
+
+	public static var textPillBackground: Color {
+		Color.accentColor.opacity(0.2)
+	}
 	
 	public var body: some View {
 		switch _style {
@@ -59,7 +63,7 @@ public struct NBButton: View {
 				}
 				.padding(.horizontal, _horizontalPadding)
 				.frame(height: 35)
-				.background(Color(uiColor: .quaternarySystemFill).opacity(_showsBackground ? 1 : 0))
+				.background(Self.textPillBackground.opacity(_showsBackground ? 1 : 0))
 				.clipShape(Capsule())
 				.frame(minHeight: 44)
 				.contentShape(Rectangle())

@@ -991,7 +991,7 @@ private struct UnifiedImportAccessory: View {
 
 					ZStack(alignment: .trailing) {
 						Capsule()
-							.fill(actionStage ? Color(uiColor: .quaternarySystemFill) : .clear)
+							.fill(actionStage ? NBButton.textPillBackground : .clear)
 							.overlay {
 								Capsule()
 									.stroke(ringTint.opacity(progressStage ? 0.2 : 0), lineWidth: 2.3)
