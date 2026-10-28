@@ -105,10 +105,7 @@ extension CertificatesView {
 				cert: cert
 			)
 			.padding()
-			.background(
-				RoundedRectangle(cornerRadius: cornerRadius)
-					.fill(Color(uiColor: .quaternarySystemFill))
-			)
+			.modifier(SettingsCardSurface(color: Color(uiColor: .quaternarySystemFill), cornerRadius: cornerRadius))
 			.overlay(
 				RoundedRectangle(cornerRadius: cornerRadius)
 					.strokeBorder(

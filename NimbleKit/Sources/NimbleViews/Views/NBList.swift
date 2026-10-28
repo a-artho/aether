@@ -31,18 +31,7 @@ public struct NBList<Content>: View where Content: View {
 	}
 	
 	public var body: some View {
-		Group {
-			switch _type {
-			case .form:
-				Form {
-					_content
-				}
-			case .list:
-				List {
-					_content
-				}
-			}
-		}
+		NBSettingsForm(isList: _type == .list) { _content }
 		.navigationTitle(_title)
 		.navigationBarTitleDisplayMode(_mode)
 	}

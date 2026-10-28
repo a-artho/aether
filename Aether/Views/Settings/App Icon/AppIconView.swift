@@ -41,8 +41,9 @@ struct AppIconView: View {
 	// dont translate
 	@MainActor private static let sections: [String: [AltIcon]] = [
 		"Aether": [
-			AltIcon(displayName: "Aether", author: "Artho", key: nil),
-			AltIcon(displayName: "Aether Glass", author: "Artho", key: "AetherGlassMuted", previewImageName: "AetherGlassMutedPreview")
+			AltIcon(displayName: "Aether", author: "Artho", key: nil, previewImageName: "AetherPrimaryPreview"),
+			AltIcon(displayName: "Aether Mono", author: "Artho", key: "AetherMono", previewImageName: "AetherMonoPreview"),
+			AltIcon(displayName: "Aether Dark", author: "Artho", key: "AetherDark", previewImageName: "AetherDarkPreview")
 		],
 		"Feather": [
 			AltIcon(displayName: "Feather (macOS)", author: "Samara", key: "V2Mac"),
@@ -51,7 +52,7 @@ struct AppIconView: View {
 	]
 	@MainActor private static let sectionOrder = ["Aether", "Feather"]
 	@MainActor private static let supportedAlternateIconNames: Set<String> = [
-		"AetherGlassMuted", "V2Mac", "V1"
+		"AetherMono", "AetherDark", "V2Mac", "V1"
 	]
 	
 	// MARK: Body
@@ -78,17 +79,17 @@ struct AppIconView: View {
 				return
 			}
 
-			// If an older build left a now-removed alternate icon active, return to
-			// the primary Aether icon when the user opens this picker.
+			// Preserve the renamed Mono selection; reset other removed icons to primary.
 			changingIcon = true
-			UIApplication.shared.setAlternateIconName(nil) { error in
+			let replacementIcon: String? = activeIcon == "AetherGlassMuted" ? "AetherMono" : nil
+			UIApplication.shared.setAlternateIconName(replacementIcon) { error in
 				DispatchQueue.main.async {
 					changingIcon = false
 					if let error {
 						iconError = error.localizedDescription
 						DebugLogManager.shared.log("Removed app icon reset failed: \(error.localizedDescription)", category: "Appearance", level: .error)
 					} else {
-						currentIcon = nil
+						currentIcon = replacementIcon
 					}
 				}
 			}

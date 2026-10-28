@@ -48,7 +48,7 @@ struct SettingsView: View {
 	// MARK: Body
 	var body: some View {
 		NavigationStack(path: $_settingsPath) {
-			Form {
+			NBSettingsForm {
 				if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
 					settingsSections
 				} else if !searchResults.isEmpty {
@@ -115,6 +115,7 @@ struct SettingsView: View {
 				_presentRequestedPageIfNeeded()
 			}
 		}
+		.environment(\.nbGlassSettingsCards, controlsStyle == .liquidGlass)
 		.modifier(FloatingNavigationAppearance())
 		.sheet(isPresented: $isSpoofingPresented) { SpoofingEntryView() }
 	}
@@ -173,18 +174,12 @@ struct SettingsView: View {
 
 	@ViewBuilder private var settingsSections: some View {
 		Section {
-			if controlsStyle != .standard {
-				Group {
-					if controlsStyle == .liquidGlass {
-						deviceControlsCard
-							.glassEffect(.regular, in: .rect(cornerRadius: 26))
-					} else {
-						deviceControlsCard
-					}
-				}
-				.listRowInsets(EdgeInsets())
-				.listRowBackground(controlsStyle == .liquidGlass ? Color.clear : Color(uiColor: .secondarySystemGroupedBackground))
-				.listRowSeparator(.hidden)
+			if controlsStyle == .liquidGlass {
+				deviceControlsCard
+					.containerValue(\.nbSettingsCardOwnPadding, true)
+					.listRowInsets(EdgeInsets())
+					.listRowBackground(Color.clear)
+					.listRowSeparator(.hidden)
 			} else {
 				InstallationModePickerRow()
 					.listRowBackground(deviceControlsBackground)

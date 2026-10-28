@@ -27,6 +27,7 @@ struct AppearanceTintColorView: View {
 	// MARK: Body
 	var body: some View {
 		ScrollView(.horizontal, showsIndicators: false) {
+			GlassEffectContainer(spacing: 0) {
 			LazyHGrid(rows: [GridItem(.fixed(100))], spacing: 12) {
 				ForEach(_tintOptions, id: \.hex) { option in
 					let color = Color(hex: option.hex)
@@ -45,7 +46,7 @@ struct AppearanceTintColorView: View {
 							.foregroundColor(.secondary)
 					}
 					.frame(width: 120, height: 100)
-					.background(Color(uiColor: .secondarySystemGroupedBackground))
+					.modifier(SettingsCardSurface(color: Color(uiColor: .secondarySystemGroupedBackground), cornerRadius: cornerRadius))
 					.clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
 					.overlay(
 						RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -57,6 +58,7 @@ struct AppearanceTintColorView: View {
 					.accessibilityLabel(Text(option.name))
 				}
 			}
+		}
 		}
 		.onChange(of: _selectedColorHex) { _, value in
 			UIApplication.topViewController()?.view.window?.tintColor = UIColor(Color(hex: value))

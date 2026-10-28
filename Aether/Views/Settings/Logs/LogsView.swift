@@ -371,7 +371,7 @@ struct DebugLogDetailView: View {
 
 	var body: some View {
 		NBNavigationView(.localized("Log Detail"), displayMode: .inline) {
-			List {
+			NBSettingsForm(isList: true) {
 				Section {
 					HStack {
 						Text(.localized("Timestamp"))

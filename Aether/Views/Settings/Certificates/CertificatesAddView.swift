@@ -28,7 +28,7 @@ struct CertificatesAddView: View {
 	// MARK: Body
 	var body: some View {
 		NBNavigationView(.localized("New Certificate"), displayMode: .inline) {
-			Form {
+			NBSettingsForm {
 				NBSection(.localized("Files")) {
 					_importButton(.localized("Import Certificate File"), file: _p12URL) {
 						_isImportingP12Presenting = true

@@ -75,6 +75,7 @@ struct AppearanceView: View {
 
 			NBSection(.localized("Theme")) {
 				AppearanceTintColorView()
+					.containerValue(\.nbSettingsCardOwnSurface, true)
 					.listRowInsets(EdgeInsets())
 					.listRowBackground(EmptyView())
 			}
@@ -160,7 +161,7 @@ struct AppearanceView: View {
 				.tint(.secondary)
 				Picker(selection: $_allReposIcon) {
 					ForEach(AllReposIcon.allCases) { icon in
-						Image(systemName: icon.systemImage)
+						icon.image
 							.accessibilityLabel(icon.title)
 							.tag(icon)
 					}

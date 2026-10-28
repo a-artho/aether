@@ -168,7 +168,7 @@ struct OnDevicePairingView: View {
 				.tracking(5)
 				.frame(maxWidth: .infinity)
 				.padding(.vertical, 20)
-				.background(Color(UIColor.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+				.modifier(SettingsCardSurface(color: Color(UIColor.secondarySystemBackground), cornerRadius: 16))
 
 			Button(.localized("Copy Code")) {
 				UIPasteboard.general.string = code

@@ -12,13 +12,14 @@ enum OverviewIconStyle: String, CaseIterable, Identifiable {
 }
 
 enum AllReposIcon: String, CaseIterable, Identifiable {
-	case appStore, globe, books
+	case appStore, globe, books, aether
 	var id: Self { self }
 	var title: String {
 		switch self {
 		case .appStore: .localized("App Store")
 		case .globe: .localized("Globe")
 		case .books: .localized("Books")
+		case .aether: "Aether"
 		}
 	}
 	var systemImage: String {
@@ -26,7 +27,12 @@ enum AllReposIcon: String, CaseIterable, Identifiable {
 		case .appStore: "appstore"
 		case .globe: "globe.desk"
 		case .books: "books.vertical"
+		case .aether: "AetherEmblem"
 		}
+	}
+
+	var image: Image {
+		self == .aether ? Image("AetherEmblem") : Image(systemName: systemImage)
 	}
 }
 
@@ -60,7 +66,7 @@ struct OverviewRowIcon: View {
 					.scaledToFit()
 					.frame(width: rowIconSize.symbolPoints, height: rowIconSize.symbolPoints)
 			} else {
-				Image(systemName: reposIcon.systemImage)
+				reposIcon.image
 					.font(.system(size: rowIconSize.symbolPoints, weight: .regular))
 					.symbolRenderingMode(.hierarchical)
 			}

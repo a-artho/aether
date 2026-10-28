@@ -13,7 +13,7 @@ manifest_app = manifest["apps"][0]
 assert manifest_app["bundleIdentifier"] == "com.anfear.aether"
 assert manifest_app["version"] == manifest_app["versions"][0]["version"]
 assert manifest_app["downloadURL"].endswith(f"/v{manifest_app['version']}/Aether.ipa")
-assert manifest_app["iconURL"].endswith("AppIcon.appiconset/aether.png")
+assert manifest_app["iconURL"].endswith("AetherPrimaryPreview.imageset/AetherPrimaryPreview.png")
 assert len(manifest_app["versions"]) >= 2
 assert all(entry.get("size", 0) > 0 for entry in manifest_app["versions"])
 

@@ -3,7 +3,7 @@
   "name": "Aether",
   "subtitle": "Aether for iOS",
   "website": "https://github.com/a-artho/aether",
-  "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AppIcon.appiconset/aether.png",
+  "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AetherPrimaryPreview.imageset/AetherPrimaryPreview.png",
   "apps": [
     {
       "name": "Aether",
@@ -11,7 +11,7 @@
       "developerName": "Artho",
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
-      "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AppIcon.appiconset/aether.png",
+      "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AetherPrimaryPreview.imageset/AetherPrimaryPreview.png",
       "version": "3.0.6",
       "versionDate": "2026-10-28T16:48:00Z",
       "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.6/Aether.ipa",

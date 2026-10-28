@@ -3,13 +3,12 @@ import IDeviceSwift
 import NimbleExtensions
 
 enum DeviceControlsStyle: String, CaseIterable, Identifiable {
-	case standard, liquidGlass, nativeRaised
+	case standard, liquidGlass
 	var id: Self { self }
 	var title: String {
 		switch self {
 		case .standard: .localized("Default")
 		case .liquidGlass: .localized("Glass")
-		case .nativeRaised: .localized("Native")
 		}
 	}
 }
