@@ -44,7 +44,6 @@ public struct NBSettingsForm<Content: View>: View {
 
 	public var body: some View {
 		if glassCards {
-			GlassEffectContainer(spacing: 0) {
 			Form {
 				ForEach(sections: content) { section in
 					Section {
@@ -59,6 +58,7 @@ public struct NBSettingsForm<Content: View>: View {
 									Divider().padding(.leading, 16)
 								}
 								row
+									.buttonStyle(.plain)
 									.frame(maxWidth: .infinity, alignment: .leading)
 									.padding(.horizontal, row.containerValues.nbSettingsCardOwnPadding ? 0 : 16)
 									.padding(.vertical, row.containerValues.nbSettingsCardOwnPadding ? 0 : 11)
@@ -79,7 +79,6 @@ public struct NBSettingsForm<Content: View>: View {
 			}
 			.buttonStyle(.borderless)
 			.pickerStyle(.menu)
-			}
 		} else if isList {
 			List { content }
 		} else {

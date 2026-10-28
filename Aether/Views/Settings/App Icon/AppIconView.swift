@@ -42,6 +42,8 @@ struct AppIconView: View {
 	@MainActor private static let sections: [String: [AltIcon]] = [
 		"Aether": [
 			AltIcon(displayName: "Aether", author: "Artho", key: nil, previewImageName: "AetherPrimaryPreview"),
+			AltIcon(displayName: "Aether Glass v1", author: "Artho", key: "AetherGlassV1", previewImageName: "AetherGlassArtworkPreview"),
+			AltIcon(displayName: "Aether Glass v2", author: "Artho", key: "AetherGlassV2", previewImageName: "AetherGlassArtworkPreview"),
 			AltIcon(displayName: "Aether Mono", author: "Artho", key: "AetherMono", previewImageName: "AetherMonoPreview"),
 			AltIcon(displayName: "Aether Dark", author: "Artho", key: "AetherDark", previewImageName: "AetherDarkPreview")
 		],
@@ -52,7 +54,7 @@ struct AppIconView: View {
 	]
 	@MainActor private static let sectionOrder = ["Aether", "Feather"]
 	@MainActor private static let supportedAlternateIconNames: Set<String> = [
-		"AetherMono", "AetherDark", "V2Mac", "V1"
+		"AetherMono", "AetherDark", "AetherGlassV1", "AetherGlassV2", "V2Mac", "V1"
 	]
 	
 	// MARK: Body

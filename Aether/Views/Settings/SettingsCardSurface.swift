@@ -7,11 +7,12 @@ struct SettingsCardSurface: ViewModifier {
 	let color: Color
 	let cornerRadius: CGFloat
 
+	@ViewBuilder
 	func body(content: Content) -> some View {
-		content.background {
-			if style == .liquidGlass {
-				Color.clear.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
-			} else {
+		if style == .liquidGlass {
+			content.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+		} else {
+			content.background {
 				RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(color)
 			}
 		}
