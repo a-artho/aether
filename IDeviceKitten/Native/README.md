@@ -37,7 +37,7 @@ Write records reuse their allocation, AES key schedule and pre-keyed HMAC state.
 
 ## Self-install command handoff
 
-`self-install-handoff.patch` adds an independent FFI hook after the Install command has been fully written and flushed, before waiting for installation-service responses. Aether uses it only when installing over itself to request backgrounding without depending on percentage progress. A sent command is not proof of acceptance or success. The original install API and percentage callback remain available. Duplex tests withhold all responses until handoff, verify transmission failures never hand off, and preserve daemon errors after transmission. Swift tests retire stale/cancelled handoffs and keep progress independent.
+`self-install-handoff.patch` keeps two distinct FFI signals. LocalDevVPN self-installs retain the existing hook after the Install command is fully written and flushed. In-App VPN self-installs use a separate hook after installation_proxy returns its first valid, non-error `Status` or `PercentComplete` response. Aether then keeps the background task and VPN alive for two seconds, requests tunnel shutdown, waits for confirmed disconnection, and only then ends the task and suspends. A service response proves acceptance, not installation completion. Regular installs do not use either handoff; LocalDevVPN keeps its existing timing.
 
 ## Bounded RSD recovery
 

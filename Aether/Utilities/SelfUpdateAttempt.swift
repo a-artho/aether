@@ -12,6 +12,10 @@ struct SelfUpdateAttempt: Codable, Sendable {
 	// Persisted by earlier builds; a service response also proves transmission.
 	private var receivedInstallationResponse: Bool?
 
+	mutating func markInstallationServiceAccepted() {
+		receivedInstallationResponse = true
+	}
+
 	init?(runningInfo: [String: Any], targetInfo: [String: Any]) {
 		func value(_ info: [String: Any], _ key: String) -> String? {
 			guard let text = info[key] as? String, !text.isEmpty else { return nil }

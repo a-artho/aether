@@ -1,10 +1,6 @@
 --- a/idevice/src/services/installation_proxy.rs
 +++ b/idevice/src/services/installation_proxy.rs
-@@ -166,6 +166,25 @@ impl InstallationProxyClient {
-     where
-         Fut: std::future::Future<Output = ()>,
-         S: Clone,
-+    {
+@@ -169,0 +170,19 @@
 +        self.install_with_callback_and_handoff(package_path, options, callback, state, || async {}).await
 +    }
 +
@@ -23,21 +19,70 @@
 +        S: Clone,
 +        Handoff: FnOnce() -> HandoffFuture,
 +        HandoffFuture: std::future::Future<Output = ()>,
-     {
-         let package_path = package_path.into();
-         let options = options.unwrap_or(plist::Value::Dictionary(Dictionary::new()));
-@@ -177,6 +196,7 @@ impl InstallationProxyClient {
-         });
- 
-         self.idevice.send_plist(command).await?;
++    {
+@@ -179,0 +199 @@
 +        on_command_sent().await;
- 
-         self.watch_completion(callback, state).await
-     }
-@@ -455,3 +475,62 @@ impl crate::RsdService for InstallationProxyClient {
-         Ok(Self::new(idevice))
-     }
- }
+@@ -181,0 +202,28 @@
++    }
++
++    /// Notify the caller after the installation service returns its first
++    /// valid, non-error response to the Install command.
++    pub async fn install_with_callback_and_acceptance<Fut, S, Accepted>(
++        &mut self,
++        package_path: impl Into<String>,
++        options: Option<plist::Value>,
++        callback: impl Fn((u64, S)) -> Fut,
++        state: S,
++        on_service_accepted: Accepted,
++    ) -> Result<(), IdeviceError>
++    where
++        Fut: std::future::Future<Output = ()>,
++        S: Clone,
++        Accepted: FnOnce(),
++    {
++        let package_path = package_path.into();
++        let options = options.unwrap_or(plist::Value::Dictionary(Dictionary::new()));
++        let command = crate::plist!({
++            "Command": "Install",
++            "ClientOptions": options,
++            "PackagePath": package_path,
++        });
++
++        self.idevice.send_plist(command).await?;
++        self.watch_completion_with_acceptance(callback, state, on_service_accepted)
++            .await
+@@ -422,0 +471,15 @@
++        self.watch_completion_with_acceptance(callback, state, || {}).await
++    }
++
++    async fn watch_completion_with_acceptance<Fut, S, Accepted>(
++        &mut self,
++        callback: impl Fn((u64, S)) -> Fut,
++        state: S,
++        on_service_accepted: Accepted,
++    ) -> Result<(), IdeviceError>
++    where
++        Fut: std::future::Future<Output = ()>,
++        S: Clone,
++        Accepted: FnOnce(),
++    {
++        let mut on_service_accepted = Some(on_service_accepted);
+@@ -427,0 +491,14 @@
++            }
++
++            let is_valid_response = res
++                .get("Status")
++                .and_then(|x| x.as_string())
++                .is_some_and(|status| !status.is_empty())
++                || res
++                    .get("PercentComplete")
++                    .and_then(|x| x.as_unsigned_integer())
++                    .is_some_and(|progress| progress <= 100);
++            if is_valid_response {
++                if let Some(on_service_accepted) = on_service_accepted.take() {
++                    on_service_accepted();
++                }
+@@ -457,0 +535,99 @@
 +
 +#[cfg(test)]
 +mod self_install_handoff_tests {
@@ -96,13 +141,50 @@
 +        assert_eq!(count.load(Ordering::SeqCst), 1);
 +        peer.await.unwrap();
 +    }
++
++    #[tokio::test]
++    async fn service_acceptance_fires_once_after_valid_response() {
++        let (client, peer) = tokio::io::duplex(4096);
++        let peer = tokio::spawn(async move {
++            let mut peer = Idevice::new(Box::new(peer), "test-peer");
++            peer.read_plist().await.unwrap();
++            peer.send_plist(crate::plist!({"Status": "CreatingStagingDirectory"})).await.unwrap();
++            peer.send_plist(crate::plist!({"Status": "Complete"})).await.unwrap();
++        });
++        let count = Arc::new(AtomicUsize::new(0));
++        let mut client = InstallationProxyClient::new(Idevice::new(Box::new(client), "test"));
++        let callback_count = count.clone();
++        client.install_with_callback_and_acceptance(
++            "PublicStaging/Self.ipa", None, |_| async {}, (),
++            move || { callback_count.fetch_add(1, Ordering::SeqCst); },
++        ).await.unwrap();
++        peer.await.unwrap();
++        assert_eq!(count.load(Ordering::SeqCst), 1, "service acceptance fires once across multiple valid responses");
++    }
++
++    #[tokio::test]
++    async fn service_error_does_not_signal_acceptance() {
++        let (client, peer) = tokio::io::duplex(4096);
++        let peer = tokio::spawn(async move {
++            let mut peer = Idevice::new(Box::new(peer), "test-peer");
++            peer.read_plist().await.unwrap();
++            peer.send_plist(crate::plist!({"ErrorDescription": "Rejected test package"})).await.unwrap();
++        });
++        let count = Arc::new(AtomicUsize::new(0));
++        let mut client = InstallationProxyClient::new(Idevice::new(Box::new(client), "test"));
++        let callback_count = count.clone();
++        let result = client.install_with_callback_and_acceptance(
++            "PublicStaging/Self.ipa", None, |_| async {}, (),
++            move || { callback_count.fetch_add(1, Ordering::SeqCst); },
++        ).await;
++        assert!(result.is_err(), "an installation-service error remains an install failure");
++        assert_eq!(count.load(Ordering::SeqCst), 0, "service errors must not trigger handoff");
++        peer.await.unwrap();
++    }
 +}
 --- a/ffi/src/installation_proxy.rs
 +++ b/ffi/src/installation_proxy.rs
-@@ -325,6 +325,50 @@ pub unsafe extern "C" fn installation_proxy_install_with_callback(
-     }
- }
- 
+@@ -327,0 +328,94 @@
 +/// Install with an independent command-sent hook. The hook runs only after
 +/// successful transport flush, before reading progress or completion responses.
 +/// Safety: pointers and callback context must remain valid until this call returns.
@@ -147,6 +229,53 @@
 +    }
 +}
 +
- /// Upgrades an existing application on the device
- ///
- /// # Arguments
++/// Install and report service acceptance after the first valid, non-error
++/// installation_proxy response. Unlike the command-sent hook, this confirms
++/// that the service replied; it does not mean installation completed.
++/// Safety: pointers and callback context must remain valid until this call returns.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn installation_proxy_install_with_acceptance(
++    client: *mut InstallationProxyClientHandle,
++    package_path: *const libc::c_char,
++    options: plist_t,
++    callback: extern "C" fn(progress: u64, context: *mut c_void),
++    context: *mut c_void,
++    on_service_accepted: extern "C" fn(context: *mut c_void),
++) -> *mut IdeviceFfiError {
++    if client.is_null() || package_path.is_null() {
++        return ffi_err!(IdeviceError::FfiInvalidArg);
++    }
++
++    let package_path = unsafe { std::ffi::CStr::from_ptr(package_path) }
++        .to_string_lossy()
++        .into_owned();
++    let options = if options.is_null() {
++        None
++    } else {
++        Some(unsafe { &mut *options })
++    }
++    .map(|x| x.borrow_self().clone());
++
++    let res = run_sync_local(async {
++        let callback_wrapper = |(progress, context)| async move {
++            callback(progress, context);
++        };
++
++        unsafe { &mut *client }
++            .0
++            .install_with_callback_and_acceptance(
++                package_path,
++                options,
++                callback_wrapper,
++                context,
++                || on_service_accepted(context),
++            )
++            .await
++    });
++
++    match res {
++        Ok(_) => null_mut(),
++        Err(e) => ffi_err!(e),
++    }
++}
++

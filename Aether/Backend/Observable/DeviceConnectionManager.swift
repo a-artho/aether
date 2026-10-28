@@ -856,11 +856,12 @@ public final class DeviceConnectionManager: ObservableObject {
 		}
 	}
 
-	/// Starts the scoped shutdown needed before iOS replaces Aether. The stop
-	/// request is sent synchronously before the caller releases BGContinued.
+	/// Reserves the embedded tunnel for Aether's self-update grace period.
+	/// This suppresses lifecycle reconnects without stopping the transport yet.
 	@discardableResult
-	func beginSelfUpdateTunnelHandoff() -> Bool {
+	func prepareSelfUpdateTunnelHandoff() -> Bool {
 		guard tunnelMethod == .inApp else { return false }
+		guard !selfUpdateHandoffPending else { return true }
 		selfUpdateHandoffPending = true
 		awaitingInitialActivation = false
 		awaitingIdleReconnect = false
@@ -870,19 +871,26 @@ public final class DeviceConnectionManager: ObservableObject {
 		appRefreshConnectionTask = nil
 		appRefreshConnectionID = nil
 		_cancelReconciliation()
+		_log("Prepared the embedded VPN for Aether self-update; tunnel shutdown is deferred until the acceptance grace period ends.", category: "Tunnel", level: .notice)
+		return true
+	}
 
+	/// Starts the VPN shutdown after the installation service has acknowledged
+	/// Aether's Install request and the grace period has elapsed.
+	@discardableResult
+	func stopSelfUpdateTunnelForHandoff() -> Bool {
+		guard tunnelMethod == .inApp, selfUpdateHandoffPending else { return false }
 		if state == .disconnected, !EmbeddedTunnelManager.shared.isRunning {
 			_log("Self-update handoff found the embedded VPN already stopped.", category: "Tunnel", level: .notice)
 			return true
 		}
 
-		// Issue stop before ending the continued task; iOS can suspend Aether as
-		// soon as that task is completed.
+		// Keep BGContinued active until this stop has been confirmed.
 		EmbeddedTunnelManager.shared.requestStopIfRunning()
 		// NetworkExtension's stop confirmation can take up to six seconds. Give
 		// this disconnect its own bounded window without changing connect timeouts.
 		setConnection(enabled: false, force: true, deadline: CACurrentMediaTime() + 7)
-		_log("Started embedded VPN shutdown for Aether self-update.", category: "Tunnel", level: .notice)
+		_log("Started embedded VPN shutdown for Aether self-update after service acceptance.", category: "Tunnel", level: .notice)
 		return true
 	}
 

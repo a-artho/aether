@@ -537,18 +537,29 @@ final class AppInstallationManager: ObservableObject {
 		}
 		let beforeInstallation: (@Sendable () async throws -> Void)?
 		let onInstallationCommandSent: (@MainActor @Sendable () -> Void)?
+		let onInstallationServiceAccepted: (@MainActor @Sendable () -> Void)?
 		if context.method == 1, appSnapshot.identifier == Bundle.main.bundleIdentifier {
 			beforeInstallation = { @MainActor [weak self] in
 				guard let self, self.installGeneration == generation else { throw CancellationError() }
 				try Task.checkCancellation()
 				self._recordSelfUpdateAttempt(for: appSnapshot)
 			}
-			onInstallationCommandSent = { [weak self] in
-				self?._handoffSelfUpdateAfterCommandSent(generation: generation)
+			if DeviceConnectionManager.shared.tunnelMethod == .inApp {
+				onInstallationCommandSent = nil
+				onInstallationServiceAccepted = { [weak self] in
+					self?._handoffSelfUpdateAfterServiceAccepted(generation: generation)
+				}
+			} else {
+				// Preserve LocalDevVPN's existing handoff timing and ownership.
+				onInstallationCommandSent = { [weak self] in
+					self?._handoffSelfUpdateAfterCommandSent(generation: generation)
+				}
+				onInstallationServiceAccepted = nil
 			}
 		} else {
 			beforeInstallation = nil
 			onInstallationCommandSent = nil
+			onInstallationServiceAccepted = nil
 		}
 		installTask = Task.detached { [weak self, appSnapshot] in
 			defer {
@@ -608,6 +619,7 @@ final class AppInstallationManager: ObservableObject {
 						at: packageUrl,
 						beforeInstallation: beforeInstallation,
 						onInstallationCommandSent: onInstallationCommandSent,
+						onInstallationServiceAccepted: onInstallationServiceAccepted,
 						diagnosticID: generation.uuidString,
 						diagnosticLog: diagnosticLog
 					)
@@ -760,42 +772,75 @@ final class AppInstallationManager: ObservableObject {
 		}
 		currentRequest?.selfUpdateAttempt = attempt
 		_persistInstallQueue()
-		_log("Starting self-install; waiting for the Install command to be sent before backgrounding. Target=\(attempt.targetVersion) build=\(attempt.targetBuild).", category: "Install", level: .notice)
+		_log("Starting self-install; selecting the handoff point from the active tunnel provider. Target=\(attempt.targetVersion) build=\(attempt.targetBuild).", category: "Install", level: .notice)
 	}
 
 	private func _handoffSelfUpdateAfterCommandSent(generation: UUID) {
 		guard installGeneration == generation, currentRequest?.method == 1,
 			currentRequest?.app.identifier == Bundle.main.bundleIdentifier,
 			case .installing = viewModel?.status else { return }
+		let connection = DeviceConnectionManager.shared
+		guard connection.tunnelMethod != .inApp else {
+			_log("Ignoring the command-flush handoff for In-App VPN; waiting for installation-service acceptance instead.", category: "Install", level: .warning)
+			return
+		}
 		if var attempt = currentRequest?.selfUpdateAttempt {
 			attempt.sentInstallationCommand = true
 			currentRequest?.selfUpdateAttempt = attempt
 			_persistInstallQueue()
 		}
-		let connection = DeviceConnectionManager.shared
-		guard connection.tunnelMethod == .inApp else {
-			// Preserve the existing LocalDevVPN self-install behavior. LocalDevVPN
-			// belongs to its own app and is deliberately outside this shutdown path.
-			_log("Self-install command flushed through LocalDevVPN; preserving its existing handoff behavior.", category: "Install", level: .notice)
-			if UIApplication.shared.applicationState != .background {
-				UIApplication.shared.perform(#selector(NSXPCConnection.suspend))
-			}
-			return
+		// LocalDevVPN is a separate app; preserve the existing post-flush suspend.
+		_log("Self-install command flushed through LocalDevVPN; preserving its existing handoff behavior.", category: "Install", level: .notice)
+		if UIApplication.shared.applicationState != .background {
+			UIApplication.shared.perform(#selector(NSXPCConnection.suspend))
+		}
+	}
+
+	private func _handoffSelfUpdateAfterServiceAccepted(generation: UUID) {
+		guard installGeneration == generation, currentRequest?.method == 1,
+			currentRequest?.app.identifier == Bundle.main.bundleIdentifier,
+			DeviceConnectionManager.shared.tunnelMethod == .inApp,
+			let status = viewModel?.status else { return }
+		switch status {
+		case .installing, .completed(.success): break
+		default: return
+		}
+		if var attempt = currentRequest?.selfUpdateAttempt {
+			attempt.markInstallationServiceAccepted()
+			currentRequest?.selfUpdateAttempt = attempt
+			_persistInstallQueue()
 		}
 
+		let connection = DeviceConnectionManager.shared
 		selfUpdateHandoffGeneration = generation
 		selfUpdateTunnelHandoffConfirmedGeneration = nil
 		selfUpdateTunnelHandoffFailureGeneration = nil
-		guard connection.beginSelfUpdateTunnelHandoff() else {
+		guard connection.prepareSelfUpdateTunnelHandoff() else {
 			selfUpdateHandoffGeneration = nil
-			_log("Self-install command flushed, but the embedded VPN handoff could not start.", category: "Install", level: .error)
+			selfUpdateTunnelHandoffFailureGeneration = generation
+			let error = NSError(domain: "Aether.SelfUpdate", code: 2,
+				userInfo: [NSLocalizedDescriptionKey: String.localized("Could not prepare Aether VPN shutdown. Retry the install.")])
+			lastErrorMessage = error.localizedDescription
+			viewModel?.status = .broken(error)
+			_log("Installation service accepted the self-update, but In-App VPN handoff preparation failed.", category: "Install", level: .error)
 			return
 		}
-		_log("Self-install command flushed; ending Aether's continued task and stopping its embedded VPN before suspension. Install acceptance remains unconfirmed.", category: "Install", level: .notice)
-		execution?.finishForHandoff()
-		execution = nil
+		_log("Installation service accepted Aether's self-update; keeping the background task and In-App VPN alive for a two-second grace period.", category: "Install", level: .notice)
 		Task { @MainActor [weak self, weak connection] in
-			guard let connection else { return }
+			do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
+			guard let connection, connection.isSelfUpdateTunnelHandoffPending,
+				let self, self.installGeneration == generation,
+				self.selfUpdateHandoffGeneration == generation else { return }
+			guard connection.stopSelfUpdateTunnelForHandoff() else {
+				connection.endSelfUpdateTunnelHandoff()
+				self.selfUpdateTunnelHandoffFailureGeneration = generation
+				let error = NSError(domain: "Aether.SelfUpdate", code: 3,
+					userInfo: [NSLocalizedDescriptionKey: String.localized("Could not stop Aether VPN. Retry the install.")])
+				self.lastErrorMessage = error.localizedDescription
+				self.viewModel?.status = .broken(error)
+				self._log("Could not start the embedded VPN shutdown after the two-second service-acceptance grace period.", category: "Install", level: .error)
+				return
+			}
 			let tunnelStopped = await connection.waitForSelfUpdateTunnelHandoff()
 			guard let self, self.installGeneration == generation,
 				self.selfUpdateHandoffGeneration == generation else { return }
@@ -817,7 +862,9 @@ final class AppInstallationManager: ObservableObject {
 				return
 			}
 			self.selfUpdateTunnelHandoffConfirmedGeneration = generation
-			self._log("Embedded VPN is disconnected; suspending Aether so iOS can replace it.", category: "Install", level: .notice)
+			self._log("Embedded VPN is disconnected; ending Aether's continued task and suspending so iOS can replace it.", category: "Install", level: .notice)
+			self.execution?.finishForHandoff()
+			self.execution = nil
 			if UIApplication.shared.applicationState != .background {
 				UIApplication.shared.perform(#selector(NSXPCConnection.suspend))
 			}
