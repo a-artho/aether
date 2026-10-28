@@ -15,14 +15,14 @@
       "version": "3.0.5",
       "versionDate": "2026-10-28T00:14:02Z",
       "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.5/Aether.ipa",
-      "size": 18272586,
+      "size": 18279000,
       "versionDescription": "# Aether 3.0.5\n\n- Make self-install handoff reliable by stopping Aether's in-app VPN before suspending for iOS to replace Aether.\n- Keep the special handoff limited to self-installs through In-App mode; normal installs and LocalDevVPN behavior remain unchanged.\n- Harden handoff callback ordering and foreground recovery with additional regression coverage.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
         {
           "version": "3.0.5",
           "date": "2026-10-28T00:14:02Z",
           "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.5/Aether.ipa",
-          "size": 18272586,
+          "size": 18279000,
           "localizedDescription": "# Aether 3.0.5\n\n- Make self-install handoff reliable by stopping Aether's in-app VPN before suspending for iOS to replace Aether.\n- Keep the special handoff limited to self-installs through In-App mode; normal installs and LocalDevVPN behavior remain unchanged.\n- Harden handoff callback ordering and foreground recovery with additional regression coverage.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
         },
         {
