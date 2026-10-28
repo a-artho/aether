@@ -40,9 +40,9 @@ enum AllReposIcon: String, CaseIterable, Identifiable {
 struct OverviewRowIcon: View {
 	enum Kind { case apps, repos }
 	let kind: Kind
-	@AppStorage("Aether.overviewIconStyle") private var style: OverviewIconStyle = .standalone
-	@AppStorage("Aether.allReposIcon") private var reposIcon: AllReposIcon = .appStore
-	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
+	@AppStorage("Aether.overviewIconStyle") private var style: OverviewIconStyle = .glass
+	@AppStorage("Aether.allReposIcon") private var reposIcon: AllReposIcon = .globe
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .medium
 	private var size: CGFloat { rowIconSize.points }
 	var body: some View {
 		symbol

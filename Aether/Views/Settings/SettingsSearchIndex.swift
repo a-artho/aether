@@ -60,7 +60,7 @@ enum SettingsSearchIndex {
 			("Title Weight", "page title section heading current bold semibold font"),
 			("Status on Navigation Bar", "updated refresh installed apps subtitle navigation"),
 			("Muted Page Titles", "gray secondary nested navigation title"), ("Dynamic Icons", "app light dark"),
-			("Tinted Icons", "app color colour"), ("Show Download Buttons", "repo sources chevron"),
+			("Show Download Buttons", "repo sources chevron"),
 			("Description Size", "sources rows description standard big description layout"),
 			("Standard", "sources description layout"), ("Large", "sources rows large description layout"),
 			("Haptics", "click feedback strength")

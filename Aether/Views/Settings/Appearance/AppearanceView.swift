@@ -13,26 +13,23 @@ import UIKit
 // dear god help me
 struct AppearanceView: View {
 	@AppStorage("Aether.rowHorizontalInset") private var _rowHorizontalInset: RowHorizontalInset = .standard
-	@AppStorage("Aether.rowIconSize") private var _rowIconSize: RowIconSize = .standard
-	@AppStorage("Aether.allReposIcon") private var _allReposIcon: AllReposIcon = .appStore
-	@AppStorage("Aether.overviewIconStyle") private var _overviewIconStyle: OverviewIconStyle = .standalone
-	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .sources
+	@AppStorage("Aether.rowIconSize") private var _rowIconSize: RowIconSize = .medium
+	@AppStorage("Aether.allReposIcon") private var _allReposIcon: AllReposIcon = .globe
+	@AppStorage("Aether.overviewIconStyle") private var _overviewIconStyle: OverviewIconStyle = .glass
+	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .library
 	@AppStorage("Aether.settingsRowIconStyle") private var _settingsRowIconStyle: SettingsRowIconStyle = .colored
 	@AppStorage("Aether.deviceControlsStyle") private var _deviceControlsStyle: DeviceControlsStyle = .standard
 	@AppStorage("Aether.actionButtonStyle") private var _actionButtonSurfaceStyle: NBButtonSurfaceStyle = .standard
-	@AppStorage("Aether.ambientBackgroundEnabled") private var _ambientBackgroundEnabled = false
+	@AppStorage("Aether.ambientBackgroundEnabled") private var _ambientBackgroundEnabled = true
 	@AppStorage("Aether.ambientBackgroundVerticalReach") private var _ambientBackgroundVerticalReach = 0.0
-	@AppStorage("Aether.mutedSectionHeaders") private var _mutedSectionHeaders = false
+	@AppStorage("Aether.mutedSectionHeaders") private var _mutedSectionHeaders = true
 	@AppStorage("Aether.userInterfaceStyle")
 	private var _userInterfaceStyle: Int = UIUserInterfaceStyle.unspecified.rawValue
 
-	@AppStorage("Aether.shouldTintIcons")
-	private var _shouldTintIcons: Bool = false
-
 	@AppStorage("Aether.searchPlacement")
 	private var _searchPlacement: SearchPlacement = .right
-	@AppStorage("Aether.pageTitlePlacement") private var _pageTitlePlacement: RootPageTitlePlacement = .center
-	@AppStorage("Aether.boldPageAndSectionTitles") private var _boldPageAndSectionTitles = false
+	@AppStorage("Aether.pageTitlePlacement") private var _pageTitlePlacement: RootPageTitlePlacement = .left
+	@AppStorage("Aether.boldPageAndSectionTitles") private var _boldPageAndSectionTitles = true
 	@AppStorage("Aether.statusUnderPageTitle") private var _statusUnderPageTitle = false
 	@AppStorage("Aether.mutedPageTitles") private var _mutedPageTitles = false
 
@@ -236,9 +233,6 @@ struct AppearanceView: View {
 			NBSection(.localized("Library")) {
 				Toggle(isOn: $_shouldChangeIconsBasedOffStyle) {
 					SettingsRowLabel(.localized("Dynamic Icons"), systemImage: "app.badge.fill", backgroundColor: .indigo)
-				}
-				Toggle(isOn: $_shouldTintIcons) {
-					SettingsRowLabel(.localized("Tinted Icons"), systemImage: "paintpalette.fill", backgroundColor: .purple)
 				}
 			}
 

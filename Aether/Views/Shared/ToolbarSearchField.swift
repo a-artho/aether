@@ -29,7 +29,7 @@ enum RootPageTitlePlacement: String, CaseIterable, Identifiable {
 /// Applies the native iOS 26 soft scroll-edge treatment to a navigation stack.
 struct FloatingNavigationAppearance: ViewModifier {
 	@AppStorage("Aether.mutedPageTitles") private var mutedPageTitles = false
-	@AppStorage("Aether.boldPageAndSectionTitles") private var boldPageAndSectionTitles = false
+	@AppStorage("Aether.boldPageAndSectionTitles") private var boldPageAndSectionTitles = true
 
 	func body(content: Content) -> some View {
 		content
@@ -158,8 +158,8 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	@State private var searchButtonAnchor: WindowFrameAnchor?
 	@State private var secondaryButtonAnchor: WindowFrameAnchor?
 	@AppStorage("Aether.searchPlacement") private var searchPlacement: SearchPlacement = .right
-	@AppStorage("Aether.pageTitlePlacement") private var pageTitlePlacement: RootPageTitlePlacement = .center
-	@AppStorage("Aether.boldPageAndSectionTitles") private var boldPageAndSectionTitles = false
+	@AppStorage("Aether.pageTitlePlacement") private var pageTitlePlacement: RootPageTitlePlacement = .left
+	@AppStorage("Aether.boldPageAndSectionTitles") private var boldPageAndSectionTitles = true
 	@AppStorage("Aether.statusUnderPageTitle") private var statusUnderPageTitle = false
 	@AppStorage("Aether.mutedPageTitles") private var mutedPageTitles = false
 

@@ -593,7 +593,7 @@ struct InstalledAppIconView: View {
 	let bundleIdentifier: String
 	let cacheVersion: String
 	let loadsIcon: Bool
-	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .medium
 	private var size: CGFloat { rowIconSize.points }
 	@State private var image: UIImage?
 	@State private var loadedIdentity: String?

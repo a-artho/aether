@@ -39,8 +39,8 @@ public final class HapticManager {
 	private init() {}
 
 	public var currentStrength: HapticStrength {
-		let raw = UserDefaults.standard.integer(forKey: Self.preferenceKey)
-		return HapticStrength(rawValue: raw) ?? .light
+		let raw = (UserDefaults.standard.object(forKey: Self.preferenceKey) as? NSNumber)?.intValue
+		return raw.flatMap(HapticStrength.init(rawValue:)) ?? .medium
 	}
 
 	public func impact(_ overrideStrength: HapticStrength? = nil) {

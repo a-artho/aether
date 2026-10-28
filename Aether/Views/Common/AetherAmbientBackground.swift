@@ -16,7 +16,7 @@ struct AetherAmbientBackground: View {
 		}
 	}
 
-	@AppStorage("Aether.ambientBackgroundEnabled") private var isEnabled = false
+	@AppStorage("Aether.ambientBackgroundEnabled") private var isEnabled = true
 	@AppStorage("Aether.ambientBackgroundVerticalReach") private var verticalReach = 0.0
 	@AppStorage("Aether.userTintColor") private var themeHex = "#848ef9"
 	@Environment(\.colorScheme) private var colorScheme

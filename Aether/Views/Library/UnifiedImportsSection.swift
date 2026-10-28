@@ -506,7 +506,7 @@ private struct SplitArtifactGroupDeleteAction: View {
 private struct SplitArtifactParentRow: View {
 	let group: SplitArtifactGroup
 	@ObservedObject private var installations = AppInstallationManager.shared
-	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .medium
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
 	private var entry: UnifiedImportEntry {
@@ -597,7 +597,7 @@ private struct UnifiedImportRow: View {
 	private var entry: UnifiedImportEntry { snapshot.reconciled(with: installations.installationCards) }
 	@ObservedObject var controller: UnifiedImportsController
 	@ObservedObject private var installations = AppInstallationManager.shared
-	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .medium
 	@State private var retainedIconURL: URL?
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 

@@ -10,11 +10,6 @@
 
 #define PrivClass(name) ((Class)objc_lookUpClass(#name))
 
-@interface IFColor : NSObject
-- (instancetype)initWithRed:(CGFloat)red green:(CGFloat)green blue:(CGFloat)blue alpha:(CGFloat)alpha;
-- (instancetype)initWithCGColor:(CGColorRef)color;
-@end
-
 @interface IFBundle : NSObject
 - (instancetype)initWithURL:(NSURL*)url;
 - (NSDictionary*)iconDictionary;
@@ -31,7 +26,6 @@
 @property (nonatomic, assign, readwrite) BOOL drawBorder;
 @property (atomic, assign, readwrite) BOOL ignoreCache;
 @property (nonatomic, assign) CGFloat scale;
-@property (nonatomic, strong, readwrite) IFColor *tintColor;
 @property (nonatomic, assign, readwrite) NSUInteger variantOptions;
 + (instancetype)imageDescriptorNamed:(NSString *)name;
 @end
@@ -202,17 +196,11 @@ UIImage* iconTest(NSURL *bundleURL, CGFloat displayScale, NSInteger interfaceSty
     descriptor.drawBorder = YES;
     descriptor.ignoreCache = YES;
     descriptor.scale = displayScale;
-	descriptor.tintColor =
-		[[PrivClass(IFColor) alloc]
-			initWithCGColor:FRCreateCGColorFromHex()];
-
     descriptor.variantOptions = 0;
     // 0 = light mode, 1 = dark mode
 //    descriptor.appearance = 0;
 	NSInteger style =
 		[NSUserDefaults.standardUserDefaults integerForKey:@"Aether.userInterfaceStyle"];
-	NSInteger variant =
-		[NSUserDefaults.standardUserDefaults integerForKey:@"Aether.shouldTintIcons"];
 	NSInteger lightDark =
 		[NSUserDefaults.standardUserDefaults integerForKey:@"Aether.shouldChangeIconsBasedOffStyle"];
 
@@ -228,8 +216,7 @@ UIImage* iconTest(NSURL *bundleURL, CGFloat displayScale, NSInteger interfaceSty
 		(style == UIUserInterfaceStyleDark) ? 1 : 0;
 	}
 
-    // 0 = normal, 2 = tinted mode, 3 = liquid glass (gray scale)
-    descriptor.appearanceVariant = (variant == 0) ? 0 : 2;
+    descriptor.appearanceVariant = 0;
     descriptor.specialIconOptions = 2;
 
     ISGenerationRequest* request = [[PrivClass(ISGenerationRequest) alloc] init];
@@ -239,39 +226,4 @@ UIImage* iconTest(NSURL *bundleURL, CGFloat displayScale, NSInteger interfaceSty
     CGImageRef imageRef = [ifImage CGImage];
     return [UIImage imageWithCGImage:imageRef];
 
-}
-
-static CGColorRef FRCreateCGColorFromHex(void) {
-	NSString *hex =
-		[NSUserDefaults.standardUserDefaults
-			stringForKey:@"Aether.userTintColor"];
-
-	if (hex.length == 0) {
-		return UIColor.systemGreenColor.CGColor;
-	}
-
-	NSString *sanitized =
-		[[hex stringByTrimmingCharactersInSet:
-			NSCharacterSet.whitespaceAndNewlineCharacterSet]
-			stringByReplacingOccurrencesOfString:@"#" withString:@""];
-
-	unsigned long long rgb = 0;
-	[[NSScanner scannerWithString:sanitized] scanHexLongLong:&rgb];
-
-	CGFloat r = 0, g = 0, b = 0, a = 1;
-
-	if (sanitized.length == 6) {
-		r = ((rgb & 0xFF0000) >> 16) / 255.0;
-		g = ((rgb & 0x00FF00) >> 8)  / 255.0;
-		b = (rgb & 0x0000FF) / 255.0;
-	} else if (sanitized.length == 8) {
-		r = ((rgb & 0xFF000000) >> 24) / 255.0;
-		g = ((rgb & 0x00FF0000) >> 16) / 255.0;
-		b = ((rgb & 0x0000FF00) >> 8)  / 255.0;
-		a = (rgb & 0x000000FF) / 255.0;
-	} else {
-		return UIColor.systemGreenColor.CGColor;
-	}
-
-	return [UIColor colorWithRed:r green:g blue:b alpha:a].CGColor;
 }

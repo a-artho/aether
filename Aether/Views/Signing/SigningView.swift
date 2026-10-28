@@ -11,7 +11,7 @@ import NimbleViews
 
 // MARK: - View
 struct SigningView: View {
-	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .medium
 	@Environment(\.dismiss) var dismiss
 	@Environment(\.scenePhase) private var scenePhase
 	@StateObject private var _optionsManager = OptionsManager.shared

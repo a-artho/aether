@@ -49,9 +49,9 @@ private actor FRIconRequests {
         var consumers: Set<UUID>
     }
     private var tasks: [String: Flight] = [:]
-    func image(url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, scale: CGFloat) async -> UIImage? {
+    func image(url: URL, appearance: FRIconAppearance, dynamic: Bool, scale: CGFloat) async -> UIImage? {
         guard !Task.isCancelled else { return nil }
-        let key = "\(url.path)|\(appearance.rawValue)|\(tint)|\(isTinted)|\(dynamic)|\(scale)"
+        let key = "\(url.path)|\(appearance.rawValue)|\(dynamic)|\(scale)"
         let consumer = UUID()
         let flight: Flight
         if var existing = tasks[key] {
@@ -66,8 +66,8 @@ private actor FRIconRequests {
                 await FRIconRenderGate.shared.release()
                 guard !Task.isCancelled else { return nil }
                 if let image {
-                    FRIconCache.shared.insert(image, for: url, appearance: appearance, tint: tint,
-                        isTinted: isTinted, dynamic: dynamic, displayScale: scale)
+                    FRIconCache.shared.insert(image, for: url, appearance: appearance,
+                        dynamic: dynamic, displayScale: scale)
                 }
                 return image
             }
@@ -109,19 +109,19 @@ final class FRIconCache: NSObject, @unchecked Sendable {
 		NotificationCenter.default.removeObserver(self)
 	}
 
-	private func key(url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat) -> NSString {
-		"\(url.path)#\(appearance.rawValue)#\(tint)#\(isTinted)#\(dynamic)#\(displayScale)" as NSString
+	private func key(url: URL, appearance: FRIconAppearance, dynamic: Bool, displayScale: CGFloat) -> NSString {
+		"\(url.path)#\(appearance.rawValue)#\(dynamic)#\(displayScale)" as NSString
 	}
 
-	func image(for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) -> UIImage? {
-		cache.object(forKey: key(url: url, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic, displayScale: displayScale))
+	func image(for url: URL, appearance: FRIconAppearance, dynamic: Bool, displayScale: CGFloat = 1) -> UIImage? {
+		cache.object(forKey: key(url: url, appearance: appearance, dynamic: dynamic, displayScale: displayScale))
 	}
 
-	func insert(_ image: UIImage, for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) {
+	func insert(_ image: UIImage, for url: URL, appearance: FRIconAppearance, dynamic: Bool, displayScale: CGFloat = 1) {
 		let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 1
 		cache.setObject(
 			image,
-			forKey: key(url: url, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic, displayScale: displayScale),
+			forKey: key(url: url, appearance: appearance, dynamic: dynamic, displayScale: displayScale),
 			cost: cost
 		)
 	}
@@ -138,12 +138,12 @@ final class FRAppIconLoader: ObservableObject {
 	private var task: Task<Void, Never>?
 	private var generation = UUID()
 
-	func load(bundleURL: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1, retainsPreviousImage: Bool = false) {
+	func load(bundleURL: URL, appearance: FRIconAppearance, dynamic: Bool, displayScale: CGFloat = 1, retainsPreviousImage: Bool = false) {
 		task?.cancel()
 		task = nil
 		generation = UUID()
 		let generation = self.generation
-		if let cached = FRIconCache.shared.image(for: bundleURL, appearance: appearance, tint: tint, isTinted: isTinted, dynamic: dynamic, displayScale: displayScale) {
+		if let cached = FRIconCache.shared.image(for: bundleURL, appearance: appearance, dynamic: dynamic, displayScale: displayScale) {
 			isLoading = false
 			self.image = cached
 			return
@@ -153,7 +153,7 @@ final class FRAppIconLoader: ObservableObject {
 		isLoading = true
 		task = Task.detached(priority: .userInitiated) { [weak self] in
             let generated = await FRIconRequests.shared.image(url: bundleURL, appearance: appearance,
-                tint: tint, isTinted: isTinted, dynamic: dynamic, scale: displayScale)
+				 dynamic: dynamic, scale: displayScale)
 			guard !Task.isCancelled else { return }
 
 			await MainActor.run { [weak self] in
@@ -189,8 +189,6 @@ struct FRAppIconView: View {
 	@Environment(\.colorScheme) private var colorScheme
 	@StateObject private var loader = FRAppIconLoader()
 	
-	@AppStorage("Aether.userTintColor") private var selectedColorHex: String = "#848ef9"
-	@AppStorage("Aether.shouldTintIcons") private var shouldTintIcons: Bool = false
 	@AppStorage("Aether.shouldChangeIconsBasedOffStyle") private var shouldChangeIconsBasedOffStyle: Bool = false
 	
 	init(app: AppInfoPresentable? = nil, size: CGFloat = 87, remoteIconURL: URL? = nil, usesDefaultApp: Bool = true, retainsPreviousImage: Bool = false) {
@@ -230,7 +228,7 @@ struct FRAppIconView: View {
 		// Fade the initial placeholder handoff, not each new render of an
 		// already-visible icon when signing changes the artifact's identity.
 		.animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: loader.image != nil)
-		.task(id: "\(app?.uuid ?? "")|\(app?.isSigned ?? false)|\(appearance.rawValue)\(selectedColorHex)\(shouldTintIcons)\(shouldChangeIconsBasedOffStyle)\(displayScale)") {
+		.task(id: "\(app?.uuid ?? "")|\(app?.isSigned ?? false)|\(appearance.rawValue)\(shouldChangeIconsBasedOffStyle)\(displayScale)") {
 			await _load()
 		}
 		.onDisappear {
@@ -259,8 +257,6 @@ struct FRAppIconView: View {
 		loader.load(
 			bundleURL: bundleURL,
 			appearance: appearance,
-			tint: selectedColorHex,
-			isTinted: shouldTintIcons,
 			dynamic: shouldChangeIconsBasedOffStyle,
 			displayScale: displayScale,
 			retainsPreviousImage: retainsPreviousImage

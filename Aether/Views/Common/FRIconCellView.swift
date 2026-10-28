@@ -13,7 +13,7 @@ import NimbleViews
 // MARK: - View
 struct FRIconCellView<Subtitle: View>: View {
 	@Environment(\.displayScale) private var displayScale
-	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .medium
 	var title: String
 	var subtitleView: Subtitle
 	var badgeURL: URL? = nil

@@ -42,7 +42,7 @@ private final class SourceAppTableCell: UITableViewCell {
 
 /// Uses the same hosting margins, typography and native section layout as real rows.
 private struct SourceAppsSkeletonRow: View {
-	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .standard
+	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .medium
 	@AppStorage("Aether.storeCellAppearance") private var appearance = 0
 	var showsDownloadButton: Bool
 	private func skeletonBar(width: CGFloat, height: CGFloat) -> some View {

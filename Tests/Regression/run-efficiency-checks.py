@@ -33,8 +33,8 @@ source += r'''
 enum FRIconAppearance: Int { case light, dark }
 final class UIImage: @unchecked Sendable { let id: String; init(_ id: String) {self.id=id} }
 final class FRIconCache { static let shared = FRIconCache(); var images: [String:UIImage]=[:]
- func image(for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) -> UIImage? {images[url.path]}
- func insert(_ image: UIImage, for url: URL, appearance: FRIconAppearance, tint: String, isTinted: Bool, dynamic: Bool, displayScale: CGFloat = 1) {images[url.path]=image}
+ func image(for url: URL, appearance: FRIconAppearance, dynamic: Bool, displayScale: CGFloat = 1) -> UIImage? {images[url.path]}
+ func insert(_ image: UIImage, for url: URL, appearance: FRIconAppearance, dynamic: Bool, displayScale: CGFloat = 1) {images[url.path]=image}
 }
 func iconTest(_ url: URL, _ scale: CGFloat, _ style: Int) -> UIImage? { Thread.sleep(forTimeInterval: 0.08); return url.path == "/missing" ? nil : UIImage(url.path) }
 '''
@@ -197,13 +197,13 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
   check(stale.rows.isEmpty,"Stale UI context cannot repopulate deleted projections")
   let loader=FRAppIconLoader(), old=URL(fileURLWithPath:"/old"), fresh=URL(fileURLWithPath:"/fresh")
   FRIconCache.shared.images[fresh.path]=UIImage("fresh")
-  loader.load(bundleURL:old,appearance:.light,tint:"",isTinted:false,dynamic:false)
+  loader.load(bundleURL:old,appearance:.light,dynamic:false)
   try await Task.sleep(nanoseconds:10_000_000)
-  loader.load(bundleURL:fresh,appearance:.dark,tint:"",isTinted:false,dynamic:false)
+  loader.load(bundleURL:fresh,appearance:.dark,dynamic:false)
   try await Task.sleep(nanoseconds:150_000_000)
   check(loader.image?.id == "fresh","Old renderer cannot overwrite newer cached icon")
   check(!loader.isLoading,"Cached icon must not keep loading skeleton active")
-  loader.load(bundleURL:URL(fileURLWithPath:"/missing"),appearance:.light,tint:"",isTinted:false,dynamic:false,retainsPreviousImage:true)
+  loader.load(bundleURL:URL(fileURLWithPath:"/missing"),appearance:.light,dynamic:false,retainsPreviousImage:true)
   check(loader.image?.id == "fresh","Handoff retains the previous icon while rendering")
   // CI scheduling can exceed the renderer's nominal duration. Observe actual
   // completion with a bounded timeout rather than assuming a 150ms deadline.
@@ -213,7 +213,7 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
   }
   check(loader.image?.id == "fresh" && !loader.isLoading,"Failed handoff render preserves the previous icon and stops loading")
   let missing=FRAppIconLoader()
-  missing.load(bundleURL:URL(fileURLWithPath:"/missing"),appearance:.light,tint:"",isTinted:false,dynamic:false)
+  missing.load(bundleURL:URL(fileURLWithPath:"/missing"),appearance:.light,dynamic:false)
   check(missing.isLoading,"Uncached icon should expose loading state")
   // Wait for the renderer completion callback instead of relying on a fixed
   // 150ms delay; busy CI runners can defer MainActor delivery past that point.
@@ -222,13 +222,13 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
    try await Task.sleep(nanoseconds:10_000_000)
   }
   check(!missing.isLoading && missing.image == nil,"Failed render must stop loading animation")
-  missing.load(bundleURL:old,appearance:.light,tint:"new-key",isTinted:false,dynamic:false)
+  missing.load(bundleURL:old,appearance:.light,dynamic:false)
   missing.cancel()
   check(!missing.isLoading,"Offscreen cancellation must stop loading animation")
   let sharedURL=URL(fileURLWithPath:"/shared-render")
   let one=FRAppIconLoader(), two=FRAppIconLoader()
-  one.load(bundleURL:sharedURL,appearance:.light,tint:"shared",isTinted:false,dynamic:false)
-  two.load(bundleURL:sharedURL,appearance:.light,tint:"shared",isTinted:false,dynamic:false)
+  one.load(bundleURL:sharedURL,appearance:.light,dynamic:false)
+  two.load(bundleURL:sharedURL,appearance:.light,dynamic:false)
   try await Task.sleep(nanoseconds:20_000_000)
   one.cancel()
   try await Task.sleep(nanoseconds:250_000_000)

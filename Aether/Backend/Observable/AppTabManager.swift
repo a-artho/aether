@@ -50,7 +50,7 @@ final class AppTabManager: ObservableObject {
 
 	private init() {
 		// Read once for a cold launch. Foregrounding and preference changes do not reset navigation.
-		let launchTab = LaunchTab(rawValue: UserDefaults.standard.string(forKey: "Aether.launchTab") ?? "") ?? .sources
+		let launchTab = LaunchTab(rawValue: UserDefaults.standard.string(forKey: "Aether.launchTab") ?? "") ?? .library
 		selectedTab = launchTab.tab
 	}
 

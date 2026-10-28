@@ -11,7 +11,7 @@ import NukeUI
 
 // MARK: - View
 struct SourcesCellView: View {
-	@AppStorage("Aether.overviewIconStyle") private var overviewIconStyle: OverviewIconStyle = .standalone
+	@AppStorage("Aether.overviewIconStyle") private var overviewIconStyle: OverviewIconStyle = .glass
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	
 	var source: AltSource

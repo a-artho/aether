@@ -8,7 +8,7 @@ public extension View {
 }
 
 private struct NBSectionHeaderColor: ViewModifier {
-	@AppStorage("Aether.mutedSectionHeaders") private var muted = false
+	@AppStorage("Aether.mutedSectionHeaders") private var muted = true
 
 	func body(content: Content) -> some View {
 		content.foregroundStyle(muted ? Color.secondary : Color.primary)
