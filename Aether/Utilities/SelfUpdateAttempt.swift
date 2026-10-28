@@ -9,12 +9,8 @@ struct SelfUpdateAttempt: Codable, Sendable {
 	let targetVersion: String
 	let targetBuild: String
 	var sentInstallationCommand: Bool?
-	// Persisted by earlier builds; a service response also proves transmission.
+	// Retained so attempts written by older builds still decode and recover.
 	private var receivedInstallationResponse: Bool?
-
-	mutating func markInstallationServiceAccepted() {
-		receivedInstallationResponse = true
-	}
 
 	init?(runningInfo: [String: Any], targetInfo: [String: Any]) {
 		func value(_ info: [String: Any], _ key: String) -> String? {

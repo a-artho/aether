@@ -37,7 +37,7 @@ Write records reuse their allocation, AES key schedule and pre-keyed HMAC state.
 
 ## Self-install command handoff
 
-`self-install-handoff.patch` keeps two distinct FFI signals. LocalDevVPN self-installs retain the existing hook after the Install command is fully written and flushed. In-App VPN self-installs use a separate hook after installation_proxy returns its first valid, non-error `Status` or `PercentComplete` response. Aether then keeps the background task and VPN alive for two seconds, requests tunnel shutdown, waits for confirmed disconnection, and only then ends the task and suspends. A service response proves acceptance, not installation completion. Regular installs do not use either handoff; LocalDevVPN keeps its existing timing.
+`self-install-handoff.patch` reports when the Install command has been fully written and flushed, without waiting for installation_proxy progress or a reply. LocalDevVPN self-installs retain their existing post-flush suspension. In-App VPN self-installs keep the background task and VPN alive for four seconds after the flush, then request tunnel shutdown, wait for confirmed disconnection, and only then end the task and suspend. Regular installs do not trigger either self-update handoff.
 
 ## Bounded RSD recovery
 

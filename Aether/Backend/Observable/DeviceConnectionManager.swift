@@ -871,12 +871,12 @@ public final class DeviceConnectionManager: ObservableObject {
 		appRefreshConnectionTask = nil
 		appRefreshConnectionID = nil
 		_cancelReconciliation()
-		_log("Prepared the embedded VPN for Aether self-update; tunnel shutdown is deferred until the acceptance grace period ends.", category: "Tunnel", level: .notice)
+		_log("Prepared the embedded VPN for Aether self-update; tunnel shutdown is deferred until the four-second command-flush grace period ends.", category: "Tunnel", level: .notice)
 		return true
 	}
 
-	/// Starts the VPN shutdown after the installation service has acknowledged
-	/// Aether's Install request and the grace period has elapsed.
+	/// Starts VPN shutdown after Aether's Install command has been flushed and
+	/// the command-flush grace period has elapsed.
 	@discardableResult
 	func stopSelfUpdateTunnelForHandoff() -> Bool {
 		guard tunnelMethod == .inApp, selfUpdateHandoffPending else { return false }
@@ -890,7 +890,7 @@ public final class DeviceConnectionManager: ObservableObject {
 		// NetworkExtension's stop confirmation can take up to six seconds. Give
 		// this disconnect its own bounded window without changing connect timeouts.
 		setConnection(enabled: false, force: true, deadline: CACurrentMediaTime() + 7)
-		_log("Started embedded VPN shutdown for Aether self-update after service acceptance.", category: "Tunnel", level: .notice)
+		_log("Started embedded VPN shutdown for Aether self-update after the command-flush grace period.", category: "Tunnel", level: .notice)
 		return true
 	}
 

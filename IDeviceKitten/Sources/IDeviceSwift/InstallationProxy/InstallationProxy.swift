@@ -57,26 +57,22 @@ private final class UploadProgressContext {
  }
 }
 
-/// Progress is independent of self-install handoff signals. A signal queued to
-/// the main actor is delivered even if native completion races its delivery.
+/// Progress is independent of the self-install command signal. A signal queued
+/// to the main actor is delivered even if native completion races its delivery.
 private final class InstallationProgressContext: @unchecked Sendable {
-	private enum HandoffSignal: Hashable, Sendable { case commandSent, serviceAccepted }
 	private let lock = NSLock()
 	private let publisher: UploadProgressPublisher
 	private let onCommandSent: (@MainActor @Sendable () -> Void)?
-	private let onServiceAccepted: (@MainActor @Sendable () -> Void)?
-	private var scheduledSignals = Set<HandoffSignal>()
-	private var deliveredSignals = Set<HandoffSignal>()
+	private var commandSentScheduled = false
+	private var commandSentDelivered = false
 	private var closed = false
 
 	init(
 		publisher: UploadProgressPublisher,
-		onCommandSent: (@MainActor @Sendable () -> Void)?,
-		onServiceAccepted: (@MainActor @Sendable () -> Void)?
+		onCommandSent: (@MainActor @Sendable () -> Void)?
 	) {
 		self.publisher = publisher
 		self.onCommandSent = onCommandSent
-		self.onServiceAccepted = onServiceAccepted
 	}
 
 	func report(_ progress: UInt64) {
@@ -84,33 +80,22 @@ private final class InstallationProgressContext: @unchecked Sendable {
 	}
 
 	func commandSent() {
-		schedule(.commandSent)
-	}
-
-	func serviceAccepted() {
-		schedule(.serviceAccepted)
-	}
-
-	private func schedule(_ signal: HandoffSignal) {
-		let hasHandler = signal == .commandSent ? onCommandSent != nil : onServiceAccepted != nil
 		lock.lock()
-		let shouldSchedule = !closed && hasHandler
-			&& !scheduledSignals.contains(signal) && !deliveredSignals.contains(signal)
-		if shouldSchedule { scheduledSignals.insert(signal) }
+		let shouldSchedule = !closed && onCommandSent != nil
+			&& !commandSentScheduled && !commandSentDelivered
+		if shouldSchedule { commandSentScheduled = true }
 		lock.unlock()
-		if shouldSchedule { DispatchQueue.main.async { [self] in deliver(signal) } }
+		if shouldSchedule { DispatchQueue.main.async { [self] in deliverCommandSent() } }
 	}
 
-	@MainActor private func deliver(_ signal: HandoffSignal) {
+	@MainActor private func deliverCommandSent() {
 		lock.lock()
-		let shouldDeliver = scheduledSignals.remove(signal) != nil && !deliveredSignals.contains(signal)
-		if shouldDeliver { deliveredSignals.insert(signal) }
+		let shouldDeliver = commandSentScheduled && !commandSentDelivered
+		commandSentScheduled = false
+		if shouldDeliver { commandSentDelivered = true }
 		lock.unlock()
 		guard shouldDeliver else { return }
-		switch signal {
-		case .commandSent: onCommandSent?()
-		case .serviceAccepted: onServiceAccepted?()
-		}
+		onCommandSent?()
 	}
 
 	func cancel() {
@@ -138,7 +123,6 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		at url: URL,
 		beforeInstallation: (@Sendable () async throws -> Void)? = nil,
 		onInstallationCommandSent: (@MainActor @Sendable () -> Void)? = nil,
-		onInstallationServiceAccepted: (@MainActor @Sendable () -> Void)? = nil,
 		diagnosticID: String? = nil,
 		diagnosticLog: (@Sendable (String) -> Void)? = nil
 	) async throws {
@@ -158,8 +142,7 @@ public class InstallationProxy: Identifiable, ObservableObject {
 			self?.viewModel.installProgress = value
 		}
 		let installationContext = InstallationProgressContext(publisher: installationProgressPublisher,
-			onCommandSent: onInstallationCommandSent,
-			onServiceAccepted: onInstallationServiceAccepted)
+			onCommandSent: onInstallationCommandSent)
 		defer { progressPublisher.cancel(); installationProgressPublisher.cancel(); installationContext.cancel() }
 		let worker = Task.detached(priority: .utility) {
 			// Native handles belong exclusively to this worker and its cleanup.
@@ -297,16 +280,6 @@ public class InstallationProxy: Identifiable, ObservableObject {
 				let context = Unmanaged.passUnretained(installationContext).toOpaque()
 
 				return withExtendedLifetime(installationContext) {
-					if onInstallationServiceAccepted != nil {
-						return installation_proxy_install_with_acceptance(
-							installproxy,
-							cString,
-							nil, // options
-							Self._installationProgressCallback,
-							context,
-							Self._installationServiceAcceptedCallback
-						)
-					}
 					return installation_proxy_install_with_handoff(
 						installproxy,
 						cString,
@@ -353,21 +326,12 @@ public class InstallationProxy: Identifiable, ObservableObject {
 		Unmanaged<UploadProgressContext>.fromOpaque(context).takeUnretainedValue().report(bytes)
 	}
 
-	// LocalDevVPN self-install keeps its existing post-flush handoff behavior.
+	// Self-install handoff begins after the native Install command is flushed.
 	nonisolated static private let _installationCommandSentCallback: @convention(c) (
 		UnsafeMutableRawPointer?
 	) -> Void = { context in
 		guard let context else { return }
 		Unmanaged<InstallationProgressContext>.fromOpaque(context).takeUnretainedValue().commandSent()
-	}
-
-	// In-App self-install invokes this only after installation_proxy returns a
-	// valid, non-error response to the Install command.
-	nonisolated static private let _installationServiceAcceptedCallback: @convention(c) (
-		UnsafeMutableRawPointer?
-	) -> Void = { context in
-		guard let context else { return }
-		Unmanaged<InstallationProgressContext>.fromOpaque(context).takeUnretainedValue().serviceAccepted()
 	}
 
 	nonisolated static private let _installationProgressCallback: @convention(c) (
