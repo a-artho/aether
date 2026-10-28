@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AetherPrimaryPreview.imageset/AetherPrimaryPreview.png",
-      "version": "3.0.7",
-      "versionDate": "2026-10-28T19:05:32Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.7/Aether.ipa",
-      "size": 25217088,
-      "versionDescription": "# Aether 3.0.7\n\n- Add Aether Glass v1 and v2 as alternate app icons.\n- Improve the Glass appearance for Settings cards and prevent Glass card rows from triggering unintended navigation.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.8",
+      "versionDate": "2026-10-28T20:29:31Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.8/Aether.ipa",
+      "size": 19643056,
+      "versionDescription": "# Aether 3.0.8\n\n- Fix navigation when opening grouped Glass Settings cards.\n- Update the default appearance, launch tab, title style, and haptic strength.\n- Remove the Tinted Icons setting and the Aether Glass v1/v2 app icon choices.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.8",
+          "date": "2026-10-28T20:29:31Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.8/Aether.ipa",
+          "size": 19643056,
+          "localizedDescription": "# Aether 3.0.8\n\n- Fix navigation when opening grouped Glass Settings cards.\n- Update the default appearance, launch tab, title style, and haptic strength.\n- Remove the Tinted Icons setting and the Aether Glass v1/v2 app icon choices.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.7",
           "date": "2026-10-28T19:05:32Z",
