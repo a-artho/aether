@@ -32,7 +32,7 @@ public extension EnvironmentValues {
 }
 
 // Row bounds describe a shared card without putting multiple controls in one Form row.
-private struct NBSettingsCardBounds {
+private struct NBSettingsCardBounds: @unchecked Sendable {
 	let sectionID: AnyHashable
 	let bounds: Anchor<CGRect>
 }
