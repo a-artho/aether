@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AppIcon.appiconset/aether.png",
-      "version": "3.0.5",
-      "versionDate": "2026-10-28T00:14:02Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.5/Aether.ipa",
-      "size": 18272816,
-      "versionDescription": "# Aether 3.0.5\n\n- For an In-App VPN self-update, wait four seconds after the Install command is flushed, then stop the VPN and confirm disconnection before ending background work and suspending for iOS to replace Aether.\n- Do not wait for an installation-service reply before beginning the self-update handoff; tolerate iOS interrupting Aether's background task during the grace period.\n- Keep the special handoff limited to self-installs through In-App mode; normal installs and LocalDevVPN behavior remain unchanged.\n- Keep same-build reinstall recovery and foreground verification for inconclusive outcomes.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.6",
+      "versionDate": "2026-10-28T16:48:00Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.6/Aether.ipa",
+      "size": 18272822,
+      "versionDescription": "# Aether 3.0.6\n\n- Fix the In-App VPN self-update handoff: keep the tunnel and background task alive for four seconds after the install command is flushed, then disconnect the tunnel before suspending Aether.\n- Handle iOS interrupting the continued background task during that grace period without abandoning the scheduled handoff.\n- Keep this behavior limited to self-updates through In-App VPN; normal installs and LocalDevVPN remain unchanged.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.6",
+          "date": "2026-10-28T16:48:00Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.6/Aether.ipa",
+          "size": 18272822,
+          "localizedDescription": "# Aether 3.0.6\n\n- Fix the In-App VPN self-update handoff: keep the tunnel and background task alive for four seconds after the install command is flushed, then disconnect the tunnel before suspending Aether.\n- Handle iOS interrupting the continued background task during that grace period without abandoning the scheduled handoff.\n- Keep this behavior limited to self-updates through In-App VPN; normal installs and LocalDevVPN remain unchanged.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.5",
           "date": "2026-10-28T00:14:02Z",
