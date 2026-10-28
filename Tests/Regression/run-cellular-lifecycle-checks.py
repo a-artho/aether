@@ -61,6 +61,13 @@ enum DebugLogItem {enum Level {case info,notice,warning}}
 checks = r'''
 @main struct Checks {
  @MainActor static func drain() async {for _ in 0..<100{await Task.yield()}}
+ @MainActor static func waitUntil(_ condition: @MainActor () -> Bool) async -> Bool {
+  let deadline=ProcessInfo.processInfo.systemUptime+1
+  while !condition() && ProcessInfo.processInfo.systemUptime < deadline {
+   try? await Task.sleep(for:.milliseconds(5))
+  }
+  return condition()
+ }
  @MainActor static func reset() {
   preferences.removePersistentDomain(forName:suite)
   CellularAssistManager.shared.requestEnabled(false)
@@ -90,8 +97,8 @@ checks = r'''
   reset();cellular.requestEnabled(true)
   precondition(cellular.isBusy)
   cellular.handleApplicationDidBecomeActive()
-  try await Task.sleep(for:.milliseconds(50))
-  precondition(!cellular.isBusy && !cellular.isEnabled,"An abandoned helper probe cannot block connection forever")
+  let probeSettled=await waitUntil{!cellular.isBusy}
+  precondition(probeSettled && !cellular.isEnabled,"An abandoned helper probe cannot block connection forever")
   let lostProbeOpens=UIApplication.shared.requests.count
   cellular.handleApplicationDidBecomeActive();await drain()
   precondition(UIApplication.shared.requests.count==lostProbeOpens,"Lost verification is terminal until explicit retry")
@@ -131,10 +138,10 @@ checks = r'''
   callback("AETHER_CELLULAR_HELPER_V1_OFF");await drain()
   DeviceConnectionManager.shared.complete(true);await drain()
   cellular.handleApplicationDidBecomeActive()
-  try await Task.sleep(for:.milliseconds(50))
+  let restoreSettled=await waitUntil{!cellular.isBusy}
   let lostRestoreOpens=UIApplication.shared.requests.count
   cellular.handleApplicationDidBecomeActive();await drain()
-  precondition(!cellular.isBusy && UIApplication.shared.requests.count==lostRestoreOpens,"A missing data-on callback cannot create a restore loop")
+  precondition(restoreSettled && UIApplication.shared.requests.count==lostRestoreOpens,"A missing data-on callback cannot create a restore loop")
   precondition(preferences.bool(forKey:"Aether.cellularAssistNeedsDataRestore"))
 
   reset();enable()
