@@ -829,10 +829,11 @@ final class AppInstallationManager: ObservableObject {
 		Task { @MainActor [weak self, weak connection] in
 			do { try await Task.sleep(nanoseconds: 2_000_000_000) } catch { return }
 			guard let connection, connection.isSelfUpdateTunnelHandoffPending,
-				let self, self.installGeneration == generation,
-				self.selfUpdateHandoffGeneration == generation else { return }
+				self?.installGeneration == generation,
+				self?.selfUpdateHandoffGeneration == generation else { return }
 			guard connection.stopSelfUpdateTunnelForHandoff() else {
 				connection.endSelfUpdateTunnelHandoff()
+				guard let self else { return }
 				self.selfUpdateTunnelHandoffFailureGeneration = generation
 				let error = NSError(domain: "Aether.SelfUpdate", code: 3,
 					userInfo: [NSLocalizedDescriptionKey: String.localized("Could not stop Aether VPN. Retry the install.")])
