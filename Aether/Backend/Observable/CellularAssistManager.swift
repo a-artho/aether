@@ -102,6 +102,13 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 
 	public func requestEnabled(_ enabled: Bool) {
 		guard enabled else {
+			// Disabling the preference must preserve an already-issued ON command
+			// and its callback identity until Mobile Data restoration is confirmed.
+			if activeCommand == .on, operationID != nil {
+				isEnabled = false
+				UserDefaults.standard.set(false, forKey: Self.enabledKey)
+				return
+			}
 			_cancelHelperSetup()
 			return
 		}
@@ -327,8 +334,8 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 		}
 	}
 
-	/// Re-arm only for an explicit Local-mode reconnect. Ordinary NWPath events
-	/// must not restart a just-finished Cellular Assist cycle.
+	/// Re-arm for an explicit reconnect or a new connection after idle shutdown.
+	/// Ordinary NWPath events must not restart a just-finished recovery cycle.
 	public func rearmAutomaticRecovery() {
 		guard automaticRecoveryEpisode != .active else { return }
 		if case .failed = state { state = .idle }

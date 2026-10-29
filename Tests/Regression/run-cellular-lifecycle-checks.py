@@ -180,6 +180,24 @@ checks = r'''
   precondition(cellular.state == .idle && !preferences.bool(forKey:"Aether.cellularAssistNeedsDataRestore"))
   precondition(!cellular.beginBootstrapIfPossible(cellularOnly:true,tunnelIsRunning:true),"A completed recovery episode cannot immediately run OFF again")
 
+  // A new idle reconnect gets one fresh cycle; ordinary activation does not.
+  cellular.rearmAutomaticRecovery()
+  precondition(cellular.beginBootstrapIfPossible(cellularOnly:true,tunnelIsRunning:true),
+   "A new connection episode can use Cellular Assist after the prior episode completed")
+  cellular.cancelAndRestoreIfNeeded();callback("AETHER_CELLULAR_HELPER_V1_ON")
+
+  reset();enable()
+  _=cellular.beginBootstrapIfPossible(cellularOnly:true,tunnelIsRunning:true)
+  callback("AETHER_CELLULAR_HELPER_V1_OFF");await drain()
+  DeviceConnectionManager.shared.complete(true);await drain()
+  let beforeDisable=UIApplication.shared.requests.count
+  cellular.requestEnabled(false);cellular.requestEnabled(false)
+  precondition(!cellular.isEnabled && cellular.state == .restoringData && UIApplication.shared.requests.count==beforeDisable,
+   "Disabling the preference joins the current ON command without replacing its callback")
+  callback("AETHER_CELLULAR_HELPER_V1_ON")
+  precondition(!preferences.bool(forKey:"Aether.cellularAssistNeedsDataRestore") && !cellular.isBusy && !cellular.isEnabled,
+   "The original ON callback still clears restoration debt after the feature is disabled")
+
   // Repeated foreground notifications must not push the grace deadline back.
   reset();cellular.requestEnabled(true)
   cellular.handleApplicationDidBecomeActive()

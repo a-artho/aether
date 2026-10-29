@@ -2,17 +2,43 @@ import Foundation
 import Combine
 import AltSourceKit
 
+/// An exact catalog release, scoped to the installed app whose update was skipped.
+/// New versions, builds, URLs, and source variants remain eligible for updates.
+struct SkippedAppUpdate: Codable, Hashable, Sendable {
+	let repositoryURL: URL
+	let appIdentifier: String
+	let version: String
+	let build: String?
+	let downloadURL: URL
+
+	init?(context: SourceAppCatalogContext, app: ASRepository.App) {
+		guard let repositoryURL = context.sourceURL, let appIdentifier = app.id,
+			let version = app.currentVersion, let downloadURL = app.currentDownloadUrl else { return nil }
+		self.repositoryURL = repositoryURL
+		self.appIdentifier = appIdentifier
+		self.version = version
+		self.build = app.currentAppVersion?.build
+		self.downloadURL = downloadURL
+	}
+}
+
 /// Preferences apply to the installed app, including all source/tweak variants.
 @MainActor
 final class IgnoredAppUpdates: ObservableObject {
 	static let shared = IgnoredAppUpdates()
 	private static let key = "Aether.ignoredUpdateBundleIdentifiers"
+	private static let skippedKey = "Aether.skippedAppUpdateReleases"
 	private let defaults: UserDefaults
 	@Published private(set) var identifiers: Set<String>
+	@Published private(set) var skippedReleases: [String: Set<SkippedAppUpdate>]
+
+	var hasIgnoredUpdates: Bool { !identifiers.isEmpty || !skippedReleases.isEmpty }
 
 	init(defaults: UserDefaults = .standard) {
 		self.defaults = defaults
 		identifiers = Set(defaults.stringArray(forKey: Self.key) ?? [])
+		skippedReleases = defaults.data(forKey: Self.skippedKey)
+			.flatMap { try? JSONDecoder().decode([String: Set<SkippedAppUpdate>].self, from: $0) } ?? [:]
 	}
 
 	func ignore(_ identifier: String) {
@@ -20,9 +46,51 @@ final class IgnoredAppUpdates: ObservableObject {
 		defaults.set(identifiers.sorted(), forKey: Self.key)
 	}
 
+	/// Capture the releases offered when the user opens Ignore. A release arriving
+	/// during the dialog or a later source refresh must not be skipped implicitly.
+	func skipCurrentUpdates(for identifier: String, contexts: [SourceAppCatalogContext]) {
+		guard !identifier.isEmpty else { return }
+		let releases = Set(contexts.flatMap { context in
+			context.repository.apps.compactMap { SkippedAppUpdate(context: context, app: $0) }
+		})
+		guard !releases.isEmpty else { return }
+		var next = skippedReleases
+		next[identifier, default: []].formUnion(releases)
+		guard next != skippedReleases, let data = try? JSONEncoder().encode(next) else { return }
+		defaults.set(data, forKey: Self.skippedKey)
+		skippedReleases = next
+	}
+
+	/// Keep matching caches intact; filter presentation against live preferences.
+	/// All entry points (row, latest-version label, and release list) use this view.
+	func visibleUpdates(for identifier: String, in contexts: [SourceAppCatalogContext]) -> [SourceAppCatalogContext] {
+		guard !identifiers.contains(identifier) else { return [] }
+		guard let skipped = skippedReleases[identifier], !skipped.isEmpty else { return contexts }
+		return contexts.compactMap { context -> SourceAppCatalogContext? in
+			var repository = context.repository
+			repository.apps = repository.apps.filter { app in
+				guard let release = SkippedAppUpdate(context: context, app: app) else { return true }
+				return !skipped.contains(release)
+			}
+			guard !repository.apps.isEmpty else { return nil }
+			guard repository.apps.count != context.repository.apps.count else { return context }
+			// SourceAppCatalogContext equality and the update list's grouping cache
+			// use revision, so a changed visible subset needs its own revision too.
+			let visible = repository.apps.map { app -> String in
+				let parts: [String] = [app.id ?? "", app.currentVersion ?? "", app.currentAppVersion?.build ?? "",
+					app.currentDownloadUrl?.absoluteString ?? ""]
+				return parts.map { "\($0.utf8.count):\($0)" }.joined()
+			}.joined(separator: "|")
+			return SourceAppCatalogContext(sourceObjectURI: context.sourceObjectURI, sourceURL: context.sourceURL,
+				repository: repository, revision: context.revision + "|visible:" + visible)
+		}
+	}
+
 	func reset() {
 		identifiers = []
+		skippedReleases = [:]
 		defaults.removeObject(forKey: Self.key)
+		defaults.removeObject(forKey: Self.skippedKey)
 	}
 }
 
@@ -127,6 +195,19 @@ actor InstalledAppUpdateCatalog {
 		signature = nextSignature
 		cached = result
 		return result
+	}
+
+	/// Use numeric version ordering across all matching source variants, rather
+	/// than catalog order, release date, or a lexicographic string comparison.
+	static func latestVersion(in contexts: [SourceAppCatalogContext], newerThan installed: String?) -> String? {
+		var latest: String?
+		for context in contexts {
+			for app in context.repository.apps {
+				guard let version = app.currentVersion, isNewer(version, than: installed) else { continue }
+				if latest == nil || isNewer(version, than: latest) { latest = version }
+			}
+		}
+		return latest
 	}
 
 	/// Missing or unstructured version labels cannot reliably establish an update.

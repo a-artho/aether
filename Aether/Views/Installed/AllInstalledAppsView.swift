@@ -72,6 +72,18 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 						.tint(.red)
 						.disabled(deletingIDs.contains(app.id) || installations.blocksUninstall(bundleIdentifier: app.bundleIdentifier))
 					}
+					.confirmationDialog(String.localized("Uninstall App?"), isPresented: Binding(
+						get: { pendingUninstall?.id == app.id }, set: { if !$0 { pendingUninstall = nil } }
+					), titleVisibility: .visible, presenting: pendingUninstall) { app in
+						Button(String.localized("Uninstall"), role: .destructive) {
+							pendingUninstall = nil
+							Task { await delete(app) }
+						}
+						.disabled(installations.blocksUninstall(bundleIdentifier: app.bundleIdentifier))
+						Button(String.localized("Cancel"), role: .cancel) { pendingUninstall = nil }
+					} message: { app in
+						Text(String.localized("Uninstall %@ and remove its data?", arguments: app.displayName))
+					}
 				}
 			}
 			.listSectionSeparator(.hidden)
@@ -110,18 +122,6 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 		.onChange(of: store.apps.map(\.id)) { _, ids in
 			if let app = selectedInfoApp, !ids.contains(app.id) { selectedInfoApp = nil }
 			if let app = pendingUninstall, !ids.contains(app.id) { pendingUninstall = nil }
-		}
-		.confirmationDialog(String.localized("Uninstall App?"), isPresented: Binding(
-			get: { pendingUninstall != nil }, set: { if !$0 { pendingUninstall = nil } }
-		), titleVisibility: .visible, presenting: pendingUninstall) { app in
-			Button(String.localized("Uninstall"), role: .destructive) {
-				pendingUninstall = nil
-				Task { await delete(app) }
-			}
-			.disabled(installations.blocksUninstall(bundleIdentifier: app.bundleIdentifier))
-			Button(String.localized("Cancel"), role: .cancel) { pendingUninstall = nil }
-		} message: { app in
-			Text(String.localized("Uninstall %@ and remove its data?", arguments: app.displayName))
 		}
 		.alert(String.localized("Couldn’t Uninstall"), isPresented: Binding(
 			get: { deletionError != nil }, set: { if !$0 { deletionError = nil } }

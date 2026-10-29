@@ -380,7 +380,7 @@ extension SourceAppsDetailView {
 							.foregroundStyle(Color.accentColor)
 					}
 				}
-				.font(.subheadline)
+				.modifier(SourceAppBodyFont(textStyle: .subheadline))
 				.foregroundStyle(.secondary)
 				.padding(.horizontal, 14)
 				.padding(.vertical, 11)
@@ -442,14 +442,14 @@ extension SourceAppsDetailView {
 	) -> some View {
 		HStack(alignment: .firstTextBaseline, spacing: 16) {
 			Text(title)
-				.font(.subheadline)
+				.modifier(SourceAppBodyFont(textStyle: .subheadline))
 				.foregroundStyle(.secondary)
 				.layoutPriority(1)
 
 			Spacer(minLength: 12)
 
 			Text(SourceAppBodyText.replacingEmoji(in: value))
-				.font(.subheadline)
+				.modifier(SourceAppBodyFont(textStyle: .subheadline))
 				.foregroundStyle(.primary)
 				.multilineTextAlignment(.trailing)
 				.lineLimit(2)

@@ -10,10 +10,11 @@ def declaration(start):
  return source[a:b]
 s=r'''
 import Foundation
+extension String {static func localized(_ s:String)->String{s}}
 func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
 @MainActor final class UIApplication {static let shared=UIApplication();enum State {case active,inactive,background};var applicationState=State.active;var providerAvailable=true;var providerQueries=0;func canOpenURL(_ url:URL)->Bool {providerQueries+=1;return providerAvailable}}
-@MainActor final class CellularAssistManager {static let shared=CellularAssistManager();var isBusy=false;var requiresTunnelConnection=false;var isWaitingForManualRecovery=false;func handleApplicationDidEnterBackground(){};func handleApplicationDidBecomeActive(){};func networkNoLongerNeedsManualRecovery(){isWaitingForManualRecovery=false}}
-@MainActor final class EmbeddedTunnelManager {static let shared=EmbeddedTunnelManager();var isRunning=false;var isProviderAvailable=true}
+@MainActor final class CellularAssistManager {static let shared=CellularAssistManager();enum State {case idle,failed(String)};var state=State.idle;var isEnabled=true;var isBusy=false;var requiresTunnelConnection=false;var isWaitingForManualRecovery=false;func beginManualRecoveryIfNeeded(cellularOnly:Bool,tunnelIsRunning:Bool)->Bool {isWaitingForManualRecovery=true;return true};var rearms=0;func rearmAutomaticRecovery(){rearms+=1};func handleApplicationDidEnterBackground(){};func handleApplicationDidBecomeActive(){};func networkNoLongerNeedsManualRecovery(){isWaitingForManualRecovery=false}}
+@MainActor final class EmbeddedTunnelManager {static let shared=EmbeddedTunnelManager();var isConnected=true;var isRunning=false;var isProviderAvailable=true;func invalidateConfigurationCache(){};func requestStopIfRunning(){isRunning=false}}
 @MainActor final class SpoofSession {static var existing: SpoofSession?;var requiresBackgroundExecution=false}
 @MainActor final class AppInstallationManager {static let shared=AppInstallationManager();var isInstalling=false}
 @MainActor final class OnDevicePairingManager {static let shared=OnDevicePairingManager();var isActive=false}
@@ -22,7 +23,7 @@ func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
  var connectionWorkWaiters:[UUID:AsyncStream<Void>.Continuation]=[:]
  var appRefreshConnectionID:UUID?;var appRefreshConnectionTask:Task<Bool,Never>?;var reconciliationTask:Task<Void,Never>? {didSet {_signalConnectionWorkChanged()}};var lastVerifiedAt=0.0
  enum State {case disconnected,disconnecting};var state=State.disconnected
- enum Diagnostic {case tunnelUnavailable,providerMissing(Method)};var diagnostic=Diagnostic.tunnelUnavailable
+ enum Diagnostic {case tunnelUnavailable,providerMissing(Method),error(String)};var diagnostic=Diagnostic.tunnelUnavailable
  enum Method {case inApp,localDevVPN};var tunnelMethod=Method.inApp
  var hasPairingFile=true
  var awaitingInitialActivation=false;var awaitingIdleReconnect=false;var requiresInAppTunnelSetup=false;var hasCompletedInitialActivation=false
@@ -42,22 +43,41 @@ func CACurrentMediaTime()->Double {ProcessInfo.processInfo.systemUptime}
  func _armAttemptTimeout(epoch:UInt64,seconds:Double){}
  func _startTransitionPolling(generation:UUID,expectedState:Bool){}
  func setConnection(enabled:Bool,force:Bool=false){forcedStop=force;if !enabled {stops+=1;_cancelForegroundRecovery()}}
- enum Level {case notice}
+ enum Level {case notice,warning}
  func _log(_ s:String,category:String,level:Level){}
  func _connectForIDeviceMode(){starts+=1;isUpdating=true}
  func verifyForAppRefresh() async -> Bool {await reconcile();if !isConnected {_connectForIDeviceMode()};return isConnected}
  func reconcile(force:Bool=false) async {guard reconciliationTask == nil else{return};checks+=1;isConnected=verified}
  func cancel(){_cancelForegroundRecovery()}
- func _expireConnectionAttempt(){isUpdating=false;isConnected=false;automaticRetryBlocked=true}
+ func _cancelReconciliation(){reconciliationTask=nil}
+ func expireForTest(){_expireConnectionAttempt()}
  func _waitForForegroundConnectionToSettleForTest(id:UUID,deadline:Double) async ->Bool {await _waitForForegroundConnectionToSettle(id:id,deadline:deadline)}
  func finishStart(){isUpdating=false;isConnected=true;verified=true}
  func providerAvailableForTest()->Bool {_providerIsAvailable()}
 '''
-for method in ['public var isAwaitingAutomaticConnection:', 'public func prepareForForeground()', 'public func handleInitialActivationIfNeeded()', 'public func handleAppForeground()', 'private func _providerIsAvailable()', 'private func _scheduleForegroundRecovery()', 'private func _signalConnectionWorkChanged()', 'private func _waitForForegroundConnectionToSettle(', 'private func _cancelForegroundRecovery()', 'public func handleAppBackground()']:
+for method in ['public var isAwaitingAutomaticConnection:', 'public func prepareForForeground()', 'public func handleInitialActivationIfNeeded()', 'public func handleAppForeground()', 'private func _providerIsAvailable()', 'private func _scheduleForegroundRecovery()', 'private func _signalConnectionWorkChanged()', 'private func _waitForForegroundConnectionToSettle(', 'private func _cancelForegroundRecovery()', 'private func _expireConnectionAttempt()', 'public func handleAppBackground()']:
  s+=declaration(method)+'\n'
 s+=declaration('private func _restoreInstallationMode()').replace('private func', 'func', 1)+'\n'
 s+='}\n'
 s=s.replace('LOCALDEV_GUIDANCE',declaration('public var needsLocalDevVPNCellularRecovery:').replace('public ', ''))
+s+=r'''
+@MainActor final class CellularCompletionDriver {
+ enum State {case connected,connecting,disconnected}
+ enum Diagnostic {case tunnelUnavailable,providerMissing,error(String)}
+ enum Method {case inApp,localDevVPN}
+ enum Network {case cellularOnly,wifi}
+ var state=State.connected;var diagnostic=Diagnostic.tunnelUnavailable
+ var isConnected:Bool {state == .connected};var isUpdating:Bool {state == .connecting}
+ var automaticRetryBlocked=false;var hasPairingFile=true;var requiresInAppTunnelSetup=false
+ var physicalNetworkState=Network.cellularOnly;var tunnelMethod=Method.inApp
+ var isConnectAutomaticallyEnabled=false;var isIDeviceInstallationMode=true
+ var pauses=0
+ func _finishTransition(to state:State,diagnostic:Diagnostic){self.state=state;self.diagnostic=diagnostic}
+ func _pauseForCellularRecovery(manual:Bool){pauses+=1;state = .disconnected}
+ func _automaticConnectionPrerequisitesReady()->Bool {false}
+ func _connectForIDeviceMode(){}
+ func handleAppBackground(){}
+'''+declaration('public func cellularRecoveryDidFinish()')+'\n}\n'
 s+=r'''
 func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),label)}
 @main struct Checks {
@@ -158,6 +178,51 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   check(cellularReturn.needsLocalDevVPNCellularRecovery && !cellularReturn.isUpdating && cellularReturn.checks==0,"Returned LocalDevVPN handoff requests network change before probing")
   cellularReturn.handleAppForeground();await Task.yield()
   check(cellularReturn.starts==0 && cellularReturn.checks==0,"Manual network guidance cannot repeatedly reopen LocalDevVPN")
+  for method in [Driver.Method.inApp, .localDevVPN] {
+   for automatic in [false,true] {
+    for idle in [false,true] {
+     let matrix=Driver();matrix.tunnelMethod=method;matrix.isConnectAutomaticallyEnabled=automatic
+     matrix.isDisconnectWhenIdleEnabled=idle
+     UIApplication.shared.applicationState = .background;matrix.handleAppBackground()
+     check(matrix.stops == (method == .inApp && idle ? 1 : 0),
+      "Only the in-app provider applies the idle-stop setting, regardless of automatic connection")
+     let rearms=CellularAssistManager.shared.rearms
+     matrix.isConnected=false;matrix.automaticRetryBlocked=matrix.awaitingIdleReconnect
+     UIApplication.shared.applicationState = .active;matrix.handleAppForeground()
+     check(matrix.starts == (automatic ? 1 : 0),"Foreground starts honor the automatic preference after background")
+     check(CellularAssistManager.shared.rearms-rearms == (method == .inApp && automatic && idle ? 1 : 0),
+      "Only a new automatic idle reconnect rearms Cellular Assist")
+     matrix.finishStart();try await settled(matrix)
+     let after=CellularAssistManager.shared.rearms
+     matrix.handleAppForeground();try await settled(matrix)
+     check(CellularAssistManager.shared.rearms==after,"Repeated activation never rearms a completed helper episode")
+    }
+   }
+  }
+  let cellularCompletion=CellularCompletionDriver()
+  CellularAssistManager.shared.isEnabled=false
+  cellularCompletion.cellularRecoveryDidFinish()
+  check(cellularCompletion.isConnected && cellularCompletion.pauses==0,
+   "Disabling Cellular Assist preserves an already-authenticated cellular tunnel")
+  cellularCompletion.state = .disconnected;cellularCompletion.cellularRecoveryDidFinish()
+  check(cellularCompletion.pauses==1 && CellularAssistManager.shared.isWaitingForManualRecovery,
+   "An unverified cellular tunnel still gets manual guidance with Cellular Assist disabled")
+  CellularAssistManager.shared.isEnabled=true;CellularAssistManager.shared.isWaitingForManualRecovery=false
+  let expiredStop=Driver();expiredStop.transitionExpectedState=false
+  expiredStop.expireForTest()
+  check(!expiredStop.automaticRetryBlocked,"An expired idle stop leaves foreground automatic recovery eligible")
+  let expiredStart=Driver();expiredStart.transitionExpectedState=true
+  expiredStart.expireForTest()
+  check(expiredStart.automaticRetryBlocked,"A genuine connection timeout still requires Retry")
+  let replacement=Driver();replacement.isConnected=false;replacement.isUpdating=true
+  replacement.handleAppForeground()
+  while replacement.connectionWorkWaiters.isEmpty {await Task.yield()}
+  // A network event starts a replacement while activation is waiting on an idle stop.
+  replacement.connectionEpoch+=1
+  try await Task.sleep(nanoseconds:4_100_000_000)
+  check(!replacement.automaticRetryBlocked && replacement.isUpdating,
+   "An activation wait cannot expire a replacement connection using the old stop's budget")
+  replacement.finishStart();try await settled(replacement)
   let bounded=Driver();bounded.isUpdating=true;let timeoutID=UUID();bounded.foregroundRecoveryID=timeoutID
   let timedOut=await bounded._waitForForegroundConnectionToSettleForTest(id:timeoutID,deadline:CACurrentMediaTime()+0.03)
   check(!timedOut && bounded.connectionWorkWaiters.isEmpty,"A timed-out wait releases its continuation")
@@ -327,6 +392,11 @@ func check(_ value:@autoclosure()->Bool,_ label:String){precondition(value(),lab
   let t=Task {await reset.verify()};while reset.resetGate.pending == nil {await Task.yield()}
   reset.newAttempt();reset.resetGate.release();await t.value
   check(reset.finishes==0 && reset.diagnostic == .ready,"Old transport-reset completion cannot overwrite newer readiness")
+  let localStop=Reconciler();localStop.tunnelMethod = .localDevVPN;localStop.state = .disconnecting
+  localStop.transitionExpectedState=false;localStop.transitionDeadline=CACurrentMediaTime()+1
+  await localStop.verify()
+  check(localStop.state == .disconnected && localStop.diagnostic == .tunnelUnavailable && !localStop.automaticRetryBlocked,
+   "Successful LocalDevVPN disconnection is not a connection error or a blocked retry")
   let stopping=Reconciler();stopping.state = .disconnecting;await stopping.verify()
   check(stopping.profiles==0 && stopping.finishes==0,"Passive reconciliation leaves embedded-stop completion to its owner")
   let cached=Reconciler();cached.lastVerifiedAt=CACurrentMediaTime();await cached.verify()

@@ -28,7 +28,7 @@ struct ResetView: View {
 				Button { confirmsIgnoredUpdatesReset = true } label: {
 					SettingsRowLabel(.localized("Reset Ignored Updates"), systemImage: "arrow.counterclockwise", backgroundColor: .orange)
 				}
-				.disabled(ignoredUpdates.identifiers.isEmpty)
+				.disabled(!ignoredUpdates.hasIgnoredUpdates)
 			}
 			_installation()
 			_coredata()

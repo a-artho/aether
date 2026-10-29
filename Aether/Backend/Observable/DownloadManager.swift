@@ -718,6 +718,7 @@ class DownloadManager: NSObject, ObservableObject {
 		// fetched results may arrive later; both publications keep the same row ID.
 		if let imported = Storage.shared.importedApp(uuid: download.importIdentifier) {
 			committedImports[download.importIdentifier] = AppSnapshot(imported)
+			SourceLibraryDownloads.shared.recordCommittedApp(imported)
 		}
 		download.progress = 1
 		download.unpackageProgress = 1

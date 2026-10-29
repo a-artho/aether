@@ -10,10 +10,16 @@ def declaration(path,start):
 stop=declaration('Aether/Backend/Observable/EmbeddedTunnelManager.swift','public func stop(shouldProceed: () -> Bool = { true }) async')
 stop='func stop(shouldProceed: () -> Bool = { true }) async {\n'+stop.split('#elseif os(iOS) && !targetEnvironment(macCatalyst)')[1].split('#else')[0]+'\n}'
 lease=declaration('Aether/Backend/Observable/DeviceConnectionManager.swift','private final class IdleTunnelStopLease').replace('private final','@MainActor final',1)
+embedded=(repo/'Aether/Backend/Observable/EmbeddedTunnelManager.swift').read_text()
+a=embedded.index('Task { @MainActor [weak self] in', embedded.index('statusObserver = NotificationCenter'))
+b=embedded.index('{',a)+1;depth=1
+while depth:
+ depth+=(embedded[b]=='{')-(embedded[b]=='}');b+=1
+status_delivery=embedded[a:b]
 s=r'''
 import Foundation
 extension String {static func localized(_ s:String)->String{s}}
-enum State:Equatable {case disconnected,disconnecting,unavailable;case error(String)}
+enum State:Equatable {case connected,disconnected,disconnecting,unavailable;case error(String)}
 enum VPNStatus {case disconnected,invalid,connecting,connected}
 enum Level {case notice,warning}
 @MainActor final class Connection {
@@ -26,6 +32,11 @@ enum Level {case notice,warning}
  var delayStop=false;var stopReply:CheckedContinuation<Void,Never>?
  func refresh() async {refreshes+=1;await Task.yield();manager=saved}
  func waitForDisconnected() async ->Bool {if delayStop {await withCheckedContinuation{stopReply=$0}};return manager?.connection.status == .disconnected}
+ func notify(_ connection:Connection)->Task<Void,Never> {
+  let identity=ObjectIdentifier(connection)
+  return STATUS_DELIVERY
+ }
+ func updateState(for status:VPNStatus){state = status == .connected ? .connected : .disconnected}
  func _setState(_ value:State){state=value}
  func _log(_ s:String,level:Level = .notice){}
 '''+stop+r'''
@@ -40,6 +51,17 @@ struct UIBackgroundTaskIdentifier:Equatable {let raw:Int;static let invalid=Self
 '''+lease+r'''
 @main struct Checks {
  @MainActor static func main() async {
+  let notification=Probe();notification.manager=Manager()
+  let current=notification.manager!.connection
+  current.status = .disconnected
+  let queued=notification.notify(current)
+  current.status = .connected
+  await queued.value
+  precondition(notification.state == .connected,"Queued VPN notifications read the latest native status")
+  let obsolete=notification.notify(current)
+  notification.manager=Manager();notification.state = .disconnected
+  await obsolete.value
+  precondition(notification.state == .disconnected,"Notifications from an old profile cannot update its replacement")
   let cold=Probe(),profile=Manager();cold.saved=profile
   await cold.stop()
   precondition(cold.refreshes==1 && profile.connection.stops==1 && cold.state == .disconnected)
@@ -63,6 +85,7 @@ struct UIBackgroundTaskIdentifier:Equatable {let raw:Int;static let invalid=Self
  }
 }
 '''
+s=s.replace('STATUS_DELIVERY',status_delivery)
 with tempfile.TemporaryDirectory(prefix='aether-idle-stop-') as d:
  p=Path(d);(p/'Checks.swift').write_text(s)
  subprocess.run(['swiftc','-parse-as-library',str(p/'Checks.swift'),'-o',str(p/'checks')],check=True)

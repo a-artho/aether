@@ -26,6 +26,12 @@ struct LibraryView: View {
 	@State private var searchFocused = false
 	@State private var appNavigationPath: [InstalledAppsRoute] = []
 	@State private var isRootListVisible = false
+	@State private var updateIgnoreRequest: UpdateIgnoreRequest?
+
+	private struct UpdateIgnoreRequest {
+		let app: InstalledApp
+		let contexts: [SourceAppCatalogContext]
+	}
 	private let loadsApps: Bool
 	private let loadsIcons: Bool
 
@@ -85,8 +91,7 @@ struct LibraryView: View {
 				&& (searchText.isEmpty || !sideloadedApps.isEmpty || matchesSearch(String.localized("All Apps")))
 		}
 		let appsWithUpdates = sideloadedApps.filter {
-			!ignoredUpdates.identifiers.contains($0.bundleIdentifier)
-				&& updates.updateContexts[$0.bundleIdentifier]?.isEmpty == false
+			!visibleUpdateContexts(for: $0.bundleIdentifier).isEmpty
 		}
 		let visibleRows = imports.visibleRows
 		let libraryRows = visibleRows.filter { entry in
@@ -178,7 +183,7 @@ struct LibraryView: View {
 					AllInstalledAppsView(store: store, loadsIcons: loadsIcons,
 						initialSearch: searchText, placeholder: allAppsPlaceholder)
 				case let .updates(identifier):
-					InstalledAppUpdatesView(contexts: updates.updateContexts[identifier] ?? [])
+					InstalledAppUpdatesView(contexts: visibleUpdateContexts(for: identifier))
 				case let .splitArtifacts(originalUUID):
 					SplitArtifactsView(originalUUID: originalUUID, controller: imports)
 				}
@@ -236,19 +241,43 @@ struct LibraryView: View {
 		}
 	}
 
+	private func visibleUpdateContexts(for identifier: String) -> [SourceAppCatalogContext] {
+		ignoredUpdates.visibleUpdates(for: identifier, in: updates.updateContexts[identifier] ?? [])
+	}
+
 	private func updatesSection(apps: [InstalledApp]) -> some View {
 		NBSection(String.localized("Updates")) {
 			ForEach(apps) { app in
+				let availableUpdates = visibleUpdateContexts(for: app.bundleIdentifier)
 				NavigationLink(value: InstalledAppsRoute.updates(app.bundleIdentifier)) {
-					InstalledAppCellView(app: app, loadsIcon: loadsIcons)
+					InstalledAppCellView(app: app, loadsIcon: loadsIcons,
+						latestAvailableVersion: InstalledAppUpdateCatalog.latestVersion(
+							in: availableUpdates, newerThan: app.version))
 				}
 				.buttonStyle(.plain)
 				.id(app.id)
 				.swipeActions(edge: .trailing, allowsFullSwipe: true) {
 					Button(String.localized("Ignore"), systemImage: "bell.slash") {
-						ignoredUpdates.ignore(app.bundleIdentifier)
+						updateIgnoreRequest = UpdateIgnoreRequest(app: app, contexts: availableUpdates)
 					}
 					.tint(.orange)
+				}
+				.confirmationDialog(
+					String.localized("Ignore Updates for %@?", arguments: app.name),
+					isPresented: Binding(
+						get: { updateIgnoreRequest?.app.id == app.id },
+						set: { if !$0 { updateIgnoreRequest = nil } }
+					), titleVisibility: .visible, presenting: updateIgnoreRequest
+				) { request in
+					Button(String.localized("Current Updates")) {
+						ignoredUpdates.skipCurrentUpdates(for: request.app.bundleIdentifier, contexts: request.contexts)
+					}
+					Button(String.localized("Future Updates")) {
+						ignoredUpdates.ignore(request.app.bundleIdentifier)
+					}
+					Button(String.localized("Cancel"), role: .cancel) {}
+				} message: { _ in
+					Text(String.localized("Ignore current releases only, or all current and future releases."))
 				}
 			}
 		}
@@ -562,6 +591,14 @@ struct InstalledAppCellView: View {
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 	let app: InstalledApp
 	let loadsIcon: Bool
+	var latestAvailableVersion: String? = nil
+
+	private var _versionText: String? {
+		guard let installed = app.version, let latest = latestAvailableVersion else {
+			return app.version ?? app.build
+		}
+		return "\(installed) → \(latest)"
+	}
 
 	var body: some View {
 		HStack(spacing: NBRowMetrics.contentSpacing) {
@@ -573,7 +610,7 @@ struct InstalledAppCellView: View {
 
 			LibraryRowDetails(
 				name: app.name,
-				version: app.version ?? app.build,
+				version: _versionText,
 				identifier: app.bundleIdentifier
 			)
 		}

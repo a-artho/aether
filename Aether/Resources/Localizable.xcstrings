@@ -1,6 +1,24 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Current Updates" : {
+      "extractionState" : "manual"
+    },
+    "Future Updates" : {
+      "extractionState" : "manual"
+    },
+    "Ignore Updates for %@?" : {
+      "extractionState" : "manual"
+    },
+    "Ignore current releases only, or all current and future releases." : {
+      "extractionState" : "manual"
+    },
+    "Download Again" : {
+      "extractionState" : "manual"
+    },
+    "In Library" : {
+      "extractionState" : "manual"
+    },
     "Action Buttons" : {
       "extractionState" : "manual"
     },

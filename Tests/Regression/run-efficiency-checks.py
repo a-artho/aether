@@ -182,6 +182,35 @@ func check(_ value: @autoclosure () -> Bool, _ label: String) { precondition(val
   check(independent["com.google.ios.youtube"]==nil && independent["com.google.ios.youtube.youmod"] != nil,"Ignore applies to the exact installed identifier, not unrelated installed variants")
   relaunched.reset()
   check(IgnoredAppUpdates(defaults:preferences).identifiers.isEmpty,"Reset persists the cleared list")
+  let skips=IgnoredAppUpdates(defaults:preferences)
+  let offered=all["fixture.app"]!
+  skips.skipCurrentUpdates(for:"fixture.app",contexts:offered)
+  check(skips.identifiers.isEmpty && skips.hasIgnoredUpdates,"Skipping releases never permanently ignores the app")
+  check(skips.visibleUpdates(for:"fixture.app",in:offered).isEmpty,"Skip hides every currently offered release across sources")
+  let restoredSkips=IgnoredAppUpdates(defaults:preferences)
+  check(restoredSkips.visibleUpdates(for:"fixture.app",in:offered).isEmpty,"Skipped releases survive restart")
+  check(restoredSkips.visibleUpdates(for:"other.install",in:offered).count==offered.count,"Skip preferences are scoped to the installed bundle ID")
+  let newJSON=Data(String(decoding:variantsJSON,as:UTF8.self).replacingOccurrences(of:"1.3",with:"1.4").utf8)
+  var newerRepo=try JSONDecoder().decode(ASRepository.self,from:newJSON)
+  newerRepo.apps=Array(newerRepo.apps.prefix(2))
+  let newerContext=SourceAppCatalogContext(sourceObjectURI:"variants-key",sourceURL:url,repository:newerRepo,revision:"variants-2")
+  let newVisible=restoredSkips.visibleUpdates(for:"fixture.app",in:[newerContext])
+  check(newVisible.count==1 && newVisible[0].repository.apps.count==1 && newVisible[0].repository.apps[0].currentVersion=="1.4",
+   "A release arriving after opening Ignore is not part of its snapshot and remains visible")
+  check(newVisible[0].revision != newerContext.revision,"Filtered subsets invalidate release-list grouping caches")
+  check(InstalledAppUpdateCatalog.latestVersion(in:newVisible,newerThan:"0.9")=="1.4","Installed-to-latest label uses visible releases")
+  let newVariantJSON=Data(String(decoding:variantsJSON,as:UTF8.self).replacingOccurrences(of:"variant-b.ipa",with:"variant-c.ipa").utf8)
+  var newVariant=try JSONDecoder().decode(ASRepository.self,from:newVariantJSON)
+  newVariant.apps=Array(newVariant.apps.prefix(2))
+  let newVariantContext=SourceAppCatalogContext(sourceObjectURI:"variants-key",sourceURL:url,repository:newVariant,revision:"variants-3")
+  check(restoredSkips.visibleUpdates(for:"fixture.app",in:[newVariantContext])[0].repository.apps.count==1,
+   "A different artifact of the same version is not silently skipped")
+  restoredSkips.ignore("fixture.app")
+  check(restoredSkips.visibleUpdates(for:"fixture.app",in:[newerContext]).isEmpty,"Ignore This App hides future releases too")
+  restoredSkips.reset()
+  let afterReset=IgnoredAppUpdates(defaults:preferences)
+  check(!afterReset.hasIgnoredUpdates && afterReset.visibleUpdates(for:"fixture.app",in:offered).count==offered.count,
+   "Reset clears permanent ignores and skipped releases persistently")
   let unignored=try await updates.updates(installedVersions:["com.google.ios.youtube":"21.40.0","fixture.app":"0.9"],contexts:[suffixContext,context],ignoredIdentifiers:relaunched.identifiers)
   check(unignored["com.google.ios.youtube"] != nil && unignored["fixture.app"] != nil,"Reset restores matches even after an ignored result was cached")
   await updates.removeSource("source-key")
@@ -242,3 +271,40 @@ with tempfile.TemporaryDirectory(prefix='aether-efficiency-checks-') as director
     root=pathlib.Path(directory); (root/'Checks.swift').write_text(source)
     subprocess.run(['swiftc','-parse-as-library',str(root/'Checks.swift'),'-o',str(root/'checks')],check=True)
     subprocess.run([str(root/'checks')],check=True)
+
+# Type-check the actual native dialog modifier with a small SwiftUI host.
+library = (repo/'Aether/Views/Library/LibraryView.swift').read_text()
+a = library.index('\t\t\t\t.confirmationDialog(')
+b = library.index('\n\t\t\t}\n\t\t}\n\t\t.listSectionSeparator', a)
+dialog = library[a:b]
+assert 'String.localized("Current Updates")' in dialog
+assert 'String.localized("Future Updates")' in dialog
+assert 'contexts: request.contexts' in dialog
+assert 'ignoredUpdates.ignore(request.app.bundleIdentifier)' in dialog
+assert '.sheet(' not in dialog
+native = r'''
+import SwiftUI
+import Foundation
+extension String {
+ static func localized(_ text:String)->String{text}
+ static func localized(_ text:String,arguments:CVarArg...)->String {String(format:text,arguments:arguments)}
+}
+struct DialogApp {let id="app";let name="Example";let bundleIdentifier="example.app"}
+struct UpdateIgnoreRequest {let app:DialogApp;let contexts:[Int]}
+@MainActor final class IgnorePreferences {
+ func skipCurrentUpdates(for identifier:String,contexts:[Int]){}
+ func ignore(_ identifier:String){}
+}
+struct NativeDialog:View {
+ @State private var updateIgnoreRequest:UpdateIgnoreRequest?
+ let app=DialogApp()
+ let ignoredUpdates=IgnorePreferences()
+ var body:some View {Text("Updates")
+DIALOG
+ }
+}
+'''.replace('DIALOG', dialog)
+with tempfile.TemporaryDirectory(prefix='aether-ignore-dialog-') as directory:
+    path=pathlib.Path(directory)/'Dialog.swift';path.write_text(native)
+    subprocess.run(['swiftc','-swift-version','6','-warnings-as-errors','-typecheck',str(path)],check=True)
+print('Ignore update checks passed: current-release snapshots, future releases, persistence, reset and native dialog type-check')

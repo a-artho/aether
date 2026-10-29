@@ -519,6 +519,7 @@ public final class DeviceConnectionManager: ObservableObject {
 
 	public func handleAppForeground() {
 		guard UIApplication.shared.applicationState == .active else { return }
+		let resumesIdleConnection = awaitingIdleReconnect
 		hasCompletedInitialActivation = true
 		_signalConnectionWorkChanged()
 		awaitingInitialActivation = false
@@ -546,6 +547,12 @@ public final class DeviceConnectionManager: ObservableObject {
 			}
 		}
 		guard isConnectAutomaticallyEnabled, isIDeviceInstallationMode else { return }
+		if resumesIdleConnection, tunnelMethod == .inApp {
+			// A deliberate idle shutdown starts a new connection episode. Ordinary
+			// activations (including Shortcuts callbacks) must not rearm the helper.
+			automaticRetryBlocked = false
+			CellularAssistManager.shared.rearmAutomaticRecovery()
+		}
 		if tunnelMethod == .inApp, CellularAssistManager.shared.isWaitingForManualRecovery,
 			!EmbeddedTunnelManager.shared.isRunning {
 			CellularAssistManager.shared.networkNoLongerNeedsManualRecovery()
@@ -571,15 +578,19 @@ public final class DeviceConnectionManager: ObservableObject {
 					self.foregroundRecoveryTask = nil
 				}
 			}
-			let deadline = CACurrentMediaTime() + 4
-			guard await self._waitForForegroundConnectionToSettle(id: id, deadline: deadline) else {
-				if !Task.isCancelled, self.foregroundRecoveryID == id,
+			while true {
+				let epoch = self.connectionEpoch
+				let deadline = max(CACurrentMediaTime() + 4, self.transitionDeadline)
+				if await self._waitForForegroundConnectionToSettle(id: id, deadline: deadline) { break }
+				guard !Task.isCancelled, self.foregroundRecoveryID == id,
 					UIApplication.shared.applicationState == .active,
+					self.isConnectAutomaticallyEnabled, self.isIDeviceInstallationMode,
 					!CellularAssistManager.shared.requiresTunnelConnection,
 					!CellularAssistManager.shared.isWaitingForManualRecovery,
-					self.localDevVPNHandoffGeneration == nil {
-					self._expireConnectionAttempt()
-				}
+					self.localDevVPNHandoffGeneration == nil else { return }
+				// The stop/start owner has its own deadline. This activation waiter
+				// must never expire a newer attempt that inherited the idle stop.
+				if self.connectionEpoch != epoch || self.isUpdating { continue }
 				return
 			}
 			_ = await self.verifyForAppRefresh()
@@ -655,7 +666,9 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	private func _expireConnectionAttempt() {
-		automaticRetryBlocked = true
+		// An idle stop may resume after its deadline when iOS suspended us.
+		// Retire that stop without consuming the next automatic start attempt.
+		automaticRetryBlocked = transitionExpectedState != false
 		connectionEpoch &+= 1
 		_cancelReconciliation()
 		EmbeddedTunnelManager.shared.invalidateConfigurationCache()
@@ -1292,6 +1305,15 @@ public final class DeviceConnectionManager: ObservableObject {
 		}
 
 		guard _recordStillMatches(checkedRecord) else { return false }
+		if expectedState == false, !checkResult.isConnected {
+			// Losing reachability is the requested outcome of a LocalDevVPN stop,
+			// not an authentication failure or a reason to block the next start.
+			lastVerifiedAt = 0
+			rsdCleanupTask?.cancel()
+			rsdCleanupTask = Task.detached(priority: .utility) { HeartbeatManager.shared.resetRSDTunnel() }
+			_finishTransition(to: .disconnected, diagnostic: .tunnelUnavailable)
+			return false
+		}
 		if let checkedRecord {
 			pairingVerification.finishChecking(checkedRecord, succeeded: checkResult.isConnected)
 		}
@@ -1495,7 +1517,7 @@ public final class DeviceConnectionManager: ObservableObject {
 			if UIApplication.shared.applicationState == .background { handleAppBackground() }
 			return
 		}
-		if !cellular.isEnabled, physicalNetworkState == .cellularOnly,
+		if !isConnected, !cellular.isEnabled, physicalNetworkState == .cellularOnly,
 			tunnelMethod == .inApp, EmbeddedTunnelManager.shared.isConnected {
 			_ = cellular.beginManualRecoveryIfNeeded(cellularOnly: true, tunnelIsRunning: true)
 			_pauseForCellularRecovery(manual: true)

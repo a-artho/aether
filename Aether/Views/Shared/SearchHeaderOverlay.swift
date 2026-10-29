@@ -47,6 +47,7 @@ struct WindowFrameAnchor: Equatable {
 /// Reports a SwiftUI control's frame in the same UIWindow coordinates used by UIKit.
 @MainActor
 struct WindowFrameReader: UIViewRepresentable {
+	var measurementID: String = ""
 	let onChange: (WindowFrameAnchor?) -> Void
 
 	func makeUIView(context: Context) -> WindowFrameReportingView {
@@ -55,6 +56,7 @@ struct WindowFrameReader: UIViewRepresentable {
 
 	func updateUIView(_ view: WindowFrameReportingView, context: Context) {
 		view.onChange = onChange
+		view.updateMeasurementID(measurementID)
 		view.reportFrame()
 	}
 
@@ -68,6 +70,14 @@ final class WindowFrameReportingView: UIView {
 	var onChange: ((WindowFrameAnchor?) -> Void)?
 	private var lastAnchor: WindowFrameAnchor?
 	private var generation = 0
+	private var measurementID: String?
+
+	func updateMeasurementID(_ value: String) {
+		guard measurementID != value else { return }
+		measurementID = value
+		generation += 1
+		lastAnchor = nil
+	}
 
 	init(onChange: ((WindowFrameAnchor?) -> Void)?) {
 		self.onChange = onChange

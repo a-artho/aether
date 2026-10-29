@@ -108,6 +108,19 @@ private struct SourceAppsSkeletonPulse: ViewModifier {
 	}
 }
 
+/// UIKit may invoke its completion even when registration reports false.
+/// Keep the continuation one-shot for both immediate and delayed callbacks.
+@MainActor
+private final class SourceNavigationTransitionReply {
+	private var continuation: CheckedContinuation<Void, Never>?
+	init(_ continuation: CheckedContinuation<Void, Never>) { self.continuation = continuation }
+	func finish() {
+		let pending = continuation
+		continuation = nil
+		pending?.resume()
+	}
+}
+
 // MARK: - Representable
 struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	@AppStorage("Aether.rowHorizontalInset") private var horizontalInset: RowHorizontalInset = .standard
@@ -445,7 +458,8 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 				if !self._hasAppliedList, let deadline = self._loadingDeadline {
 					try await Task.sleep(until: deadline, clock: .continuous)
 				}
-				guard !Task.isCancelled, self._generation == generation else { return }
+				if !self._hasAppliedList { await self.waitForOpeningNavigationTransition() }
+				guard !Task.isCancelled, !self._isShutdown, self._generation == generation else { return }
 				if let base = result.base {
 					self._basePresentation = base
 					self._basePresentationKey = key
@@ -459,6 +473,25 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 				// Projection preparation only throws cancellation; leave the displayed snapshot intact.
 				self?.finishSearchRestoreSignpost()
 			}
+		}
+	}
+
+	/// Preparing a catalog can run during the push, but hosting its real cells
+	/// and reloading the table should not compete with the native bar animation.
+	private func waitForOpeningNavigationTransition() async {
+		var responder: UIResponder? = uiTableView
+		while let current = responder {
+			if let controller = current as? UIViewController,
+				let transition = controller.navigationController?.transitionCoordinator,
+				transition.isAnimated {
+				await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+					let reply = SourceNavigationTransitionReply(continuation)
+					let registered = transition.animate(alongsideTransition: nil) { _ in reply.finish() }
+					if !registered { reply.finish() }
+				}
+				return
+			}
+			responder = current.next
 		}
 	}
 
@@ -787,7 +820,18 @@ extension SourceAppsTableRepresentableView { @MainActor class Coordinator: NSObj
 				}, image: UIImage(systemName: "arrow.down"))
 			)
 			
-			return UIMenu(children: [downloadsMenu, versionsMenu])
+			var actions: [UIMenuElement] = []
+			let provenance = SourceAppProvenance(sourceURL: entry.sourceURL, repository: entry.source, app: entry.app)
+			if SourceLibraryDownloads.shared.contains(provenance), let url = entry.app.currentDownloadUrl {
+				actions.append(UIAction(title: .localized("Download Again"), image: UIImage(systemName: "arrow.down")) { _ in
+					Task {
+						_ = await DownloadManager.shared.startDownload(from: url,
+							id: entry.app.currentUniqueId, sourceProvenance: provenance)
+					}
+				})
+			}
+			actions.append(contentsOf: [downloadsMenu, versionsMenu])
+			return UIMenu(children: actions)
 		}
 	}
 	

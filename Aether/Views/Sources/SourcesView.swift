@@ -200,6 +200,11 @@ struct SourcesView: View {
 			SourcesAddView(initialURL: request.initialURL)
 				.id(request.id)
 		}
+		.task {
+			// Load the Library membership index before repo cells first appear.
+			// Its one-time database/file checks must not run inside a repo push.
+			_ = SourceLibraryDownloads.shared
+		}
 		.onAppear {
 			_resolvePendingNavigationIntent()
 		}

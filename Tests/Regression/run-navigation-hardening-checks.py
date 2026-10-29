@@ -112,3 +112,95 @@ with tempfile.TemporaryDirectory(prefix="aether-navigation-check-") as temp:
     source.write_text(swift)
     subprocess.run(["swiftc", "-parse-as-library", "-o", str(binary), str(source)], check=True)
     subprocess.run([str(binary)], check=True)
+
+# iOS 26 anchors confirmation dialogs to the modified view. List-level
+# attachment makes a row action point at the list's center instead of the row.
+all_apps = (ROOT / 'Aether/Views/Installed/AllInstalledAppsView.swift').read_text()
+uninstall_row = all_apps[all_apps.index('ForEach(apps) { app in'):all_apps.index('\n\t\t.listStyle(.plain)')]
+assert '.confirmationDialog(' in uninstall_row, 'Uninstall confirmation must be owned by its list row'
+assert 'get: { pendingUninstall?.id == app.id }' in uninstall_row, 'Only the selected row may present Uninstall'
+assert '.confirmationDialog(' not in all_apps[all_apps.index('\n\t\t.listStyle(.plain)'):], 'Uninstall must not anchor to the entire list'
+library = (ROOT / 'Aether/Views/Library/LibraryView.swift').read_text()
+ignore_row = declaration('Aether/Views/Library/LibraryView.swift', 'private func updatesSection(')
+assert '.confirmationDialog(' in ignore_row and 'get: { updateIgnoreRequest?.app.id == app.id }' in ignore_row
+print('Dialog anchor checks passed: Uninstall and Ignore belong to the selected row')
+
+# Run the production transition gate with controlled UIKit transition callbacks.
+reply = declaration(table_path, 'private final class SourceNavigationTransitionReply').replace('private final class', 'final class', 1)
+wait = declaration(table_path, 'private func waitForOpeningNavigationTransition()').replace('private func', 'func', 1)
+transition_checks = r'''
+import Foundation
+@MainActor class UIResponder {var next:UIResponder?}
+@MainActor final class UIViewController:UIResponder {var navigationController:UINavigationController?}
+@MainActor final class UINavigationController {var transitionCoordinator:Transition?}
+@MainActor final class Transition {
+ var isAnimated=true;var registered=true;var calls=0
+ var replies:[(Bool)->Void]=[]
+ func animate(alongsideTransition:((Bool)->Void)?,completion:@escaping (Bool)->Void)->Bool {
+  calls+=1;replies.append(completion);return registered
+ }
+ func finish(){for reply in replies {reply(true)}}
+}
+@MainActor
+REPLY
+@MainActor final class Driver {
+ var uiTableView:UIResponder?
+ var completed=false;var applied=false;var active=true
+ WAIT
+ func load() async {
+  await waitForOpeningNavigationTransition()
+  completed=true
+  guard !Task.isCancelled,active else {return}
+  applied=true
+ }
+}
+@main struct Checks {
+ @MainActor static func ready(_ transition:Transition) async {
+  for _ in 0..<1000 {if transition.calls>0{return};await Task.yield()}
+  preconditionFailure("Transition callback was not registered")
+ }
+ @MainActor static func driver(_ transition:Transition)->Driver {
+  let table=UIResponder(),owner=UIViewController(),navigation=UINavigationController()
+  table.next=owner;owner.navigationController=navigation;navigation.transitionCoordinator=transition
+  let result=Driver();result.uiTableView=table;return result
+ }
+ @MainActor static func main() async {
+  let transition=Transition()
+  let first=driver(transition)
+  let request=Task {await first.load()};await ready(transition)
+  precondition(!first.applied && !first.completed,"Cell reload waits while native navigation is animating")
+  transition.finish();await request.value
+  precondition(first.applied,"The first catalog is published as soon as navigation completes")
+  transition.finish() // Repeated/late UIKit callback must never resume twice.
+  let rejected=Transition();rejected.registered=false
+  let rejectedDriver=driver(rejected);await rejectedDriver.load()
+  precondition(rejectedDriver.applied,"Rejected transition registration cannot strand the list")
+  rejected.finish();rejected.finish() // UIKit may still invoke completion after returning false.
+  let noAnimation=Transition();noAnimation.isAnimated=false
+  let immediate=driver(noAnimation);await immediate.load()
+  precondition(immediate.applied && noAnimation.calls==0,"Nonanimated navigation never adds a delay")
+  let absent=Driver();await absent.load();precondition(absent.applied)
+  let canceled=Transition()
+  let disappearing=driver(canceled)
+  let old=Task {await disappearing.load()};await ready(canceled)
+  old.cancel();disappearing.active=false;canceled.finish();await old.value
+  precondition(!disappearing.applied,"A canceled or detached table cannot publish its old catalog")
+  print("Repository transition checks passed: real completion, no-animation fast path, rejected/late callbacks and cancellation")
+ }
+}
+'''.replace('REPLY', reply).replace('WAIT', wait)
+with tempfile.TemporaryDirectory(prefix='aether-repo-transition-') as directory:
+    directory=pathlib.Path(directory)
+    path=directory/'Checks.swift';path.write_text(transition_checks)
+    subprocess.run(['swiftc','-swift-version','6','-warnings-as-errors','-parse-as-library',str(path),'-o',str(directory/'checks')],check=True)
+    subprocess.run([str(directory/'checks')],check=True)
+
+prepare = declaration(table_path, 'func prepareList(')
+assert prepare.index('await store.presentation(') < prepare.index('await self.waitForOpeningNavigationTransition()') < prepare.index('self.apply(')
+assert 'if !self._hasAppliedList { await self.waitForOpeningNavigationTransition() }' in prepare
+assert 'guard !Task.isCancelled, !self._isShutdown, self._generation == generation' in prepare
+assert 'if enabled {\n\t\t\t\t\tSearchHeaderOverlay' in field_source, 'Custom search host must remain mounted independently of expansion'
+assert 'transition.restore(isPresented: isPresented)' in field_source
+sources = (ROOT/'Aether/Views/Sources/SourcesView.swift').read_text()
+assert '_ = SourceLibraryDownloads.shared' in sources
+print('Repository opening guards passed: prepare off-main, defer first reload and preserve the custom search host')

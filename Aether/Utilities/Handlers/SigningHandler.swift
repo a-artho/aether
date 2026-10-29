@@ -227,6 +227,9 @@ final class SigningHandler: NSObject {
 				kind: .signed
 			)
 			}
+			if let committed = Storage.shared.signedApp(uuid: signedUUID) {
+				SourceLibraryDownloads.shared.recordCommittedApp(committed)
+			}
 			// Publish the row and its final operation state in one main-actor turn.
 			onCommitted()
 		}

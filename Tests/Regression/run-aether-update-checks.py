@@ -97,3 +97,55 @@ assert "for attempt in 1 2 3" in release_workflow
 assert not (repo / ".github/workflows/update_repo.yml").exists()
 
 print("Aether built-in update and release-manifest checks passed")
+
+# Execute the production version selection and row label against mixed catalogs.
+def declaration(source, marker):
+    start = source.index(marker)
+    end = source.index('{', start) + 1
+    depth = 1
+    while depth:
+        depth += (source[end] == '{') - (source[end] == '}')
+        end += 1
+    return source[start:end].replace('private ', '')
+
+library_view = (repo / 'Aether/Views/Library/LibraryView.swift').read_text()
+checks = r'''
+import Foundation
+struct App {var currentVersion:String?}
+struct Repo {var apps:[App]}
+struct SourceAppCatalogContext {var repository:Repo}
+enum Catalog {
+CATALOG
+}
+struct Installed {var version:String?;var build:String?}
+struct Row {
+ var app:Installed
+ var latestAvailableVersion:String? = nil
+ROW
+}
+func context(_ versions:[String?])->SourceAppCatalogContext {
+ SourceAppCatalogContext(repository:Repo(apps:versions.map {App(currentVersion:$0)}))
+}
+let catalogs=[context(["2.9","2.10",nil,"invalid","2.10.0"]),context(["2.11","2.8","2.11"])]
+precondition(Catalog.latestVersion(in:catalogs,newerThan:"2.9") == "2.11")
+precondition(Catalog.latestVersion(in:[context(["2.9","2.10"])],newerThan:"2.8") == "2.10",
+ "Version ordering must be numeric, not lexicographic")
+precondition(Catalog.latestVersion(in:[context(["2.8","2.9","invalid",nil])],newerThan:"2.9") == nil)
+precondition(Catalog.latestVersion(in:[],newerThan:"2.9") == nil)
+precondition(Catalog.latestVersion(in:catalogs,newerThan:nil) == nil)
+precondition(Row(app:Installed(version:"2.9",build:"100"),latestAvailableVersion:"2.11")._versionText == "2.9 → 2.11")
+precondition(Row(app:Installed(version:"2.9",build:"100"))._versionText == "2.9",
+ "All Apps rows preserve their installed-version presentation")
+precondition(Row(app:Installed(version:nil,build:"100"))._versionText == "100")
+print("Updates row checks passed: numeric latest across sources, invalid/empty catalogs and installed-to-latest label")
+'''
+methods = '\n'.join(declaration(update_catalog, marker) for marker in (
+    'static func latestVersion(', 'static func isNewer(', 'private static func components('))
+checks = checks.replace('CATALOG', methods).replace('ROW', declaration(library_view, 'private var _versionText:'))
+with tempfile.TemporaryDirectory(prefix='aether-update-row-') as temporary:
+    temporary = pathlib.Path(temporary)
+    swift = temporary / 'Checks.swift'
+    swift.write_text(checks)
+    executable = temporary / 'checks'
+    subprocess.run(['swiftc', '-swift-version', '6', str(swift), '-o', str(executable)], check=True)
+    subprocess.run([str(executable)], check=True)

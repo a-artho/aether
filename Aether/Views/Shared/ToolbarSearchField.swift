@@ -30,11 +30,15 @@ enum RootPageTitlePlacement: String, CaseIterable, Identifiable {
 struct FloatingNavigationAppearance: ViewModifier {
 	@AppStorage("Aether.mutedPageTitles") private var mutedPageTitles = false
 	@AppStorage("Aether.boldPageAndSectionTitles") private var boldPageAndSectionTitles = true
+	@Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
 	func body(content: Content) -> some View {
 		content
 			.scrollEdgeEffectStyle(.soft, for: .top)
 			.onAppear { NavigationTitleAppearance.apply(muted: mutedPageTitles, bold: boldPageAndSectionTitles) }
+			.onChange(of: dynamicTypeSize) { _, _ in
+				NavigationTitleAppearance.apply(muted: mutedPageTitles, bold: boldPageAndSectionTitles)
+			}
 			.onChange(of: mutedPageTitles) { _, muted in
 				NavigationTitleAppearance.apply(muted: muted, bold: boldPageAndSectionTitles)
 			}
@@ -50,12 +54,15 @@ private enum NavigationTitleAppearance {
 
 	static func apply(muted: Bool, bold: Bool) {
 		let titleColor = muted ? UIColor.secondaryLabel : UIColor.label
-		let state = "\(muted)-\(bold)"
-		if configuredState != state {
-			UINavigationBar.appearance().titleTextAttributes = titleAttributes(color: titleColor, font: bold ? boldFont(for: .headline) : nil)
-			UINavigationBar.appearance().largeTitleTextAttributes = titleAttributes(color: titleColor, font: bold ? boldFont(for: .largeTitle) : nil)
-			configuredState = state
-		}
+		let inlineFont = bold ? boldFont(for: .headline) : nil
+		let largeFont = bold ? boldFont(for: .largeTitle) : nil
+		let state = "\(muted)-\(bold)-\(inlineFont?.pointSize ?? 0)-\(largeFont?.pointSize ?? 0)"
+		// Appearance preferences are global, including existing modal bars.
+		// New bars inherit the proxy; only an effective style change needs a live sweep.
+		guard configuredState != state else { return }
+		UINavigationBar.appearance().titleTextAttributes = titleAttributes(color: titleColor, font: inlineFont)
+		UINavigationBar.appearance().largeTitleTextAttributes = titleAttributes(color: titleColor, font: largeFont)
+		configuredState = state
 
 		for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
 			for window in scene.windows {
@@ -175,6 +182,9 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 	// Different navigation actions need distinct identities for the native handoff.
 	// Keep each identity stable while its button becomes the search-close control.
 	private var secondaryToolbarID: String { hasTitleSearchMenu ? "navigation-filter" : "navigation-add" }
+	private var anchorMeasurementID: String {
+		"\(searchPlacement.rawValue)|\(pageTitlePlacement.rawValue)|\(isScreenActive)|\(boldPageAndSectionTitles)|\(statusUnderPageTitle)|\(title)"
+	}
 
 	func body(content: Content) -> some View {
 		content
@@ -282,6 +292,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 					guard !isPresented.wrappedValue else { return }
 					text.wrappedValue = ""
 				}
+				if !isScreenActive { transition.cancelPendingKeyboardTransition() }
 			}
 			.onScrollPhaseChange { _, phase in
 				if phase == .interacting { focus.wrappedValue = false }
@@ -294,7 +305,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 					Text(title).font(pageTitleFont).foregroundStyle(mutedPageTitles ? Color.secondary : Color.primary).lineLimit(1)
 					.contentShape(Rectangle())
 					.background {
-						WindowFrameReader { anchor in
+						WindowFrameReader(measurementID: anchorMeasurementID) { anchor in
 							guard isScreenActive, !transition.requested, !transition.expanded else { return }
 							searchButtonAnchor = anchor
 						}
@@ -340,7 +351,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 		}
 		.accessibilityLabel(transition.expanded ? String.localized("Cancel") : String.localized("Search"))
 		.background {
-			WindowFrameReader { anchor in
+			WindowFrameReader(measurementID: anchorMeasurementID) { anchor in
 				guard isScreenActive, !transition.expanded else { return }
 				searchButtonAnchor = anchor
 			}
@@ -369,7 +380,7 @@ struct SearchToolbarModifier<MenuContent: View>: ViewModifier {
 			}
 		}
 		.background {
-			WindowFrameReader { anchor in
+			WindowFrameReader(measurementID: anchorMeasurementID) { anchor in
 				guard isScreenActive, secondaryButtonAnchor != anchor else { return }
 				secondaryButtonAnchor = anchor
 			}
@@ -403,10 +414,12 @@ final class SearchToolbarTransition: ObservableObject {
 	func restore(isPresented: Bool) {
 		// Returning from details retains search without requesting the keyboard again.
 		generation += 1
+		let completion = isPresented ? nil : collapseCompletion
 		collapseCompletion = nil
 		requested = isPresented
-		expanded = isPresented
+		if expanded != isPresented { expanded = isPresented }
 		waitingForKeyboard = false
+		completion?()
 	}
 
 	func setPresented(_ presented: Bool, keyboardExpected: Bool = true) {
@@ -439,6 +452,14 @@ final class SearchToolbarTransition: ObservableObject {
 	func cancelPendingKeyboardTransition() {
 		generation += 1
 		waitingForKeyboard = false
+		// An open parent search is retained behind details. A search that was
+		// already closing must finish its cleanup when navigation interrupts it.
+		if !requested {
+			if expanded { expanded = false }
+			let completion = collapseCompletion
+			collapseCompletion = nil
+			completion?()
+		}
 	}
 
 	var isWaitingForKeyboard: Bool { waitingForKeyboard }
@@ -536,6 +557,7 @@ final class SearchTextFieldOwner {
 	private var isScreenActive = true
 
 	func register(_ field: SearchTextField) {
+		if self.field !== field { self.field?.setScreenActive(false) }
 		self.field = field
 		field.fieldOwner = self
 		field.setScreenActive(isScreenActive)
@@ -544,6 +566,10 @@ final class SearchTextFieldOwner {
 	func setScreenActive(_ active: Bool) {
 		isScreenActive = active
 		field?.setScreenActive(active)
+	}
+
+	func owns(_ field: SearchTextField) -> Bool {
+		isScreenActive && self.field === field
 	}
 
 	func unregister(_ field: SearchTextField) {
@@ -565,6 +591,7 @@ final class SearchTextField: UITextField, UITextFieldDelegate {
 	var focusChanged: ((Bool) -> Void)?
 	var keyboardChanged: ((Double, UInt) -> Void)?
 	private var keyboardObserver: NSObjectProtocol?
+	private var focusGeneration = 0
 	weak var fieldOwner: SearchTextFieldOwner?
 	private(set) var isScreenActive = false
 	private(set) var hasKeyboardSession = false
@@ -578,11 +605,13 @@ final class SearchTextField: UITextField, UITextFieldDelegate {
 	isolated deinit { removeKeyboardObserver() }
 	override func didMoveToWindow() {
 		super.didMoveToWindow()
+		focusGeneration += 1
 		updateKeyboardObserver()
 		updateFocus()
 	}
 	func setScreenActive(_ active: Bool) {
 		guard isScreenActive != active else { return }
+		focusGeneration += 1
 		isScreenActive = active
 		if !active {
 			hasKeyboardSession = false
@@ -637,8 +666,13 @@ final class SearchTextField: UITextField, UITextFieldDelegate {
 		self.keyboardObserver = nil
 	}
 	private func publishFocus() {
-		DispatchQueue.main.async { [weak self] in
-			guard let self else { return }
+		let generation = focusGeneration
+		let owner = fieldOwner
+		let windowID = window.map(ObjectIdentifier.init)
+		DispatchQueue.main.async { [weak self, weak owner] in
+			guard let self, let owner, self.isScreenActive, self.window != nil,
+				self.focusGeneration == generation, owner.owns(self), self.fieldOwner === owner,
+				self.window.map(ObjectIdentifier.init) == windowID else { return }
 			self.focusChanged?(self.isFirstResponder)
 		}
 	}

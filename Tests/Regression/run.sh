@@ -86,3 +86,7 @@ python3 "$test_dir/run-refresh-verification-checks.py"
 python3 "$test_dir/run-followup-audit-checks.py"
 python3 "$test_dir/run-settings-search-checks.py"
 python3 "$test_dir/run-navigation-hardening-checks.py"
+
+python3 "$test_dir/run-source-library-checks.py"
+
+python3 "$test_dir/run-search-navigation-checks.py"

@@ -38,11 +38,16 @@ enum Logger {static let signing=Log()}
 @MainActor final class Storage {
  static let shared=Storage();var inserted=false;var fails=false
  enum Kind {case signed}
+ func signedApp(uuid:String)->App? {inserted ? App(uuid:uuid) : nil}
  func addSigned(uuid:String,source:URL?,certificateUUID:String?,appName:String?,appIdentifier:String?,appVersion:String?,appIcon:String?) throws {
   precondition(LibraryArtifactIndex.shared.recorded,"Stable row identity must exist before the database publishes")
   if fails {throw SigningFileHandlerError.appNotFound};inserted=true
  }
  func copySourceMetadata(from:String?,to:String,kind:Kind){}
+}
+@MainActor final class SourceLibraryDownloads {
+ static let shared=SourceLibraryDownloads();var commits=0
+ func recordCommittedApp(_ app:App) {precondition(Storage.shared.inserted);commits += 1}
 }
 final class Handler {
  let _uuid="signed";let _fileManager=Files();let _app=Source();let _options=Options();var appCertificate:Certificate?
@@ -66,7 +71,7 @@ s += '''
   m.queuedInstalls=[];m.currentRequest=nil;m.retiringAppKey=app.uuid
   precondition(m.containsInstallation(for:app) && !m.hasPendingInstallation(for:app),"Retiring job still protects files")
   var committed=false
-  try await Handler().addToDatabase {precondition(Storage.shared.inserted);committed=true}
+  try await Handler().addToDatabase {precondition(Storage.shared.inserted && SourceLibraryDownloads.shared.commits==1);committed=true}
   precondition(committed && LibraryArtifactIndex.shared.recorded,"Publication records lineage within the commit")
   LibraryArtifactIndex.shared.recorded=false
   Storage.shared.inserted=false;Storage.shared.fails=true;committed=false
@@ -79,6 +84,7 @@ s += '''
   let cancelled=Task {withUnsafeCurrentTask {$0?.cancel()};try await Handler().addToDatabase {committed=true}}
   _ = await cancelled.result
   precondition(!committed && !Storage.shared.inserted,"Cancelled job cannot publish")
+  precondition(SourceLibraryDownloads.shared.commits==1,"Failed, missing and cancelled artifacts cannot publish a download checkmark")
   print("Signing publication and Library queue state checks passed")
  }
 }

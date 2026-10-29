@@ -179,10 +179,10 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		) { [weak self] notification in
 			guard let connection = notification.object as? NEVPNConnection else { return }
 			let identity = ObjectIdentifier(connection)
-			let status = connection.status
 			Task { @MainActor [weak self] in
 				guard let self, let current = self.manager?.connection, identity == ObjectIdentifier(current) else { return }
-				self.updateState(for: status)
+				// The main-actor hop may outlive this notification's status.
+				self.updateState(for: current.status)
 			}
 		}
 		configurationObserver = NotificationCenter.default.addObserver(

@@ -29,7 +29,19 @@ struct SourceAppsCellView: View {
 	var selectionOwner: SelectionOwner = .swiftUIButton
 	var onSelect: (() -> Void)? = nil
 	
+	@ViewBuilder
 	var body: some View {
+		switch selectionOwner {
+		case .tableView:
+			_rowBody
+		case .swiftUIButton:
+			_rowBody.contextMenu {
+				SourceDownloadAgainAction(sourceURL: sourceURL, source: source, app: app)
+			}
+		}
+	}
+
+	private var _rowBody: some View {
 		VStack {
 			HStack(spacing: NBRowMetrics.contentSpacing) {
 				_selectableContent {
