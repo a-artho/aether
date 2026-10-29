@@ -8,7 +8,6 @@
 import SwiftUI
 import NimbleViews
 import AltSourceKit
-import OSLog
 
 // MARK: - View
 struct SourcesAddView: View {
@@ -16,6 +15,8 @@ struct SourcesAddView: View {
 
 	@State private var _isImporting = false
 	@State private var _isSaving = false
+	@State private var _pendingTask: Task<Void, Never>?
+	@State private var _operationID = UUID()
 	@State private var _sourceURL: String
 	private let _initialURL: String
 	
@@ -31,7 +32,9 @@ struct SourcesAddView: View {
 	private func _saveSource() {
 		guard !_isSaveDisabled else { return }
 		_isSaving = true
-		FR.handleSource(_sourceURL) { success in
+		let operation = UUID()
+		_operationID = operation
+		_pendingTask = FR.handleSource(_sourceURL, shouldCommit: { _operationID == operation }) { success in
 			_isSaving = false
 			if success {
 				dismiss()
@@ -104,7 +107,10 @@ struct SourcesAddView: View {
 				}
 			}
 			.toolbar {
-				NBToolbarButton(role: .cancel)
+				NBToolbarButton(systemImage: "xmark", placement: .cancellationAction) {
+					_cancelPendingOperation()
+					dismiss()
+				}
 				
 				if !_isSaving && !_isImporting {
 					NBToolbarButton(
@@ -133,6 +139,7 @@ struct SourcesAddView: View {
 			#endif
 		}
 		.presentationDetents([.height(370)])
+		.onDisappear { _cancelPendingOperation() }
 	}
 	
 	private func _fetchImportedRepositories(
@@ -153,64 +160,33 @@ struct SourcesAddView: View {
 			return
 		}
 		
-		Task {
-			let fetched = await _concurrentFetchRepositories(from: repoUrls)
-			guard !fetched.isEmpty else {
-				await MainActor.run {
-					_isImporting = false
-					UIAlertController.showAlertWithOk(
-						title: .localized("Error"),
-						message: .localized("No sources could be imported.")
-					)
-				}
+		let operation = UUID()
+		_operationID = operation
+		_pendingTask = Task { @MainActor in
+			let snapshots = await SourceRepositoryService.shared.snapshots(from: repoUrls)
+			guard !Task.isCancelled, _operationID == operation else { return }
+			guard !snapshots.isEmpty else {
+				_isImporting = false
+				UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("No sources could be imported."))
 				return
 			}
-
-			let dict = Dictionary(fetched, uniquingKeysWith: { first, _ in first })
-
-			await MainActor.run {
-				Storage.shared.addSources(repos: dict) { error in
-					_isImporting = false
-					if let error {
-						UIAlertController.showAlertWithOk(
-							title: .localized("Error"),
-							message: error.localizedDescription
-						)
-						return
-					}
-						Task { await SourcesViewModel.shared.cache(dict) }
-					completion()
+			Storage.shared.addSources(repos: snapshots.mapValues(\.repository)) { error in
+				_isImporting = false
+				if let error {
+					UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
+					return
 				}
+				SourcesViewModel.shared.cache(snapshots)
+				completion()
 			}
 		}
 	}
-	
-	private func _concurrentFetchRepositories(
-		from urls: [URL]
-	) async -> [(url: URL, data: ASRepository)] {
-		var results: [(url: URL, data: ASRepository)] = []
-		let service = SourceRepositoryService.shared
-		
-		await withTaskGroup(of: (url: URL, data: ASRepository)?.self) { group in
-			for url in urls {
-				group.addTask {
-					do {
-						let snapshot = try await service.fetch(from: url)
-						return (url: url, data: snapshot.repository)
-					} catch {
-						Logger.misc.error("Failed to fetch \(url): \(error.localizedDescription)")
-						return nil
-					}
-				}
-			}
-			for await item in group {
-				if let item {
-					results.append(item)
-				}
-			}
-		}
-		
-		return results
-	}
 
+	private func _cancelPendingOperation() {
+		_operationID = UUID()
+		_pendingTask?.cancel()
+		_pendingTask = nil
+		_isSaving = false
+		_isImporting = false
+	}
 }

@@ -304,57 +304,46 @@ enum FR {
 		HeartbeatManager.shared.resetRSDTunnel()
 	}
 
+	@discardableResult
 	static func handleSource(
 		_ urlString: String,
+		shouldCommit: @escaping @MainActor @Sendable () -> Bool = { true },
 		completion: (@MainActor @Sendable (Bool) -> Void)? = nil
-	) {
+	) -> Task<Void, Never>? {
 		var trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !trimmed.isEmpty else {
-			completion?(false)
-			return
-		}
-
+		guard !trimmed.isEmpty else { completion?(false); return nil }
 		if !trimmed.lowercased().hasPrefix("http://") && !trimmed.lowercased().hasPrefix("https://") {
 			trimmed = "https://" + trimmed
 		}
-
 		guard let url = URL(string: trimmed) else {
-			DispatchQueue.main.async {
-				UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Invalid URL."))
-				completion?(false)
-			}
-			return
+			UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Invalid URL."))
+			completion?(false)
+			return nil
 		}
-
-		Task {
+		return Task { @MainActor in
 			do {
 				let snapshot = try await SourceRepositoryService.shared.fetch(from: url)
-				let data = snapshot.repository
-				let id = data.id ?? url.absoluteString
-
-				DispatchQueue.main.async {
-					if !Storage.shared.sourceExists(id) {
-						Storage.shared.addSource(url, repository: data, id: id) { error in
-							if let error = error {
-								UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
-								completion?(false)
-							} else {
-								Task { @MainActor in
-									await SourcesViewModel.shared.cache(data, forIdentifier: id)
-									completion?(true)
-								}
-							}
-						}
-					} else {
-						UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Repo already added."))
+				guard !Task.isCancelled, shouldCommit() else { return }
+				let id = snapshot.repository.id ?? url.absoluteString
+				guard !Storage.shared.sourceExists(id) else {
+					UIAlertController.showAlertWithOk(title: .localized("Error"), message: .localized("Repo already added."))
+					completion?(false)
+					return
+				}
+				// No suspension between the presentation guard and the durable commit.
+				Storage.shared.addSource(url, repository: snapshot.repository, id: id) { error in
+					if let error {
+						UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
 						completion?(false)
+					} else {
+						SourcesViewModel.shared.cache(snapshot, forIdentifier: id)
+						completion?(true)
 					}
 				}
 			} catch {
-				DispatchQueue.main.async {
-					UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
-					completion?(false)
-				}
+				guard !Task.isCancelled, shouldCommit() else { return }
+				UIAlertController.showAlertWithOk(title: .localized("Error"), message: error.localizedDescription)
+				completion?(false)
 			}
 		}
 	}

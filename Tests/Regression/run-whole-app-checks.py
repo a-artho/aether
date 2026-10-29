@@ -60,8 +60,13 @@ enum AetherBuiltInRepository {
 }
 actor SourceRepositoryService {
  struct Snapshot:Sendable {let revision:String;let repository:ASRepository}
- var fetches=0;var reads=0
- func cached(for url:URL) async -> Snapshot? {reads+=1;return nil}
+ var fetches=0;var reads=0;var activeReads=0;var peakReads=0
+ func cached(for url:URL) async -> Snapshot? {
+  reads+=1;activeReads+=1;peakReads=max(peakReads,activeReads)
+  defer{activeReads-=1}
+  try? await Task.sleep(nanoseconds:10_000_000)
+  return nil
+ }
  func fetch(from url:URL,refresh:Bool,allowEmptyCatalog:Bool) async throws -> Snapshot {
   fetches+=1;try await Task.sleep(nanoseconds:url.lastPathComponent == "slow" ? 400_000_000 : 100_000_000)
   return Snapshot(revision:"one",repository:ASRepository(id:1))
@@ -79,7 +84,7 @@ enum Logger {static let misc=os.Logger(subsystem:"AetherRegression",category:"So
 for name in [
     'func isRefreshing(', 'func ensureSourcesLoaded(', 'private func _userRequests(',
     'private func _requests(', 'private func _hasCatalog(', 'private func _publishBuiltInAether(',
-    'private func _restoreCachedSources(', 'private func _fetchRequests(', 'private func _warm(',
+    'private func _restoreCachedSources(', 'private func _fetchRequests(',
 ]:
     s += declaration('Aether/Views/Sources/SourcesViewModel.swift', name)+'\n'
 s += '}\n'
@@ -157,6 +162,8 @@ func check(_ value:@autoclosure ()->Bool,_ message:String){precondition(value(),
   check(vm.sources.isEmpty && vm.refreshErrors.isEmpty,"Cancellation publishes neither stale catalog nor failure")
   let reads=await vm._repositoryService.reads
   check(reads==sources.count+1,"Navigation restores user sources and the built-in Aether feed once")
+  let peakReads=await vm._repositoryService.peakReads
+  check(peakReads <= 4,"Disk restoration uses a rolling window instead of decoding every source together")
 
   check(vm.sourceRefreshOwners.isEmpty,"Cancellation releases repository row spinners")
   let independent=VM()

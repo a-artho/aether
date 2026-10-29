@@ -23,7 +23,9 @@ struct SourceAppRowID: Hashable, Sendable {
 	let occurrence: Int
 }
 
-struct SourceAppRow: Sendable {
+/// One immutable row is shared by projections, sort orders and filtered lists.
+final class SourceAppRow: Sendable {
+	private static let bundleSearchLocale = Locale(identifier: "en_US")
 	let id: SourceAppRowID
 	let sourceObjectURI: String
 	let sourceURL: URL?
@@ -35,6 +37,98 @@ struct SourceAppRow: Sendable {
 	let date: Date?
 	let letter: String
 	let searchFields: [String]
+	let asciiSearchFields: [String?]
+
+	init(id: SourceAppRowID, sourceObjectURI: String, sourceURL: URL?, source: ASRepository,
+		app: ASRepository.App, contentRevision: Int, name: String, bundleID: String, date: Date?,
+		letter: String, searchFields: [String]) {
+		self.id = id; self.sourceObjectURI = sourceObjectURI; self.sourceURL = sourceURL
+		self.source = source; self.app = app; self.contentRevision = contentRevision
+		self.name = name; self.bundleID = bundleID; self.date = date; self.letter = letter
+		self.searchFields = searchFields
+		self.asciiSearchFields = searchFields.map(Self.lowercaseASCII)
+	}
+
+	static func lowercaseASCII(_ value: String) -> String? {
+		guard value.utf8.allSatisfy({ $0 < 128 }) else { return nil }
+		return String(decoding: value.utf8.map { (65...90).contains($0) ? $0 + 32 : $0 }, as: UTF8.self)
+	}
+
+	func matches(_ query: String, asciiQuery: SourceAppASCIIQuery?, englishText: Bool) -> Bool {
+		searchFields.enumerated().contains { index, field in
+			// Keep Foundation's localized matching for Unicode and other locales.
+			// Bundle identifiers already use the fixed en_US locale in the fallback.
+			if (index == 0 || englishText), let asciiQuery, let ascii = asciiSearchFields[index] {
+				return asciiQuery.contains(in: ascii)
+			}
+			return index == 0
+				? field.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], locale: Self.bundleSearchLocale) != nil
+				: field.localizedCaseInsensitiveContains(query)
+		}
+	}
+}
+
+/// A byte search avoids repeated Unicode collation of already-normalized ASCII.
+/// Unicode text and non-English text matching continue to use Foundation above.
+struct SourceAppASCIIQuery: Sendable {
+	private let bytes: [UInt8]
+	private let skips: [Int]
+	init?(_ query: String) {
+		guard !query.isEmpty, let lowercase = SourceAppRow.lowercaseASCII(query) else { return nil }
+		let bytes = Array(lowercase.utf8)
+		self.bytes = bytes
+		var skips = Array(repeating: bytes.count, count: 128)
+		for index in bytes.indices.dropLast() { skips[Int(bytes[index])] = bytes.count - index - 1 }
+		self.skips = skips
+	}
+	func contains(in field: String) -> Bool {
+		var field = field
+		return field.withUTF8 { input in
+			var end = bytes.count - 1
+			while end < input.count {
+				var matched = 0
+				while matched < bytes.count && input[end - matched] == bytes[bytes.count - matched - 1] { matched += 1 }
+				if matched == bytes.count { return true }
+				end += skips[Int(input[end])]
+			}
+			return false
+		}
+	}
+}
+
+final class SourceAppRowPool: Sendable {
+	let ordered: [SourceAppRow]
+	let byID: [SourceAppRowID: SourceAppRow]
+	let estimatedCost: Int
+
+	init(_ rows: [SourceAppRow]) {
+		ordered = rows
+		byID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+		// Conservative accounting for row storage, lookup buckets and retained text.
+		estimatedCost = rows.reduce(0) { cost, row in
+			let storage = MemoryLayout<ASRepository.App>.stride + MemoryLayout<ASRepository>.stride + 256
+			let text = row.searchFields.reduce(0) { $0 + $1.utf8.count }
+			let index = row.asciiSearchFields.reduce(0) { $0 + ($1?.utf8.count ?? 0) }
+			let versions = (row.app.versions ?? []).reduce(0) { $0 + 128 + ($1.localizedDescription?.utf8.count ?? 0) }
+			return cost + storage + text + index + versions
+		}
+	}
+}
+
+/// Orderings retain the same source pools. Search only adds an ID membership set.
+struct SourceAppRows: Sendable {
+	let pools: [String: SourceAppRowPool]
+	let matchingIDs: Set<SourceAppRowID>?
+	var count: Int { matchingIDs?.count ?? pools.values.reduce(0) { $0 + $1.ordered.count } }
+	var isEmpty: Bool { count == 0 }
+	var values: [SourceAppRow] {
+		if let matchingIDs { return matchingIDs.compactMap { self[$0] } }
+		return pools.values.flatMap(\.ordered)
+	}
+	subscript(id: SourceAppRowID) -> SourceAppRow? {
+		if let matchingIDs, !matchingIDs.contains(id) { return nil }
+		return pools[id.source]?.byID[id]
+	}
 }
 
 struct PreparedSourceAppList: Sendable {
@@ -52,16 +146,16 @@ struct PreparedSourceAppList: Sendable {
 		}
 	}
 	let sections: [Section]
-	let rows: [SourceAppRowID: SourceAppRow]
+	let rows: SourceAppRows
 	var catalogRevisions: [String] = []
 
 	/// Content changes exclude random decoder UUIDs. UIKit keeps unchanged cells alive.
 	func changedRows(comparedTo previous: Self?) -> [SourceAppRowID] {
 		guard let previous else { return [] }
 		if !catalogRevisions.isEmpty, catalogRevisions == previous.catalogRevisions { return [] }
-		return rows.compactMap { id, row in
-			guard let old = previous.rows[id], old.contentRevision != row.contentRevision else { return nil }
-			return id
+		return sections.flatMap(\.rows).filter { id in
+			guard let row = rows[id], let old = previous.rows[id] else { return false }
+			return old.contentRevision != row.contentRevision
 		}
 	}
 }
@@ -97,22 +191,61 @@ actor SourceAppListStore {
 	}
 	private struct Projection {
 		let key: [String]
-		let rows: [SourceAppRow]
+		let pool: SourceAppRowPool
 	}
 	private let cacheDirectory: URL?
 	private let diskWriter = DispatchQueue(label: "Aether.SourceListIndexes", qos: .utility)
 	private var projections: [String: Projection] = [:]
 	private var removedSources = Set<String>()
 	private var prepared: [Key: PreparedSourceAppList] = [:]
+	private var projectionAccess: [String: UInt64] = [:]
+	private var preparedAccess: [Key: UInt64] = [:]
+	private var accessClock: UInt64 = 0
+	private let memoryBudget: Int
+	private let memoryObserver: SourceListMemoryObserver
 
 	init(cacheDirectory: URL? = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
-		.first?.appendingPathComponent("SourceListIndexes", isDirectory: true)) {
+		.first?.appendingPathComponent("SourceListIndexes", isDirectory: true),
+		memoryBudget: Int = 48 * 1024 * 1024) {
 		self.cacheDirectory = cacheDirectory
+		self.memoryBudget = max(0, memoryBudget)
+		let observer = SourceListMemoryObserver()
+		self.memoryObserver = observer
+		Task { @MainActor [weak self] in
+			observer.observe { [weak self] in Task { await self?.discardInactiveCaches() } }
+		}
+	}
+
+	/// Active coordinators retain their pools; memory pressure only drops optional reuse.
+	func discardInactiveCaches() {
+		prepared.removeAll(); projections.removeAll()
+		preparedAccess.removeAll(); projectionAccess.removeAll()
+	}
+
+	private func trimCaches() {
+		func cost() -> Int {
+			var pools: [ObjectIdentifier: SourceAppRowPool] = [:]
+			for projection in projections.values { pools[ObjectIdentifier(projection.pool)] = projection.pool }
+			for list in prepared.values {
+				for pool in list.rows.pools.values { pools[ObjectIdentifier(pool)] = pool }
+			}
+			return pools.values.reduce(0) { $0 + $1.estimatedCost }
+				+ prepared.values.reduce(0) { $0 + $1.rows.count * MemoryLayout<SourceAppRowID>.stride }
+		}
+		while prepared.count > 8 || projections.count > 16 || cost() > memoryBudget {
+			let list = preparedAccess.min { $0.value < $1.value }
+			let projection = projectionAccess.min { $0.value < $1.value }
+			guard list != nil || projection != nil else { break }
+			if let list, projection == nil || list.value <= projection!.value {
+				prepared[list.key] = nil; preparedAccess[list.key] = nil
+			} else if let projection {
+				projections[projection.key] = nil; projectionAccess[projection.key] = nil
+			}
+		}
 	}
 
 	func clearCache() {
-		prepared.removeAll()
-		projections.removeAll()
+		discardInactiveCaches()
 		if let cacheDirectory {
 			// Drain older writes before deleting so they cannot restore a reset index.
 			diskWriter.sync { try? FileManager.default.removeItem(at: cacheDirectory) }
@@ -130,11 +263,18 @@ actor SourceAppListStore {
 			locale: Locale.current.identifier, timeZone: TimeZone.current.identifier, unknownDate: unknownDate)
 		let base: PreparedSourceAppList
 		if let cached = prepared[key] {
+			accessClock &+= 1; preparedAccess[key] = accessClock
+			for source in cached.rows.pools.keys where projections[source] != nil { projectionAccess[source] = accessClock }
 			os_signpost(.event, log: sourceAppListSignpostLog, name: "Prepared list cache hit", "%{public}d", cached.rows.count)
 			base = cached
 		} else {
 			os_signpost(.event, log: sourceAppListSignpostLog, name: "Prepared list cache miss", "%{public}d", contexts.reduce(0) { $0 + $1.repository.apps.count })
-			let rows = try contexts.flatMap { try projection(for: $0) }
+			var pools: [String: SourceAppRowPool] = [:]
+			let rows = try contexts.flatMap { context in
+				let pool = try projection(for: context)
+				pools[context.sourceObjectURI] = pool
+				return pool.ordered
+			}
 			let storedOrder = loadOrder(key: key, count: rows.count)
 			os_signpost(.event, log: sourceAppListSignpostLog,
 				name: storedOrder == nil ? "Sort index cache miss" : "Sort index cache hit", "%{public}d", rows.count)
@@ -142,7 +282,7 @@ actor SourceAppListStore {
 			try Task.checkCancellation()
 			base = PreparedSourceAppList(
 				sections: order.sections.map { .init(title: $0.title, rows: $0.indices.map { rows[$0].id }, date: $0.date) },
-				rows: Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) }),
+				rows: SourceAppRows(pools: pools, matchingIDs: nil),
 				catalogRevisions: sourceKeys
 			)
 			// Superseded catalog revisions must not accumulate large retained app graphs.
@@ -151,36 +291,36 @@ actor SourceAppListStore {
 					!= key.sources.enumerated().filter { $0.offset % 3 == 0 }.map(\.element)
 				|| old.sources == key.sources
 			}
-			if prepared.count >= 8, let oldest = prepared.keys.first { prepared[oldest] = nil }
+			preparedAccess = preparedAccess.filter { prepared[$0.key] != nil }
 			prepared[key] = base
+			accessClock &+= 1; preparedAccess[key] = accessClock
+			trimCaches()
 			if storedOrder == nil { persist(order) }
 		}
 		guard !query.isEmpty else { return base }
 
-		let locale = Locale(identifier: "en_US")
+		let asciiQuery = SourceAppASCIIQuery(query)
+		let englishText = Locale.current.language.languageCode?.identifier == "en"
 		var sections: [PreparedSourceAppList.Section] = []
-		var matches: [SourceAppRowID: SourceAppRow] = [:]
+		var matches = Set<SourceAppRowID>()
 		for section in base.sections {
 			var ids: [SourceAppRowID] = []
 			for (index, id) in section.rows.enumerated() {
 				if index % 256 == 0 { try Task.checkCancellation() }
 				guard let row = base.rows[id] else { continue }
-				if row.searchFields.enumerated().contains(where: { index, field in
-					index == 0
-						? field.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], locale: locale) != nil
-						: field.localizedCaseInsensitiveContains(query)
-				}) {
+				if row.matches(query, asciiQuery: asciiQuery, englishText: englishText) {
 					ids.append(id)
-					matches[id] = row
+					matches.insert(id)
 				}
 			}
 			if !ids.isEmpty { sections.append(.init(title: section.title, rows: ids, date: section.date)) }
 		}
-		return PreparedSourceAppList(sections: sections, rows: matches, catalogRevisions: base.catalogRevisions)
+		return PreparedSourceAppList(sections: sections,
+			rows: SourceAppRows(pools: base.rows.pools, matchingIDs: matches), catalogRevisions: base.catalogRevisions)
 	}
 
-	/// Prepare the selected full-list ordering before its repository is published as ready.
-	/// Existing projections, ordering indexes, and bounded prepared-list caches are reused.
+	/// Optionally prepare a requested full-list ordering. Update-only catalog refreshes
+	/// do not need browsing projections; visible coordinators prepare them on demand.
 	func warm(
 		contexts: [SourceAppCatalogContext], sort: String, ascending: Bool, unknownDate: String
 	) throws {
@@ -237,18 +377,32 @@ actor SourceAppListStore {
 	func removeSource(_ source: String) {
 		removedSources.insert(source)
 		projections[source] = nil
+		projectionAccess[source] = nil
 		prepared = prepared.filter { !$0.key.sources.enumerated().contains { $0.offset % 3 == 0 && $0.element == source } }
+		preparedAccess = preparedAccess.filter { prepared[$0.key] != nil }
 	}
 
 	func changedRows(in list: PreparedSourceAppList, comparedTo previous: PreparedSourceAppList?) -> [SourceAppRowID] {
 		list.changedRows(comparedTo: previous)
 	}
 
-	private func projection(for context: SourceAppCatalogContext) throws -> [SourceAppRow] {
+	private func projection(for context: SourceAppCatalogContext) throws -> SourceAppRowPool {
 		let key = [context.revision, context.sourceURL?.absoluteString ?? ""]
 		if let cached = projections[context.sourceObjectURI], cached.key == key {
-			os_signpost(.event, log: sourceAppListSignpostLog, name: "Projection cache hit", "%{public}d", cached.rows.count)
-			return cached.rows
+			accessClock &+= 1; projectionAccess[context.sourceObjectURI] = accessClock
+			os_signpost(.event, log: sourceAppListSignpostLog, name: "Projection cache hit", "%{public}d", cached.pool.ordered.count)
+			return cached.pool
+		}
+		// Evicting a projection lookup need not rebuild rows retained by a hot ordering.
+		for list in prepared.values {
+			let revisions = list.catalogRevisions
+			guard let index = revisions.indices.first(where: { $0 % 3 == 0 && revisions[$0] == context.sourceObjectURI }),
+				revisions[index + 1] == (context.sourceURL?.absoluteString ?? ""),
+				revisions[index + 2] == context.revision,
+				let pool = list.rows.pools[context.sourceObjectURI] else { continue }
+			projections[context.sourceObjectURI] = Projection(key: key, pool: pool)
+			accessClock &+= 1; projectionAccess[context.sourceObjectURI] = accessClock
+			return pool
 		}
 		os_signpost(.event, log: sourceAppListSignpostLog, name: "Projection cache miss", "%{public}d", context.repository.apps.count)
 		var repository = context.repository
@@ -275,11 +429,17 @@ actor SourceAppListStore {
 				bundleID: app.id ?? "", date: app.currentDate?.date, letter: letter,
 				searchFields: [app.id ?? ""] + Array(Set([app.name, app.description, app.subtitle, app.localizedDescription].compactMap { $0 }))))
 		}
-		projections[context.sourceObjectURI] = Projection(key: key, rows: rows)
-		if projections.count > 16, let victim = projections.keys.first(where: { $0 != context.sourceObjectURI }) {
-			projections[victim] = nil
+		let pool = SourceAppRowPool(rows)
+		projections[context.sourceObjectURI] = Projection(key: key, pool: pool)
+		accessClock &+= 1; projectionAccess[context.sourceObjectURI] = accessClock
+		// Refreshing one repo also releases old All Repos orderings containing it.
+		prepared = prepared.filter { entry in
+			guard let index = entry.key.sources.indices.first(where: { $0 % 3 == 0 && entry.key.sources[$0] == context.sourceObjectURI }) else { return true }
+			return entry.key.sources[index + 1] == (context.sourceURL?.absoluteString ?? "")
+				&& entry.key.sources[index + 2] == context.revision
 		}
-		return rows
+		preparedAccess = preparedAccess.filter { prepared[$0.key] != nil }
+		return pool
 	}
 
 	private func sourceFingerprint(_ context: SourceAppCatalogContext) -> Int {
@@ -403,4 +563,14 @@ actor SourceAppListStore {
 			} catch { /* Disk indexes are optional; in-memory preparation remains usable. */ }
 		}
 	}
+}
+
+private final class SourceListMemoryObserver: @unchecked Sendable {
+	private var token: NSObjectProtocol?
+	@MainActor
+	func observe(_ action: @escaping @Sendable () -> Void) {
+		token = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification,
+			object: nil, queue: nil) { _ in action() }
+	}
+	deinit { if let token { NotificationCenter.default.removeObserver(token) } }
 }

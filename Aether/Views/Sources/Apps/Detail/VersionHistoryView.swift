@@ -20,7 +20,8 @@ struct VersionHistoryView: View {
 	var body: some View {
 		ScrollView {
 			LazyVStack(spacing: 12) {
-				ForEach(versions) { version in
+				ForEach(SourceAppVersionEntry.entries(for: versions)) { entry in
+					let version = entry.version
 					AppVersionInfo(
 						version: version.version,
 						date: version.date?.date,
@@ -62,5 +63,31 @@ struct VersionHistoryView: View {
 			.padding(.top, 8)
 		}
 		.aetherAmbientBackground()
+	}
+}
+
+/// View identity includes the artifact and disambiguates exact duplicates without
+/// changing the model's version/build comparison semantics.
+struct SourceAppVersionEntry: Identifiable {
+	struct Identity: Hashable {
+		let version: String
+		let build: String?
+		let downloadURL: URL?
+	}
+	struct ID: Hashable {
+		let identity: Identity
+		let occurrence: Int
+	}
+	let id: ID
+	let version: ASRepository.App.Version
+
+	static func entries(for versions: [ASRepository.App.Version]) -> [Self] {
+		var occurrences: [Identity: Int] = [:]
+		return versions.map { version in
+			let identity = Identity(version: version.version, build: version.build, downloadURL: version.downloadURL)
+			let occurrence = occurrences[identity, default: 0]
+			occurrences[identity] = occurrence + 1
+			return Self(id: ID(identity: identity, occurrence: occurrence), version: version)
+		}
 	}
 }

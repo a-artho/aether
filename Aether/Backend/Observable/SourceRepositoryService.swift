@@ -72,6 +72,37 @@ actor SourceRepositoryService {
 		await loadEntry(for: url)?.snapshot
 	}
 
+	/// A rolling window bounds downloads/decoded results and detached disk readers.
+	func snapshots(from urls: [URL], limit: Int = 4) async -> [URL: Snapshot] {
+		var seen = Set<URL>()
+		let urls = urls.filter { seen.insert($0).inserted }
+		return await withTaskGroup(of: (URL, Snapshot?).self) { group in
+			var next = 0
+			func enqueue(_ url: URL) {
+				group.addTask {
+					guard !Task.isCancelled else { return (url, nil) }
+					do { return (url, try await self.fetch(from: url)) }
+					catch is CancellationError { return (url, nil) }
+					catch {
+						if !Task.isCancelled {
+							os_log("Source import failed: %{public}@ (%{public}@)", log: sourceRepositorySignpostLog,
+								type: .error, url.absoluteString, error.localizedDescription)
+						}
+						return (url, nil)
+					}
+				}
+			}
+			for url in urls.prefix(max(1, limit)) { enqueue(url); next += 1 }
+			var result: [URL: Snapshot] = [:]
+			for await (url, snapshot) in group {
+				guard !Task.isCancelled else { group.cancelAll(); break }
+				if let snapshot { result[url] = snapshot }
+				if next < urls.count { enqueue(urls[next]); next += 1 }
+			}
+			return result
+		}
+	}
+
 	/// Explicit refresh always revalidates. Normal consumers may share a recent check.
 	func fetch(from url: URL, refresh: Bool = false, forceFullFetch: Bool = false, allowEmptyCatalog: Bool = false) async throws -> Snapshot {
 		if let flight = inFlight[url] {

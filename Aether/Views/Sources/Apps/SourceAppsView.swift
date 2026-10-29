@@ -35,7 +35,8 @@ struct SourceAppsView: View {
 		let raw = UserDefaults.standard.string(forKey: "Aether.sortOptionRawValue") ?? "latest"
 		return raw == "date" ? .latest : SortOption(rawValue: raw) ?? .latest
 	}()
-	@State var isLoading = true
+	@State private var _completedLoadKey: String?
+	@State private var _loadAttempt = 0
 	@State private var _searchText = ""
 	@ObservedObject private var router = SourcesRouter.shared
 
@@ -58,6 +59,19 @@ struct SourceAppsView: View {
 	var searchFocus: Binding<Bool>
 	@State private var _sourceContexts: [SourceRepositoryContext]?
 	@State private var _loadedCatalogRevision: Int?
+	@State private var _loadedSourceKeys: [String] = []
+
+	private var _sourceKeys: [String] { object.map { $0.objectID.uriRepresentation().absoluteString } }
+	private var _loadKey: String { "\(_sourceKeys)|\(viewModel.cacheGeneration)|\(_loadAttempt)" }
+	private var isLoading: Bool {
+		(_sourceContexts?.contains { !$0.repository.apps.isEmpty } != true) && _completedLoadKey != _loadKey
+	}
+	private var _loadFailure: String? {
+		guard _completedLoadKey == _loadKey,
+			object.contains(where: { viewModel.repository(for: $0) == nil }) else { return nil }
+		return object.compactMap { viewModel.refreshErrors[$0.objectID.uriRepresentation().absoluteString] }.first
+			?? .localized("Unable to load this repo. Try again.")
+	}
 
 	private var _collectionSearchPresented: Binding<Bool> {
 		Binding(
@@ -97,6 +111,11 @@ struct SourceAppsView: View {
 					}
 				)
 				.ignoresSafeArea()
+			} else if let error = _loadFailure {
+				TabPlaceholderView(title: .localized("Unable to Load Repo"), description: error,
+					systemImage: "exclamationmark.triangle") {
+					Button { _loadAttempt += 1 } label: { Text(.localized("Retry")) }
+				}
 			} else {
 				TabPlaceholderView(
 					title: .localized("No Apps"),
@@ -121,19 +140,20 @@ struct SourceAppsView: View {
 			}
 		}
 		.onAppear {
-			if viewModel.isFinished || object.contains(where: { viewModel.repository(for: $0) != nil }) {
-				_load()
-			}
+			_load()
 			_sortOption = _sortOptionRawValue == "date"
 				? .latest
 				: SortOption(rawValue: _sortOptionRawValue) ?? .latest
 		}
-		.task {
+		.task(id: _loadKey) {
+			let key = _loadKey
 			await viewModel.ensureSourcesLoaded(object)
+			guard !Task.isCancelled, key == _loadKey else { return }
 			_load()
+			_completedLoadKey = key
 		}
 		.onChange(of: viewModel.catalogRevision) { _, _ in
-			if object.contains(where: { viewModel.repository(for: $0) != nil }) { _load() }
+			_load()
 		}
 		.onChange(of: _sortOption) { _, newValue in
 			_sortOptionRawValue = newValue.rawValue
@@ -155,7 +175,7 @@ struct SourceAppsView: View {
 	}
 
 	private func _load() {
-		guard _loadedCatalogRevision != viewModel.catalogRevision else {
+		guard _loadedCatalogRevision != viewModel.catalogRevision || _loadedSourceKeys != _sourceKeys else {
 			_consumePendingAppRequestIfPossible()
 			return
 		}
@@ -172,7 +192,7 @@ struct SourceAppsView: View {
 		}
 		if _sourceContexts != loadedSources { _sourceContexts = loadedSources }
 		_loadedCatalogRevision = viewModel.catalogRevision
-		isLoading = false
+		_loadedSourceKeys = _sourceKeys
 		_consumePendingAppRequestIfPossible()
 	}
 

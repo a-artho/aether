@@ -45,6 +45,9 @@ extension Storage {
 			}
 			completion(nil)
 		} catch {
+			// Discard only this failed insert, preserving other pending view-context edits.
+			context.delete(new)
+			context.processPendingChanges()
 			completion(error)
 		}
 	}
@@ -81,6 +84,7 @@ extension Storage {
 			return
 		}
 
+		var inserted: [AltSource] = []
 		for (url, repo) in repos {
 			let identifier = repo.id ?? url.absoluteString
 			guard !sourceExists(identifier) else {
@@ -89,6 +93,7 @@ extension Storage {
 			}
 
 			let new = AltSource(context: context)
+			inserted.append(new)
 			new.name = repo.name
 			new.date = Date()
 			new.identifier = identifier
@@ -97,6 +102,8 @@ extension Storage {
 		}
 
 		if let error = saveContext() {
+			for source in inserted { context.delete(source) }
+			context.processPendingChanges()
 			completion(error)
 			return
 		}
@@ -108,8 +115,19 @@ extension Storage {
 	func deleteSource(for source: AltSource) {
 		let key = source.objectID.uriRepresentation().absoluteString
 		let url = source.sourceURL
+		let pendingValues = source.changedValues()
+		let wasInserted = source.isInserted
 		context.delete(source)
-		guard saveContext() == nil else { return }
+		if let error = saveContext() {
+			if wasInserted { context.insert(source) }
+			else {
+				context.refresh(source, mergeChanges: false)
+				for (key, value) in pendingValues { source.setValue(value is NSNull ? nil : value, forKey: key) }
+			}
+			context.processPendingChanges()
+			Logger.misc.error("Source deletion failed: \(error.localizedDescription)")
+			return
+		}
 		SourcesViewModel.shared.removeSource(key: key, url: url,
 			evictURL: !getSources().contains { $0.sourceURL == url })
 	}

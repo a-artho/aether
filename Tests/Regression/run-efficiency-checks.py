@@ -11,6 +11,7 @@ def declaration(path, start):
     return source[begin:end]
 source = 'import Foundation\nimport Darwin\nimport CryptoKit\nimport Combine\n'
 source += '''
+enum UIApplication { static let didReceiveMemoryWarningNotification=Notification.Name("testMemoryWarning") }
 struct NSDiffableDataSourceSnapshot<Section: Hashable, Item: Hashable> {
     mutating func appendSections(_ sections: [Section]) {}
     mutating func appendItems(_ items: [Item], toSection section: Section? = nil) {}

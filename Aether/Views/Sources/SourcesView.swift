@@ -236,13 +236,10 @@ struct SourcesView: View {
 		sourceObjectURI: String,
 		appLocator: SourcesRouter.AppLocator
 	) -> some View {
-		if
-			let source = _source(withObjectURI: sourceObjectURI),
-			let repository = viewModel.repository(for: source)
-		{
-			SourceAppsDetailView(sourceURL: source.sourceURL, source: repository, app: appLocator.app)
+		if let source = _source(withObjectURI: sourceObjectURI) {
+			SourceAppDestinationView(source: source, app: appLocator.app, viewModel: viewModel)
 		} else {
-			ProgressView()
+			_unavailableSourceView()
 		}
 	}
 

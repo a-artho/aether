@@ -9,11 +9,13 @@ import SwiftUI
 import AltSourceKit
 import NimbleViews
 import NukeUI
+import Nuke
 import UIKit
 
 // MARK: - SourceAppsDetailView
 struct SourceAppsDetailView: View {
 	@AppStorage("Aether.rowHorizontalInset") private var horizontalInset: RowHorizontalInset = .standard
+	@Environment(\.displayScale) private var displayScale
 	@State private var _isScreenshotPreviewPresented: Bool = false
 	@State private var _selectedScreenshotIndex: Int = 0
 	@State private var _appStoreDestination: AppStoreDestination?
@@ -33,6 +35,8 @@ struct SourceAppsDetailView: View {
 	var body: some View {
 		let appDescription = _cleanSourceText(app.localizedDescription)
 		let releaseNotes = _cleanSourceText(app.currentAppVersion?.localizedDescription)
+		let showsReleaseNotes = app.currentVersion?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+			&& releaseNotes.map { !SourceAppBodyText.matches($0, appDescription) } == true
 
 		ScrollView {
 			VStack(alignment: .leading, spacing: 28) {
@@ -46,19 +50,18 @@ struct SourceAppsDetailView: View {
 					}
 				}
 
-				if let currentVersion = app.currentVersion,
-				   !currentVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-				   let releaseNotes,
-				   !SourceAppBodyText.matches(releaseNotes, appDescription) {
+				if showsReleaseNotes || (app.versions?.count ?? 0) > 1 {
 
-					_detailSection(.localized("What's New")) {
+					_detailSection(showsReleaseNotes ? .localized("What's New") : .localized("Version History")) {
 						VStack(alignment: .leading, spacing: 10) {
-							AppVersionInfo(
-								version: currentVersion,
-								date: app.currentDate?.date,
-								description: releaseNotes,
-								textStyle: .subheadline
-							)
+							if showsReleaseNotes, let currentVersion = app.currentVersion, let releaseNotes {
+								AppVersionInfo(
+									version: currentVersion,
+									date: app.currentDate?.date,
+									description: releaseNotes,
+									textStyle: .subheadline
+								)
+							}
 
 							if let versions = app.versions, versions.count > 1 {
 								NavigationLink(
@@ -182,7 +185,9 @@ struct SourceAppsDetailView: View {
 	@ViewBuilder
 	private var _navigationIcon: some View {
 		if let iconURL = app.iconURL {
-			LazyImage(url: iconURL) { state in
+			LazyImage(request: ImageRequest(url: iconURL, userInfo: [
+				.thumbnailKey: ImageRequest.ThumbnailOptions(maxPixelSize: Float(26 * displayScale))
+			])) { state in
 				if let image = state.image {
 					image.appIconStyle(size: 26, isCircle: false)
 				} else {
@@ -469,31 +474,47 @@ extension SourceAppsDetailView {
 	@ViewBuilder
 	private func _screenshots(screenshotURLs: [URL]) -> some View {
 		ScrollView(.horizontal, showsIndicators: false) {
-			HStack(spacing: 12) {
+			LazyHStack(spacing: 12) {
 				ForEach(screenshotURLs.indices, id: \.self) { index in
-					let url = screenshotURLs[index]
-					LazyImage(url: url) { state in
-						if let image = state.image {
-							image
-								.resizable()
-								.aspectRatio(contentMode: .fit)
-								.frame(maxWidth: .infinity, maxHeight: 350)
-								.clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-								.overlay {
-									RoundedRectangle(cornerRadius: 18, style: .continuous)
-										.strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-								}
-								.onTapGesture {
-									_selectedScreenshotIndex = index
-									_isScreenshotPreviewPresented = true
-								}
+					SourceScreenshotThumbnail(url: screenshotURLs[index])
+						.onTapGesture {
+							_selectedScreenshotIndex = index
+							_isScreenshotPreviewPresented = true
 						}
-					}
 				}
 			}
 			.padding(.horizontal, horizontalInset.points ?? 20)
 			.scrollTargetLayout()
 		}
 		.scrollTargetBehavior(.viewAligned)
+	}
+}
+
+/// Stable slots let the lazy strip defer offscreen requests without shifting as
+/// each image arrives. The image itself keeps its original aspect ratio.
+private struct SourceScreenshotThumbnail: View {
+	let url: URL
+	@Environment(\.displayScale) private var displayScale
+
+	var body: some View {
+		LazyImage(request: ImageRequest(url: url, userInfo: [
+			.thumbnailKey: ImageRequest.ThumbnailOptions(maxPixelSize: Float(350 * displayScale))
+		])) { state in
+			ZStack {
+				if let image = state.image {
+					image.resizable().aspectRatio(contentMode: .fit)
+						.clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+						.overlay {
+							RoundedRectangle(cornerRadius: 18, style: .continuous)
+								.strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+						}
+				} else {
+					RoundedRectangle(cornerRadius: 18, style: .continuous)
+						.fill(Color(.quaternarySystemFill))
+				}
+			}
+			.frame(width: 180, height: 350)
+			.contentShape(Rectangle())
+		}
 	}
 }

@@ -90,3 +90,5 @@ python3 "$test_dir/run-navigation-hardening-checks.py"
 python3 "$test_dir/run-source-library-checks.py"
 
 python3 "$test_dir/run-search-navigation-checks.py"
+
+python3 "$test_dir/run-sources-flow-checks.py"
