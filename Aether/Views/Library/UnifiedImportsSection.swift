@@ -280,6 +280,7 @@ final class UnifiedImportsController: ObservableObject {
 
 /// Observe the catalog on the persistent list, even when it has no sections.
 struct UnifiedImportsDataSource: ViewModifier {
+	@Environment(\.managedObjectContext) private var context
 	@ObservedObject var controller: UnifiedImportsController
 	@ObservedObject private var downloads = DownloadManager.shared
 	@ObservedObject private var installations = AppInstallationManager.shared
@@ -324,11 +325,36 @@ struct UnifiedImportsDataSource: ViewModifier {
 			}
 		}
 		.onChange(of: inputs, initial: true) { _, _ in
-            controller.updateRows(projectedRows)
-            let retired = downloads.committedImports.keys.filter { index.lineage.originalDates[$0] == nil }
-            downloads.acknowledgeImports(Set(imported.compactMap(\.uuid)).union(retired))
+            publishRowsIfReady()
         }
+		.onReceive(initialContextChanges) { _ in
+			// A reset/deletion can change the expected initial counts before the
+			// fetched arrays change. Once hydrated, ordinary input changes own updates.
+			if !controller.hasLoadedInitialRows { publishRowsIfReady() }
+		}
     }
+
+	private var initialContextChanges: AnyPublisher<Notification, Never> {
+		guard !controller.hasLoadedInitialRows else { return Empty().eraseToAnyPublisher() }
+		return NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: context)
+			.receive(on: DispatchQueue.main)
+			.eraseToAnyPublisher()
+	}
+
+	private var initialFetchIsReady: Bool {
+		// @FetchRequest can initially expose empty/partial arrays. Do not mistake
+		// that for a verified empty library and animate restored rows as new imports.
+		let importedCount = (try? context.count(for: Imported.fetchRequest())) ?? imported.count
+		let signedCount = (try? context.count(for: Signed.fetchRequest())) ?? signed.count
+		return imported.count == importedCount && signed.count == signedCount
+	}
+
+	private func publishRowsIfReady() {
+		guard controller.hasLoadedInitialRows || initialFetchIsReady else { return }
+		controller.updateRows(projectedRows)
+		let retired = downloads.committedImports.keys.filter { index.lineage.originalDates[$0] == nil }
+		downloads.acknowledgeImports(Set(imported.compactMap(\.uuid)).union(retired))
+	}
 
 	private var projectedRows: [UnifiedImportEntry] {
 		let originals: [String: Imported] = Dictionary(imported.compactMap { app in app.uuid.map { ($0, app) } }, uniquingKeysWith: { first, _ in first })

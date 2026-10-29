@@ -26,6 +26,7 @@ struct LibraryView: View {
 	@State private var searchFocused = false
 	@State private var appNavigationPath: [InstalledAppsRoute] = []
 	@State private var isRootListVisible = false
+	@State private var hasLaidOutInitialLibrary = false
 	@State private var updateIgnoreRequest: UpdateIgnoreRequest?
 
 	private struct UpdateIgnoreRequest {
@@ -174,6 +175,8 @@ struct LibraryView: View {
 			ForEach(projection.sections) { section in
 				librarySectionContent(section, projection: projection)
 			}
+			// Animate live section/row changes, not the List's initial bounds or chrome.
+			.animation(reduceMotion || !hasLaidOutInitialLibrary ? nil : .snappy, value: projection.layout)
 		}
 		.navigationBarTitleDisplayMode(.inline)
 		.navigationDestination(for: InstalledAppsRoute.self) { route in
@@ -211,8 +214,17 @@ struct LibraryView: View {
 			}
 			tabManager.consumeLibraryFocusRequest(request)
 		}
-		.animation(reduceMotion || !imports.hasLoadedInitialRows ? nil : .snappy, value: projection.layout)
-		.background { AetherAmbientBackground() }
+		.background {
+			AetherAmbientBackground()
+			if isRootListVisible && imports.hasLoadedInitialRows && !hasLaidOutInitialLibrary {
+				Color.clear
+					.onGeometryChange(for: Bool.self) { geometry in
+						geometry.size.width > 0 && geometry.size.height > 0
+					} action: { hasSize in
+						finishInitialLibraryLayout(hasSize: hasSize)
+					}
+			}
+		}
 		.overlay {
 			if !searchText.isEmpty && projection.sections.isEmpty {
 				TabPlaceholderView(title: .localized("No Results"), description: .localized("Try another search."), systemImage: "magnifyingglass")
@@ -225,6 +237,13 @@ struct LibraryView: View {
 			guard loadsApps else { return }
 			updates.startRefresh()
 		}
+	}
+
+	private func finishInitialLibraryLayout(hasSize: Bool) {
+		guard hasSize, isRootListVisible, imports.hasLoadedInitialRows, !hasLaidOutInitialLibrary else { return }
+		var transaction = Transaction(animation: nil)
+		transaction.disablesAnimations = true
+		withTransaction(transaction) { hasLaidOutInitialLibrary = true }
 	}
 
 	@ViewBuilder
@@ -415,9 +434,11 @@ struct LibraryView: View {
 				Text(String.localized("All Apps"))
 					.nbRowTitle()
 					.foregroundStyle(.primary)
+					.lineLimit(1)
 				Text(subtitle)
 					.nbRowSubtitle()
 					.foregroundStyle(.secondary)
+					.lineLimit(1)
 			}
 			.padding(.vertical, NBRowMetrics.textVerticalPadding)
 			.frame(maxWidth: .infinity, alignment: .leading)
