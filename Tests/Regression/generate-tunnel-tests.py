@@ -148,6 +148,7 @@ automation=r'''
 private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UUID().uuidString)!
 @MainActor private final class AutoCellular {
  static let shared=AutoCellular();var isBusy=false;var isWaitingForManualRecovery=false;var requiresTunnelConnection=false
+ func rearmAutomaticRecovery() {}
  func networkNoLongerNeedsManualRecovery() {}
  func handleApplicationDidBecomeActive() {}
  func handleApplicationDidEnterBackground() {}
@@ -164,6 +165,7 @@ private let automationDefaults=UserDefaults(suiteName:"AetherAutomationTest-"+UU
  static let disconnectWhenIdleKey="Aether.autoTunnelLifecycle",connectAutomaticallyKey="Aether.connectAutomatically",unresolvedSimulationKey="AutoTestSimulation"
  var isDisconnectWhenIdleEnabled:Bool;var isConnectAutomaticallyEnabled:Bool
  var awaitingInitialActivation=false;var awaitingIdleReconnect=false;var hasPairingFile=true;var requiresInAppTunnelSetup=false
+ var automaticRetryBlocked=false
  var selfUpdateHandoffPending=false
  var isAwaitingAutomaticConnection:Bool {awaitingInitialActivation || awaitingIdleReconnect}
  var automaticAttemptEpoch:UInt64?;var connectionEpoch:UInt64=0
