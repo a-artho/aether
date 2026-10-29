@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AetherPrimaryPreview.imageset/AetherPrimaryPreview.png",
-      "version": "3.0.10",
-      "versionDate": "2026-10-29T20:38:10Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.10/Aether.ipa",
-      "size": 19728032,
-      "versionDescription": "# Aether 3.0.10\n\n- Improve source browsing and search responsiveness while reducing retained catalog memory.\n- Bound concurrent source imports and restore source app details after a cache reset.\n- Handle cancelled imports and failed source saves without leaving stale UI or storage changes.\n- Improve screenshot loading and keep duplicate version history entries distinct.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.11",
+      "versionDate": "2026-10-29T21:26:06Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.11/Aether.ipa",
+      "size": 19732230,
+      "versionDescription": "# Aether 3.0.11\n\n- Prevent the Library from treating partially restored imports as an empty initial snapshot.\n- Avoid animating the Library's initial layout while keeping live row updates animated.\n- Keep Library section titles readable in narrow layouts.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.11",
+          "date": "2026-10-29T21:26:06Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.11/Aether.ipa",
+          "size": 19732230,
+          "localizedDescription": "# Aether 3.0.11\n\n- Prevent the Library from treating partially restored imports as an empty initial snapshot.\n- Avoid animating the Library's initial layout while keeping live row updates animated.\n- Keep Library section titles readable in narrow layouts.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.10",
           "date": "2026-10-29T20:38:10Z",
