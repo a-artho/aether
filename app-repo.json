@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AetherPrimaryPreview.imageset/AetherPrimaryPreview.png",
-      "version": "3.0.9",
-      "versionDate": "2026-10-29T14:57:29Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.9/Aether.ipa",
-      "size": 19708412,
-      "versionDescription": "# Aether 3.0.9\n\n- Fix automatic connection recovery around foregrounding, idle disconnects, tunnel state changes, and Cellular Assist callbacks.\n- Keep completed repo downloads marked as in the Library and add a Download Again action.\n- Improve update version labels and let you ignore current releases or all future updates.\n- Reduce repo-opening stalls and Library file checks on the main thread.\n- Fix interrupted search cleanup, stale focus updates, and missing search animation anchors across navigation layouts.\n- Keep navigation title styling responsive to Appearance changes without repeating unchanged window-wide updates.\n- Present uninstall confirmation from the selected app row.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.10",
+      "versionDate": "2026-10-29T20:38:10Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.10/Aether.ipa",
+      "size": 19728032,
+      "versionDescription": "# Aether 3.0.10\n\n- Improve source browsing and search responsiveness while reducing retained catalog memory.\n- Bound concurrent source imports and restore source app details after a cache reset.\n- Handle cancelled imports and failed source saves without leaving stale UI or storage changes.\n- Improve screenshot loading and keep duplicate version history entries distinct.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.10",
+          "date": "2026-10-29T20:38:10Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.10/Aether.ipa",
+          "size": 19728032,
+          "localizedDescription": "# Aether 3.0.10\n\n- Improve source browsing and search responsiveness while reducing retained catalog memory.\n- Bound concurrent source imports and restore source app details after a cache reset.\n- Handle cancelled imports and failed source saves without leaving stale UI or storage changes.\n- Improve screenshot loading and keep duplicate version history entries distinct.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.9",
           "date": "2026-10-29T14:57:29Z",
