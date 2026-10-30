@@ -41,6 +41,7 @@ final class InstallationTransferDiagnostics: @unchecked Sendable {
 	private var state: String
 	private var protectedData: Bool
 	private var observers: [NSObjectProtocol] = []
+	private var stopped = false
 
 	@MainActor
 	init(id: String, clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }, emit: @escaping @Sendable (String) -> Void) {
@@ -80,9 +81,17 @@ final class InstallationTransferDiagnostics: @unchecked Sendable {
 		log("begin os=\(ProcessInfo.processInfo.operatingSystemVersionString) thermal=\(ProcessInfo.processInfo.thermalState.rawValue) lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled)")
 	}
 
-	deinit {
+	deinit { stop() }
+
+	func stop() {
+		stateLock.lock()
+		guard !stopped else { stateLock.unlock(); return }
+		stopped = true
+		let registered = observers
+		observers.removeAll()
+		stateLock.unlock()
 		pathMonitor.cancel()
-		for observer in observers { NotificationCenter.default.removeObserver(observer) }
+		for observer in registered { NotificationCenter.default.removeObserver(observer) }
 	}
 
 	private func observe(_ name: Notification.Name, state: String? = nil, protectedData: Bool? = nil) {
@@ -220,7 +229,9 @@ final class InstallationTransferDiagnostics: @unchecked Sendable {
 	private func number(_ value: Double) -> String { String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), value) }
 
 	private func log(_ message: String) {
+		guard HeartbeatManager.isLoggingEnabled else { return }
 		stateLock.lock()
+		guard !stopped else { stateLock.unlock(); return }
 		let lifecycle = "state=\(state) protectedData=\(protectedData)"
 		stateLock.unlock()
 		emit("transfer[\(id)] elapsed=\(number(now() - started)) \(lifecycle) \(message)")

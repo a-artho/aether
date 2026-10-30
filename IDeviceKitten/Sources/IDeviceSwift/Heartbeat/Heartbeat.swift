@@ -45,12 +45,28 @@ public final class HeartbeatManager: @unchecked Sendable {
 	var rsdHandshake: RsdHandshakeHandle?
 	var lastSuccessfulRSDPort: UInt16?
 
+	private final class LoggingState: @unchecked Sendable {
+		let lock = NSLock()
+		var enabled = false
+	}
+	private static let loggingState = LoggingState()
+
+	public static var isLoggingEnabled: Bool {
+		loggingState.lock.lock()
+		defer { loggingState.lock.unlock() }
+		return loggingState.enabled
+	}
+
+	public static func setLoggingEnabled(_ enabled: Bool) {
+		loggingState.lock.lock()
+		defer { loggingState.lock.unlock() }
+		loggingState.enabled = enabled
+		idevice_set_logging_enabled(enabled)
+	}
+
 	// InvalidHostID means the saved pairing identity is no longer accepted.
 	public init() {
-		#if DEBUG
-		idevice_init_logger(IdeviceLogLevel.init(3), Disabled, nil)
-		#endif
-
+		Self.setLoggingEnabled(UserDefaults.standard.bool(forKey: "Aether.debug.loggingEnabled"))
 	}
 
 	static public func importedPairingFileURL() -> URL {

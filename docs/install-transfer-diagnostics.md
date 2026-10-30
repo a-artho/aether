@@ -4,7 +4,7 @@ These diagnostics are permanent and opt in through Settings → Debug Logs → E
 
 Every attempt uses the installation generation as `transfer[UUID]`, also included in background expiration diagnostics. The initial entry records the app/version and selected tunnel provider. No IPA contents, pairing credentials or file paths are logged.
 
-The upload records monotonic elapsed times, packaged payload bytes, successful written bytes, attempted Swift chunks, file-read time, total native `afc_file_write` duration, total time awaiting main-actor progress publication, and the longest write/progress wait. Samples are emitted at most once per five seconds, after a chunk completes. Counters and clock reads do not dispatch to the main actor. Log delivery is asynchronous and never awaited by the upload. Logging disabled creates no diagnostic object or lifecycle observers.
+The upload records monotonic elapsed times, packaged payload bytes, successful written bytes, attempted Swift chunks, file-read time, total native `afc_file_write` duration, total time awaiting main-actor progress publication, and the longest write/progress wait. Samples are emitted at most once per five seconds, after a chunk completes. Counters and clock reads do not dispatch to the main actor. Log delivery is asynchronous and never awaited by the upload. Logging disabled creates no diagnostic object or lifecycle observers. The setting also gates the native Rust console logger, including debug builds. Turning logging off during an upload releases its diagnostics and observers at the next write boundary; the native write already in flight completes in its selected mode. Re-enabling applies to subsequent diagnostic captures, without restarting an incomplete payload fingerprint.
 
 Phase boundaries distinguish setup, upload, AFC close, installation-proxy connection, native installation, and completion. Failed or cancelled attempts emit their partial counters when the worker unwinds. A blocked native write cannot emit a sample until it returns; no sample does not itself mean failure. If iOS kills the process, a final summary cannot be guaranteed.
 
@@ -19,12 +19,12 @@ For comparison, install the same app/version and use the same tunnel provider fo
 
 ## Schema 2: one complete capture
 
-The existing logging toggle enables the profiled native entry point; logging disabled calls the original `afc_file_write`. Both paths preserve the 4 MiB packet size, 64 KiB socket subdivisions, sequential replies, validation, and cancellation boundaries. Profiling changes no transfer setting and introduces no retry or pipelining.
+The existing logging toggle enables detailed metrics on `afc_file_write_with_progress`; logging disabled passes a null metrics output and retains lightweight progress without diagnostic clocks/counters. Both paths preserve the 4 MiB packet size, 64 KiB socket subdivisions, sequential replies, validation, and cancellation boundaries. Profiling changes no transfer setting and introduces no retry or pipelining.
 
 Native counters returned per Swift write are aggregated into the existing five-second samples and final summary:
 
 - `runtimeQueueSeconds`: submitting the FFI work to its first execution on the Rust runtime. `runtimeReturnSeconds`: worker completion to return to the blocking FFI caller. `workerSeconds`: worker wall time.
-- `copySeconds` and `serializeSeconds`: payload/header copies and construction of the wire packet.
+- `copySeconds` and `serializeSeconds`: legacy payload/header copies and construction of the wire packet. With the local-transport optimization, `copySeconds` is zero because the separate owned payload copy is removed; `serializeSeconds` includes the single payload copy into the preallocated wire buffer.
 - `socketWriteSeconds`: time writing the wire packet, including asynchronous waits, encryption, and scheduling. `flushSeconds`: subsequent flushing. `replySeconds`: waiting for and parsing/validating the AFC response. Failed calls retain completed and partial timing counters.
 - `socketPollSeconds` / `maxSocketPollSeconds`: synchronous work inside socket write polls; includes whatever the underlying transport performs within those calls. These are nested within `socketWriteSeconds`, not additional time to add to it. Socket ready/pending poll counts and flush ready/pending poll counts indicate backpressure/wakeup activity, not TCP packet or retransmission counts.
 - `nativePackets`, `validReplies`, and `wireBytes`: attempted packets, successful validated replies, and bytes accepted by the local writer. Accepted bytes are not independently acknowledged device disk writes. `maxReplySeconds`, `writeBuckets`, and `replyBuckets` summarize per-call latency with fixed bounds: <10 ms, <50 ms, <250 ms, <1 s, <3 s, >=3 s. Each upload call normally contains one 4 MiB packet.
@@ -65,3 +65,7 @@ Regression tests exercise production methods with controlled scheduler/network/n
 ## Update discovery without automatic installation
 
 Available updates retain the source app row and details view. Their normal cloud-download control starts an ordinary download, with shared pause/resume/retry progress. Completion imports the app into Library for manual signing and installation. There is no Update intent, automatic signing gate, certificate/team override, signing recovery transaction or download-to-install task adoption. Old saved queue records may contain an `automaticUpdate` JSON field; decoding ignores that retired field and the next persisted snapshot omits it. Download identity, resume data and staged/imported input continue to use the existing recovery path.
+
+## Transfer buffer lifetime
+
+The upload worker drains an autorelease pool around each synchronous FileHandle read. Returned Data remains valid through its synchronous native write. This prevents temporary Foundation read buffers from accumulating until the worker's next async suspension after the whole upload. It applies with logging on or off. Full-payload host hashing verified byte integrity; device memory and throughput still require comparison.

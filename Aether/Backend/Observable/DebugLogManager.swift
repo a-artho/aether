@@ -7,6 +7,7 @@
 
 import Foundation
 import OSLog
+import IDeviceSwift
 import SwiftUI
 import UIKit
 
@@ -151,6 +152,7 @@ public final class DebugLogManager: ObservableObject {
 	@Published public var isLoggingEnabled: Bool {
 		didSet {
 			UserDefaults.standard.set(isLoggingEnabled, forKey: Self.loggingEnabledKey)
+			HeartbeatManager.setLoggingEnabled(isLoggingEnabled)
 			if isLoggingEnabled && _inMemoryEntries.isEmpty {
 				log("Aether debug log session started", category: "App", level: .info)
 			}
@@ -179,6 +181,7 @@ public final class DebugLogManager: ObservableObject {
 	private init() {
 		let enabled = UserDefaults.standard.bool(forKey: Self.loggingEnabledKey)
 		self.isLoggingEnabled = enabled
+		HeartbeatManager.setLoggingEnabled(enabled)
 		if enabled {
 			log("Aether debug log session started", category: "App", level: .info)
 		}

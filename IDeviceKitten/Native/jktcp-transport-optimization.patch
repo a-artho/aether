@@ -1,0 +1,719 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -20,6 +20,7 @@
+ ] }
+ futures = { version = "0.3", default-features = false, features = ["std"] }
+ tracing = "0.1"
++bytes = "1.10"
+ rand = "0.9"
+ 
+ # Native-only: real tokio runtime + filesystem for pcap, plus crossfire for
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -343,7 +343,7 @@
+ 
+ [[package]]
+ name = "jktcp"
+-version = "0.0.0"
++version = "0.1.8"
+ dependencies = [
+  "bytes",
+  "futures",
+--- a/src/adapter.rs
++++ b/src/adapter.rs
+@@ -15,12 +15,12 @@
+     collections::{HashMap, VecDeque},
+     io::ErrorKind,
+     net::IpAddr,
+-    sync::Arc,
+ };
+ 
+ #[cfg(feature = "pcap")]
+ use std::path::Path;
+ 
++use bytes::Bytes;
+ use crate::time::Instant;
+ use tokio::io::{AsyncReadExt, AsyncWriteExt};
+ use tracing::{debug, trace, warn};
+@@ -57,7 +57,7 @@
+ #[derive(Debug, Clone)]
+ struct UnackedSegment {
+     seq: u32,
+-    data: Arc<[u8]>,
++    data: Bytes,
+     sent_at: Instant,
+     retries: u32,
+ }
+@@ -86,7 +86,7 @@
+     host_port: u16,
+     peer_port: u16,
+     read_buffer: Vec<u8>,
+-    write_buffer: VecDeque<u8>,
++    write_buffer: VecDeque<Bytes>,
+     status: ConnectionStatus,
+     /// Segments we have sent but not yet received an ACK for, in send order.
+     unacked: VecDeque<UnackedSegment>,
+@@ -177,9 +177,10 @@
+     /// through here because the adapter's futures are raced in `select!`s and
+     /// may be dropped at any await: a cancelled `write_all` would leave a
+     /// partial IP packet on the transport and desync the peer's framing.
+-    outbox: VecDeque<Vec<u8>>,
+-    /// How much of `outbox.front()` has already been written.
++    outbox: Vec<u8>,
++    /// Bytes of the reusable outbox already accepted by the transport.
+     outbox_offset: usize,
++    write_batch_size: usize,
+ }
+ 
+ impl Adapter {
+@@ -196,8 +197,9 @@
+             mss: DEFAULT_MSS,
+             send_window: DEFAULT_SEND_WINDOW,
+             udp_sockets: HashMap::new(),
+-            outbox: VecDeque::new(),
++            outbox: Vec::new(),
+             outbox_offset: 0,
++            write_batch_size: 0,
+         }
+     }
+ 
+@@ -212,6 +214,13 @@
+ 
+     pub fn set_send_window(&mut self, window: usize) -> &mut Self {
+         self.send_window = window;
++        self
++    }
++
++    /// Opt in to immediate, bounded batches of complete IP packets. Zero
++    /// preserves one transport flush per packet; no timer delays small writes.
++    pub fn set_write_batch_size(&mut self, bytes: usize) -> &mut Self {
++        self.write_batch_size = bytes.min(16 * 1024);
+         self
+     }
+ 
+@@ -332,16 +341,19 @@
+         payload: &[u8],
+         host_port: u16,
+     ) -> Result<(), std::io::Error> {
+-        match self.states.get_mut(&host_port) {
+-            Some(s) => {
+-                s.write_buffer.extend(payload.iter().copied());
+-                Ok(())
+-            }
+-            None => Err(std::io::Error::new(
+-                ErrorKind::NotConnected,
+-                "not connected",
+-            )),
+-        }
++        self.queue_send_owned(Bytes::copy_from_slice(payload), host_port)
++    }
++
++    pub(crate) fn queue_send_owned(
++        &mut self, payload: Bytes, host_port: u16,
++    ) -> Result<(), std::io::Error> {
++        let state = self.states.get_mut(&host_port).ok_or_else(||
++            std::io::Error::new(ErrorKind::NotConnected, "not connected"))?;
++        if let ConnectionStatus::Error(kind) = state.status {
++            return Err(std::io::Error::new(kind, "socket error"));
++        }
++        if !payload.is_empty() { state.write_buffer.push_back(payload); }
++        Ok(())
+     }
+ 
+     pub(crate) fn uncache(
+@@ -424,7 +436,7 @@
+ 
+     /// Queue an IP packet and write out as much of the outbox as possible.
+     async fn send_packet(&mut self, ip: Vec<u8>) -> Result<(), std::io::Error> {
+-        self.outbox.push_back(ip);
++        self.outbox.extend_from_slice(&ip);
+         self.flush_outbox().await
+     }
+ 
+@@ -434,21 +446,20 @@
+         if self.outbox.is_empty() {
+             return Ok(());
+         }
+-        while let Some(packet) = self.outbox.front() {
+-            let n = self.peer.write(&packet[self.outbox_offset..]).await?;
++        while self.outbox_offset < self.outbox.len() {
++            let n = self.peer.write(&self.outbox[self.outbox_offset..]).await?;
+             if n == 0 {
+-                return Err(std::io::Error::new(
+-                    ErrorKind::WriteZero,
+-                    "transport accepted no bytes",
+-                ));
++                return Err(std::io::Error::new(ErrorKind::WriteZero,
++                    "transport accepted no bytes"));
+             }
+             self.outbox_offset += n;
+-            if self.outbox_offset == packet.len() {
+-                self.outbox.pop_front();
+-                self.outbox_offset = 0;
+-            }
+-        }
+-        self.peer.flush().await
++        }
++        // Retain the accepted bytes and offset until flush completes: TLS may
++        // still own a pending encrypted record if this future is cancelled.
++        self.peer.flush().await?;
++        self.outbox.clear();
++        self.outbox_offset = 0;
++        Ok(())
+     }
+ 
+     // -----------------------------------------------------------------------
+@@ -483,34 +494,36 @@
+             // Inner loop: keep peeling off MSS-sized chunks until either the
+             // write buffer is empty or the window is full.
+             loop {
+-                let chunk: Arc<[u8]> = {
+-                    let Some(state) = self.states.get(&hp) else {
+-                        break;
+-                    };
+-                    if state.write_buffer.is_empty() {
+-                        break;
+-                    }
++                let ip_header = if self.host_ip.is_ipv6() { 40 } else { 20 };
++                let next_len = self.states.get(&hp)
++                    .and_then(|s| s.write_buffer.front().map(|b|
++                        b.len().min(self.mss).min(self.send_window.min(s.peer_window as usize)
++                            .saturating_sub(s.bytes_in_flight)) + ip_header + 20))
++                    .unwrap_or(0);
++                if !self.outbox.is_empty() && self.outbox.len() + next_len > self.write_batch_size {
++                    self.flush_outbox().await?;
++                }
++                let chunk = {
++                    let Some(state) = self.states.get_mut(&hp) else { break; };
++                    if matches!(state.status, ConnectionStatus::Error(_)) { break; }
++                    let Some(front) = state.write_buffer.front_mut() else { break; };
+                     let cap = self.send_window.min(state.peer_window as usize);
+-                    if state.bytes_in_flight >= cap {
+-                        break;
+-                    }
+-                    let remaining = cap - state.bytes_in_flight;
+-                    let n = state.write_buffer.len().min(self.mss).min(remaining);
+-                    if n == 0 {
+-                        break;
+-                    }
+-                    let v: Vec<u8> = state.write_buffer.iter().take(n).copied().collect();
+-                    Arc::from(v)
++                    let remaining = cap.saturating_sub(state.bytes_in_flight);
++                    let n = front.len().min(self.mss).min(remaining);
++                    if n == 0 { break; }
++                    // Consume before any await. The segment is recorded and its
++                    // complete IP bytes are queued synchronously by queue_psh.
++                    let chunk = front.split_to(n);
++                    if front.is_empty() { state.write_buffer.pop_front(); }
++                    chunk
+                 };
+-
+-                let chunk_len = chunk.len();
+-                if self.psh(chunk, hp).await.is_err() {
+-                    break;
++                self.queue_psh(chunk, hp)?;
++                if self.write_batch_size == 0 || self.outbox.len() >= self.write_batch_size {
++                    self.flush_outbox().await?;
+                 }
+-                if let Some(state) = self.states.get_mut(&hp) {
+-                    state.write_buffer.drain(..chunk_len);
+-                }
+-            }
++            }
++            // Flush a short final batch immediately, including window stalls.
++            self.flush_outbox().await?;
+         }
+ 
+         // Reap connections that were dropped while we had the lock.
+@@ -536,7 +549,7 @@
+             // Decide what to do before borrowing mutably.
+             enum Action {
+                 Kill,
+-                Retransmit { seq: u32, data: Arc<[u8]> },
++                Retransmit { seq: u32, data: Bytes },
+                 None,
+             }
+ 
+@@ -899,7 +912,7 @@
+     }
+ 
+     /// Send a PSH segment and record it in the unacked queue.
+-    async fn psh(&mut self, data: Arc<[u8]>, host_port: u16) -> Result<(), std::io::Error> {
++    fn queue_psh(&mut self, data: Bytes, host_port: u16) -> Result<(), std::io::Error> {
+         let Some(state) = self.states.get(&host_port) else {
+             return Err(std::io::Error::new(
+                 ErrorKind::NotConnected,
+@@ -911,7 +924,9 @@
+         }
+         trace!("psh {} bytes on hp={host_port}", data.len());
+         let seq = state.seq;
+-        let tcp = TcpPacket::create(
++        let packet_start = self.outbox.len();
++        TcpPacket::append_ip(
++            &mut self.outbox,
+             self.host_ip,
+             self.peer_ip,
+             state.host_port,
+@@ -927,7 +942,6 @@
+             &[],
+             &data,
+         );
+-        let ip = self.ip_wrap(&tcp);
+         let _ = state;
+ 
+         // Record the segment before the await: the packet is queued either way, so
+@@ -944,8 +958,8 @@
+             state.seq = state.seq.wrapping_add(len as u32);
+         }
+ 
+-        self.log_packet(&ip)?;
+-        self.send_packet(ip).await
++        self.log_packet(&self.outbox[packet_start..])?;
++        Ok(())
+     }
+ 
+     async fn read_ip_packet(&mut self) -> Result<(u8, Vec<u8>), std::io::Error> {
+@@ -1647,4 +1661,194 @@
+             "duplicate payload must not be re-buffered"
+         );
+     }
++    // Aether transport regressions: exercise cancellation at the actual
++    // AsyncWrite boundary, including TLS-style acceptance before flush.
++    #[derive(Debug, Default)]
++    struct Capture {
++        wire: Vec<u8>, calls: usize, flushes: usize, max_write: usize,
++        block_after: Option<usize>, block_flush: bool, zero: bool, fail: bool,
++    }
++    #[derive(Debug, Clone)]
++    struct CaptureTransport(std::sync::Arc<std::sync::Mutex<Capture>>);
++    impl AsyncRead for CaptureTransport {
++        fn poll_read(self: Pin<&mut Self>, _: &mut Context<'_>, _: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> { Poll::Pending }
++    }
++    impl AsyncWrite for CaptureTransport {
++        fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, bytes: &[u8]) -> Poll<std::io::Result<usize>> {
++            let mut c = self.0.lock().unwrap();
++            c.calls += 1;
++            if c.fail { return Poll::Ready(Err(ErrorKind::BrokenPipe.into())); }
++            if c.zero { return Poll::Ready(Ok(0)); }
++            if c.block_after.is_some_and(|n| c.wire.len() >= n) { return Poll::Pending; }
++            let n = bytes.len().min(if c.max_write == 0 { usize::MAX } else { c.max_write });
++            c.wire.extend_from_slice(&bytes[..n]);
++            Poll::Ready(Ok(n))
++        }
++        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
++            let mut c = self.0.lock().unwrap(); c.flushes += 1;
++            if c.block_flush { Poll::Pending } else { Poll::Ready(Ok(())) }
++        }
++        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> { self.poll_flush(cx) }
++    }
++    fn captured_adapter(batch: usize) -> (Adapter, std::sync::Arc<std::sync::Mutex<Capture>>) {
++        let capture = std::sync::Arc::new(std::sync::Mutex::new(Capture::default()));
++        let mut adapter = Adapter::new(Box::new(CaptureTransport(capture.clone())), HOST_IP.into(), PEER_IP.into());
++        adapter.set_mss(1220).set_write_batch_size(batch);
++        let mut state = ConnectionState::new(1234, PEER_PORT);
++        state.seq = u32::MAX - 100;
++        state.ack = PEER_ISN + 1;
++        state.peer_window = u32::MAX;
++        state.status = ConnectionStatus::Connected;
++        adapter.states.insert(1234, state);
++        (adapter, capture)
++    }
++    fn captured_packets(capture: &std::sync::Arc<std::sync::Mutex<Capture>>) -> Vec<TcpPacket> {
++        let c = capture.lock().unwrap(); let mut wire = &c.wire[..]; let mut packets = vec![];
++        while !wire.is_empty() {
++            match Ipv6Packet::parse(wire, &None) {
++                IpParseError::Ok { packet, bytes_consumed } => {
++                    packets.push(TcpPacket::parse(&packet.payload).unwrap());
++                    wire = &wire[bytes_consumed..];
++                }
++                _ => panic!("incomplete/corrupt IP packet"),
++            }
++        }
++        packets
++    }
++    fn poll_once(future: impl std::future::Future<Output = std::io::Result<()>>) {
++        let mut future = std::pin::pin!(future);
++        let mut cx = Context::from_waker(std::task::Waker::noop());
++        assert!(future.as_mut().poll(&mut cx).is_pending());
++    }
++    #[tokio::test]
++    async fn aether_cancelled_partial_packet_does_not_requeue_payload() {
++        for batch in [0, 16 * 1024] {
++            let (mut adapter, capture) = captured_adapter(batch);
++            { let mut c = capture.lock().unwrap(); c.max_write = 7; c.block_after = Some(7); }
++            let payload: Vec<u8> = (0..4000).map(|n| (n % 251) as u8).collect();
++            adapter.queue_send(&payload, 1234).unwrap();
++            poll_once(adapter.write_buffer_flush());
++            assert_eq!(adapter.outbox_offset, 7);
++            capture.lock().unwrap().block_after = None;
++            // A control packet must finish the partial packet before its own bytes.
++            adapter.ack(1234).await.unwrap();
++            adapter.write_buffer_flush().await.unwrap();
++            let packets = captured_packets(&capture);
++            let mut next = u32::MAX - 100;
++            let mut received = vec![];
++            for p in packets.into_iter().filter(|p| !p.payload.is_empty()) {
++                assert_eq!(p.sequence_number, next);
++                next = next.wrapping_add(p.payload.len() as u32);
++                received.extend_from_slice(&p.payload);
++            }
++            assert_eq!(received, payload);
++            assert!(adapter.states[&1234].write_buffer.is_empty());
++            assert_eq!(adapter.states[&1234].bytes_in_flight, 4000);
++        }
++    }
++    #[tokio::test]
++    async fn aether_cancelled_underlying_flush_is_resumed_even_without_new_data() {
++        let (mut adapter, capture) = captured_adapter(0);
++        capture.lock().unwrap().block_flush = true;
++        adapter.queue_send(b"last TLS record", 1234).unwrap();
++        poll_once(adapter.write_buffer_flush());
++        assert_eq!(adapter.outbox_offset, adapter.outbox.len());
++        capture.lock().unwrap().block_flush = false;
++        adapter.write_buffer_flush().await.unwrap();
++        let packets = captured_packets(&capture);
++        assert_eq!(packets.len(), 1);
++        assert_eq!(packets[0].payload, b"last TLS record");
++        assert_eq!(capture.lock().unwrap().flushes, 2);
++        assert!(adapter.outbox.is_empty());
++    }
++    #[tokio::test]
++    async fn aether_owned_chunks_and_retransmits_share_payload_storage() {
++        let (mut adapter, _) = captured_adapter(0);
++        let payload = Bytes::from(vec![0x5a; 4000]);
++        let ptr = payload.as_ptr();
++        adapter.queue_send_owned(payload, 1234).unwrap();
++        assert_eq!(adapter.states[&1234].write_buffer[0].as_ptr(), ptr);
++        adapter.write_buffer_flush().await.unwrap();
++        let state = &adapter.states[&1234];
++        let mut offset = 0;
++        for seg in &state.unacked {
++            assert_eq!(seg.data.as_ptr(), ptr.wrapping_add(offset));
++            offset += seg.data.len();
++        }
++        assert_eq!(offset, 4000);
++    }
++    #[tokio::test]
++    async fn aether_batches_preserve_framing_and_flush_short_window_limited_tail() {
++        for batch in [0, 16 * 1024] {
++            let (mut adapter, capture) = captured_adapter(batch);
++            adapter.set_send_window(20_000);
++            adapter.queue_send(&vec![42; 25_000], 1234).unwrap();
++            adapter.write_buffer_flush().await.unwrap();
++            let packets = captured_packets(&capture);
++            assert_eq!(packets.iter().map(|p| p.payload.len()).sum::<usize>(), 20_000);
++            assert!(packets.iter().all(|p| p.payload.len() <= 1220));
++            assert_eq!(capture.lock().unwrap().calls, if batch == 0 { 17 } else { 2 });
++            assert!(adapter.outbox.is_empty());
++            assert_eq!(adapter.states[&1234].write_buffer[0].len(), 5000);
++        }
++    }
++    #[tokio::test]
++    async fn aether_zero_and_failed_transport_writes_propagate_and_retain_packet() {
++        for fail in [false, true] {
++            let (mut adapter, capture) = captured_adapter(0);
++            { let mut c = capture.lock().unwrap(); c.fail = fail; c.zero = !fail; }
++            adapter.queue_send(b"payload", 1234).unwrap();
++            let error = adapter.write_buffer_flush().await.unwrap_err();
++            assert_eq!(error.kind(), if fail { ErrorKind::BrokenPipe } else { ErrorKind::WriteZero });
++            assert!(!adapter.outbox.is_empty());
++            assert!(adapter.states[&1234].write_buffer.is_empty());
++        }
++    }
++
++    #[derive(Debug)]
++    struct BenchSink(std::sync::Arc<std::sync::atomic::AtomicUsize>);
++    impl AsyncRead for BenchSink {
++        fn poll_read(self: Pin<&mut Self>, _: &mut Context<'_>, _: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> { Poll::Pending }
++    }
++    impl AsyncWrite for BenchSink {
++        fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, data: &[u8]) -> Poll<std::io::Result<usize>> {
++            std::hint::black_box(data);
++            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++            Poll::Ready(Ok(data.len()))
++        }
++        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> { Poll::Ready(Ok(())) }
++        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> { Poll::Ready(Ok(())) }
++    }
++    /// CPU/memory construction benchmark, not device/network throughput. Each
++    /// 64 KiB is cumulatively ACKed by the harness, with no RTT or TLS cost.
++    #[tokio::test]
++    #[ignore = "run manually with --release --ignored --nocapture --test-threads=1"]
++    async fn aether_bulk_construction_benchmark() {
++        for mss in [1220, 15940] {
++            for round in 0..5 {
++                let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
++                let mut adapter = Adapter::new(Box::new(BenchSink(calls.clone())), HOST_IP.into(), PEER_IP.into());
++                adapter.set_mss(mss);
++                adapter.set_write_batch_size(std::env::var("AETHER_BENCH_BATCH_BYTES")
++                    .ok().and_then(|n| n.parse().ok()).unwrap_or(0));
++                let mut state = ConnectionState::new(1234, PEER_PORT);
++                state.status = ConnectionStatus::Connected;
++                state.peer_window = u32::MAX;
++                adapter.states.insert(1234, state);
++                let chunk = vec![0x5a; 64 * 1024];
++                let start = std::time::Instant::now();
++                for _ in 0..1024 { // 64 MiB
++                    adapter.queue_send(std::hint::black_box(&chunk), 1234).unwrap();
++                    adapter.write_buffer_flush().await.unwrap();
++                    let state = adapter.states.get_mut(&1234).unwrap();
++                    state.unacked.clear();
++                    state.bytes_in_flight = 0;
++                }
++                println!("AETHER_BENCH mss={} round={} payload_mib=64 elapsed_ms={:.3} transport_writes={}",
++                    mss, round, start.elapsed().as_secs_f64() * 1000.0,
++                    calls.load(std::sync::atomic::Ordering::Relaxed));
++            }
++        }
++    }
++
+ }
+--- a/src/handle.rs
++++ b/src/handle.rs
+@@ -23,7 +23,7 @@
+ //! 1. **Incoming messages**: connect/send/pcap/close requests from callers.
+ //! 2. **Incoming packets**: reads the next frame from the transport and updates
+ //!    connection state.
+-//! 3. **1 ms tick**: calls `write_buffer_flush`, which drains pending writes and
++//! 3. **250 ms maintenance tick**: calls `write_buffer_flush`, which drains pending writes and
+ //!    checks for retransmission timeouts.
+ //!
+ //! The task exits when the last [`AdapterHandle`] is dropped or when
+@@ -180,7 +180,7 @@
+                                     data,
+                                     res,
+                                 } => {
+-                                    if let Err(e) = adapter.queue_send(&data, host_port) {
++                                    if let Err(e) = adapter.queue_send_owned(bytes::Bytes::from(data), host_port) {
+                                         res.send(Err(e)).ok();
+                                     } else {
+                                         let response = adapter.write_buffer_flush().await;
+@@ -245,7 +245,7 @@
+                         }
+ 
+                         // An ACK in that packet may have cleared `unacked` for some
+-                        // connection; flush now instead of waiting up to 1ms for the tick.
++                        // connection; flush now instead of waiting up to 250ms for the tick.
+                         let _ = adapter.write_buffer_flush().await;
+                     }
+ 
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -296,6 +296,7 @@
+     const SERVER_PORT: u16 = 5555;
+ 
+     #[tokio::test]
++    #[ignore = "manual root-only TUN/Wireshark test"]
+     async fn local_tcp() {
+         let our_ip = Ipv6Addr::from_str("fd12:3456:789a::1").unwrap();
+         let their_ip = Ipv6Addr::from_str("fd12:3456:789a::2").unwrap();
+@@ -315,6 +316,7 @@
+             IpAddr::V6(our_ip),
+             IpAddr::V6(their_ip),
+         );
++        #[cfg(feature = "pcap")]
+         adapter.pcap("./local_tcp.pcap").await.expect("no pcap");
+ 
+         tokio::task::spawn(async move {
+@@ -379,6 +381,7 @@
+     const SPEED_PORT: u16 = 5556;
+ 
+     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++    #[ignore = "manual root-only TUN throughput test"]
+     async fn handle_speed() {
+         const TOTAL_BYTES: usize = 16 << 20; // 16 MiB
+         const CHUNK_SIZE: usize = 4096;
+--- a/src/packets.rs
++++ b/src/packets.rs
+@@ -553,34 +553,88 @@
+         options: &[u8],
+         payload: &[u8],
+     ) -> Vec<u8> {
++        let mut packet = Vec::new();
++        Self::append_tcp(&mut packet, source_ip, destination_ip, source_port,
++            destination_port, sequence_number, acknowledgment_number, flags,
++            window_size, options, payload);
++        packet
++    }
++
++    // Append directly into the transport buffer: no intermediate TCP/IP vectors.
++    pub(crate) fn append_ip(
++        out: &mut Vec<u8>, source_ip: IpAddr, destination_ip: IpAddr,
++        source_port: u16, destination_port: u16, sequence_number: u32,
++        acknowledgment_number: u32, flags: TcpFlags, window_size: u16,
++        options: &[u8], payload: &[u8],
++    ) {
++        let ip_len = match source_ip { IpAddr::V4(_) => 20, IpAddr::V6(_) => 40 };
++        let tcp_len = 20 + options.len().next_multiple_of(4) + payload.len();
++        let start = out.len();
++        out.reserve(ip_len + tcp_len);
++        out.resize(start + ip_len, 0);
++        Self::append_tcp(out, source_ip, destination_ip, source_port,
++            destination_port, sequence_number, acknowledgment_number, flags,
++            window_size, options, payload);
++        let ip = &mut out[start..];
++        match (source_ip, destination_ip) {
++            (IpAddr::V4(src), IpAddr::V4(dst)) => {
++                ip[0] = 0x45;
++                ip[2..4].copy_from_slice(&((20 + tcp_len) as u16).to_be_bytes());
++                ip[8] = 255;
++                ip[9] = ProtocolNumber::Tcp as u8;
++                ip[12..16].copy_from_slice(&src.octets());
++                ip[16..20].copy_from_slice(&dst.octets());
++                Ipv4Packet::apply_checksum(ip);
++            }
++            (IpAddr::V6(src), IpAddr::V6(dst)) => {
++                ip[0] = 0x60;
++                ip[4..6].copy_from_slice(&(tcp_len as u16).to_be_bytes());
++                ip[6] = ProtocolNumber::Tcp as u8;
++                ip[7] = 255;
++                ip[8..24].copy_from_slice(&src.octets());
++                ip[24..40].copy_from_slice(&dst.octets());
++            }
++            _ => panic!("Source and destination IP versions must match"),
++        }
++    }
++
++    fn append_tcp(
++        out: &mut Vec<u8>, source_ip: IpAddr, destination_ip: IpAddr,
++        source_port: u16, destination_port: u16, sequence_number: u32,
++        acknowledgment_number: u32, flags: TcpFlags, window_size: u16,
++        options: &[u8], payload: &[u8],
++    ) {
++        let start = out.len();
+         // TCP options must end on a 4-byte boundary; pad with NOPs (kind 1).
+         let pad = (4 - options.len() % 4) % 4;
+         let opt_total = options.len() + pad;
+         debug_assert!(opt_total.is_multiple_of(4));
+         let data_offset = 5_u8 + (opt_total / 4) as u8;
+-        let mut packet = Vec::with_capacity(20 + opt_total + payload.len());
++        out.reserve(20 + opt_total + payload.len());
+ 
+         // Source and Destination Ports
+-        packet.extend_from_slice(&source_port.to_be_bytes());
+-        packet.extend_from_slice(&destination_port.to_be_bytes());
++        out.extend_from_slice(&source_port.to_be_bytes());
++        out.extend_from_slice(&destination_port.to_be_bytes());
+ 
+         // Sequence and Acknowledgment Numbers
+-        packet.extend_from_slice(&sequence_number.to_be_bytes());
+-        packet.extend_from_slice(&acknowledgment_number.to_be_bytes());
++        out.extend_from_slice(&sequence_number.to_be_bytes());
++        out.extend_from_slice(&acknowledgment_number.to_be_bytes());
+ 
+         // Data Offset and Flags
+-        packet.push(data_offset << 4); // Data offset (4 bits) and reserved bits (4 bits)
+-        packet.push(flags.to_byte()); // Flags byte
++        out.push(data_offset << 4); // Data offset (4 bits) and reserved bits (4 bits)
++        out.push(flags.to_byte()); // Flags byte
+ 
+         // Window Size, Checksum (set to zero first), and Urgent Pointer
+-        packet.extend_from_slice(&window_size.to_be_bytes());
+-        packet.extend_from_slice(&[0, 0]); // Checksum placeholder
+-        packet.extend_from_slice(&[0, 0]); // Urgent pointer
++        out.extend_from_slice(&window_size.to_be_bytes());
++        out.extend_from_slice(&[0, 0]); // Checksum placeholder
++        out.extend_from_slice(&[0, 0]); // Urgent pointer
+ 
+         // Options + NOP padding to 4-byte boundary.
+-        packet.extend_from_slice(options);
+-        packet.extend(std::iter::repeat_n(1, pad));
+-        packet.extend_from_slice(payload);
++        out.extend_from_slice(options);
++        out.extend(std::iter::repeat_n(1, pad));
++        out.extend_from_slice(payload);
++
++        let packet = &mut out[start..];
+ 
+         // Compute checksum with the appropriate pseudo-header
+         let checksum = match (source_ip, destination_ip) {
+@@ -599,7 +653,6 @@
+ 
+         packet[16..18].copy_from_slice(&checksum.to_be_bytes());
+ 
+-        packet
+     }
+ 
+     fn calculate_checksum(
+@@ -644,21 +697,12 @@
+             sum += packet.len() as u32;
+         }
+ 
+-        // Create a copy of the packet with checksum field zeroed out
+-        let mut packet_copy = packet.to_vec();
+-        if packet_copy.len() >= 18 {
+-            packet_copy[16] = 0;
+-            packet_copy[17] = 0;
+-        }
+-
+-        // Sum all 16-bit words in the packet
+-        for chunk in packet_copy.chunks(2) {
+-            let word = if chunk.len() == 2 {
+-                u16::from_be_bytes([chunk[0], chunk[1]])
+-            } else {
+-                u16::from_be_bytes([chunk[0], 0]) // Padding for odd-length packets
+-            };
+-            sum += word as u32;
++        // Sum both sides of the checksum word directly. Separate even-aligned
++        // slices avoid a checksum-field branch and odd-length check per word.
++        for bytes in [&packet[..16], &packet[18..]] {
++            let mut words = bytes.chunks_exact(2);
++            sum += words.by_ref().map(|w| u16::from_be_bytes([w[0], w[1]]) as u32).sum::<u32>();
++            if let Some(&last) = words.remainder().first() { sum += (last as u32) << 8; }
+         }
+ 
+         // Fold sum to 16 bits
+@@ -920,3 +964,53 @@
+         println!("{t1:#?}");
+     }
+ }
++
++#[cfg(test)]
++mod aether_packet_tests {
++    use super::*;
++    fn checksum(bytes: &[u8]) -> u16 {
++        let mut sum = 0u32;
++        for word in bytes.chunks(2) {
++            sum += (u32::from(word[0]) << 8) | u32::from(*word.get(1).unwrap_or(&0));
++        }
++        while sum > 0xffff { sum = (sum & 0xffff) + (sum >> 16); }
++        !(sum as u16)
++    }
++    #[test]
++    fn append_matches_separate_ip_framing_and_independent_checksums() {
++        for (src, dst) in [("192.0.2.1", "192.0.2.2"), ("fd00::1", "fd00::2")] {
++            let src: IpAddr = src.parse().unwrap(); let dst: IpAddr = dst.parse().unwrap();
++            for size in [0, 1, 2, 1219, 1220, 15940] {
++                for options in [&[][..], &[3, 3, 8][..], &[2, 4, 4, 196][..]] {
++                    let payload: Vec<u8> = (0..size).map(|n| (n % 251) as u8).collect();
++                    let flags = TcpFlags { psh: true, ack: true, ..Default::default() };
++                    let tcp = TcpPacket::create(src, dst, 1234, 80, 0xfffffff0, 42, flags, 65534, options, &payload);
++                    let expected = match (src, dst) {
++                        (IpAddr::V4(s), IpAddr::V4(d)) => Ipv4Packet::create(s, d, ProtocolNumber::Tcp, 255, &tcp),
++                        (IpAddr::V6(s), IpAddr::V6(d)) => Ipv6Packet::create(s, d, ProtocolNumber::Tcp, 255, &tcp),
++                        _ => unreachable!(),
++                    };
++                    let mut out = vec![0xaa; 17];
++                    TcpPacket::append_ip(&mut out, src, dst, 1234, 80, 0xfffffff0, 42, flags, 65534, options, &payload);
++                    assert_eq!(&out[..17], &[0xaa; 17]);
++                    assert_eq!(&out[17..], expected);
++                    let mut pseudo = vec![];
++                    match (src, dst) {
++                        (IpAddr::V4(s), IpAddr::V4(d)) => {
++                            assert_eq!(checksum(&out[17..37]), 0);
++                            pseudo.extend_from_slice(&s.octets()); pseudo.extend_from_slice(&d.octets());
++                            pseudo.extend_from_slice(&[0, 6]); pseudo.extend_from_slice(&(tcp.len() as u16).to_be_bytes());
++                        }
++                        (IpAddr::V6(s), IpAddr::V6(d)) => {
++                            pseudo.extend_from_slice(&s.octets()); pseudo.extend_from_slice(&d.octets());
++                            pseudo.extend_from_slice(&(tcp.len() as u32).to_be_bytes()); pseudo.extend_from_slice(&[0, 0, 0, 6]);
++                        }
++                        _ => unreachable!(),
++                    }
++                    pseudo.extend_from_slice(&tcp);
++                    assert_eq!(checksum(&pseudo), 0, "invalid TCP checksum");
++                }
++            }
++        }
++    }
++}

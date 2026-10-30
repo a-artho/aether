@@ -5,7 +5,9 @@ native_dir="$(cd "$(dirname "$0")" && pwd)"
 work_dir="${AETHER_NATIVE_BUILD_DIR:-$native_dir/.build}"
 revision=d32c8189c51c2789496b0768039419c3705498c3
 archive_sha=882282f8b64c3908f28c2d42a556fcf92102ee982d8be3b8b5b448a02572d731
-export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+if [[ "${AETHER_NATIVE_TEST_ONLY:-0}" != 1 ]]; then
+  export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+fi
 command -v cargo >/dev/null || { echo 'Install Rust using https://rustup.rs, then rerun this script.' >&2; exit 1; }
 mkdir -p "$work_dir"
 archive="$work_dir/idevice.tar.gz"
@@ -26,16 +28,23 @@ patch -d "$source_dir" -p1 < "$native_dir/tls-stream-optimization.patch"
 patch -d "$source_dir" -p1 < "$native_dir/afc-upload-progress.patch"
 patch -d "$source_dir" -p1 < "$native_dir/self-install-handoff.patch"
 patch -d "$source_dir" -p1 < "$native_dir/rsd-connection-timeout.patch"
+# Pin the transitive TCP stack too: preserve cancellation fixes and apply our
+# owned-buffer/packet-construction changes without an unreviewed idevice upgrade.
+jktcp_revision=7df57dc59b47ec72fb5dc251fbe9344b0647246b
+jktcp_archive="$work_dir/jktcp.tar.gz"
+if [[ ! -f "$jktcp_archive" ]]; then
+  curl -fL "https://codeload.github.com/jkcoxson/jktcp/tar.gz/$jktcp_revision" -o "$jktcp_archive"
+fi
+[[ "$(shasum -a 256 "$jktcp_archive" | cut -d ' ' -f 1)" == 14f617b10466954cc7a6b4f42090df2eaff4637a9b641c24ec3a1cb95718571d ]] || { echo 'TCP source checksum mismatch' >&2; exit 1; }
+mkdir -p "$source_dir/aether-jktcp"
+tar -xzf "$jktcp_archive" -C "$source_dir/aether-jktcp" --strip-components=1
+patch -d "$source_dir/aether-jktcp" -p1 < "$native_dir/jktcp-transport-optimization.patch"
+patch -d "$source_dir" -p1 < "$native_dir/local-transport-optimization.patch"
 export CARGO_TARGET_DIR="$work_dir/target"
 export IPHONEOS_DEPLOYMENT_TARGET=15.0
 export MACOSX_DEPLOYMENT_TARGET=12.0
 export CARGO_PROFILE_RELEASE_DEBUG=0
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
-targets=(aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios-macabi x86_64-apple-ios-macabi)
-if [[ "${AETHER_NATIVE_IOS_ONLY:-0}" == 1 ]]; then
-  targets=(aarch64-apple-ios)
-fi
-rustup target add "${targets[@]}"
 cd "$source_dir"
 # aes 0.8 requires this opt-in to compile its ARMv8 backend. Its
 # cpufeatures detector supports Apple ARM64; Intel keeps AES-NI detection.
@@ -64,8 +73,37 @@ cargo_for_target "$host_target" test --locked -p idevice --no-default-features -
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features afc,remote_pairing,rustcrypto tls_stream_tests
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features installation_proxy,rustcrypto self_install_handoff_tests
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features rsd,rustcrypto rsd_connection_timeout_tests
+# Exercise the stack without pcap (production network configuration) and with
+# pcap (the full FFI feature set). Manual privileged TUN tests remain ignored.
+cargo_for_target "$host_target" test --manifest-path "$source_dir/aether-jktcp/Cargo.toml" --locked --no-default-features
+cargo_for_target "$host_target" test --manifest-path "$source_dir/aether-jktcp/Cargo.toml" --locked
+ffi_features=full,rustcrypto
+native_features=""
+if [[ "${AETHER_NATIVE_BATCH_IP_PACKETS:-0}" == 1 ]]; then
+  ffi_features+=,aether-tunnel-batching
+  native_features=aether-tunnel-batching
+fi
+if [[ "${AETHER_NATIVE_MSS_8K:-0}" == 1 ]]; then
+  ffi_features+=,aether-tunnel-mss-8k
+  native_features="${native_features:+${native_features},}aether-tunnel-mss-8k"
+fi
+if [[ "${AETHER_NATIVE_LARGE_SEND_WINDOW:-0}" == 1 ]]; then
+  ffi_features+=,aether-large-send-window
+  native_features="${native_features:+${native_features},}aether-large-send-window"
+fi
+cargo_for_target "$host_target" test --locked -p idevice-ffi --no-default-features --features "$ffi_features" aether_afc_ffi_tests
+cargo_for_target "$host_target" test --locked -p idevice-ffi --no-default-features --features "$ffi_features" aether_logging_tests
+if [[ "${AETHER_NATIVE_TEST_ONLY:-0}" == 1 ]]; then
+  echo 'Native transport tests passed; framework packaging skipped.'
+  exit 0
+fi
+targets=(aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios-macabi x86_64-apple-ios-macabi)
+if [[ "${AETHER_NATIVE_IOS_ONLY:-0}" == 1 ]]; then
+  targets=(aarch64-apple-ios)
+fi
+rustup target add "${targets[@]}"
 for target in "${targets[@]}"; do
-  cargo_for_target "$target" build --locked --release -p idevice-ffi --target "$target"
+  cargo_for_target "$target" build --locked --release -p idevice-ffi --target "$target" --features "$native_features"
 done
 headers="$work_dir/headers"
 mkdir -p "$headers"

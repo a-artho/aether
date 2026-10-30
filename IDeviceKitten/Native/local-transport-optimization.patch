@@ -1,0 +1,504 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -2,9 +2,13 @@
+ 
+ resolver = "2"
+ members = ["ffi", "idevice", "tests", "tools"]
++exclude = ["aether-jktcp"]
+ 
+ [profile.release]
+ opt-level = "z"
+ codegen-units = 1
+ lto = true
+ panic = "abort"
++
++[patch.crates-io]
++jktcp = { path = "aether-jktcp" }
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1365,10 +1365,9 @@
+ 
+ [[package]]
+ name = "jktcp"
+-version = "0.1.7"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4d3b9e59938be47d261173086c65a9352fe048951bc502109e7595b70b60cd98"
+-dependencies = [
++version = "0.1.8"
++dependencies = [
++ "bytes",
+  "futures",
+  "getrandom 0.3.4",
+  "rand 0.9.2",
+--- a/idevice/Cargo.toml
++++ b/idevice/Cargo.toml
+@@ -24,7 +24,7 @@
+ plist-macro = { version = "0.1.6" }
+ serde = { version = "1", features = ["derive"] }
+ ns-keyed-archive = { version = "0.1.5", optional = true }
+-jktcp = { version = "0.1.7", optional = true, default-features = false }
++jktcp = { version = "=0.1.8", optional = true, default-features = false }
+ 
+ thiserror = { version = "2" }
+ tracing = { version = "0.1.41" }
+--- a/ffi/Cargo.toml
++++ b/ffi/Cargo.toml
+@@ -23,6 +23,10 @@
+ windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }
+ 
+ [features]
++# Experimental: requires physical-device compatibility/throughput validation.
++aether-tunnel-batching = []
++aether-tunnel-mss-8k = []
++aether-large-send-window = []
+ aws-lc = ["idevice/aws-lc"]
+ ring = ["idevice/ring"]
+ rustcrypto = ["idevice/rustcrypto"]
+--- a/ffi/src/afc.rs
++++ b/ffi/src/afc.rs
+@@ -1003,22 +1003,42 @@
+     handle: *mut AfcFileHandle, data: *const u8, length: libc::size_t,
+     output: *mut AfcWriteDiagnostics,
+ ) -> *mut IdeviceFfiError {
++    if output.is_null() { return ffi_err!(IdeviceError::FfiInvalidArg); }
+     unsafe { afc_file_write_with_progress(handle, data, length, output, None, std::ptr::null_mut()) }
+ }
+ 
+ /// Progress counts payload bytes accepted by transport; the last byte is held
+ /// until the AFC reply validates the write. Context remains valid until return.
++/// A null output pointer disables diagnostic instrumentation while preserving progress.
+ #[unsafe(no_mangle)]
+ pub unsafe extern "C" fn afc_file_write_with_progress(
+     handle: *mut AfcFileHandle, data: *const u8, length: libc::size_t,
+     output: *mut AfcWriteDiagnostics,
+     callback: Option<unsafe extern "C" fn(u64, *mut std::ffi::c_void)>, context: *mut std::ffi::c_void,
+ ) -> *mut IdeviceFfiError {
+-    if output.is_null() { return ffi_err!(IdeviceError::FfiInvalidArg); }
+-    unsafe { *output = Default::default(); }
++    if !output.is_null() { unsafe { *output = Default::default(); } }
+     if handle.is_null() || data.is_null() { return ffi_err!(IdeviceError::FfiInvalidArg); }
+     let fd = unsafe { &mut *(handle as *mut idevice::afc::file::FileDescriptor) };
+     let data_slice = unsafe { std::slice::from_raw_parts(data, length) };
++    // A null metrics pointer selects lightweight progress without poll profiling.
++    // Keep this branch before any diagnostic clocks or runtime timing counters.
++    if output.is_null() {
++        let context = context as usize;
++        let res = run_sync(async move {
++            let mut last_update = std::time::Instant::now();
++            let mut last_bytes = 0;
++            let mut publish = |bytes: u64| {
++                if callback.is_some() && bytes > last_bytes && (bytes == length as u64
++                    || last_update.elapsed() >= std::time::Duration::from_millis(250)) {
++                    last_update = std::time::Instant::now();
++                    last_bytes = bytes;
++                    if let Some(callback) = callback { unsafe { callback(bytes, context as *mut std::ffi::c_void); } }
++                }
++            };
++            fd.write_entire_with_progress(data_slice, Some(&mut publish)).await
++        });
++        return match res { Ok(_) => null_mut(), Err(e) => ffi_err!(e) };
++    }
+     let submitted = std::time::Instant::now();
+     let context = context as usize;
+     let (res, mut metrics, finished) = run_sync(async move {
+@@ -1042,3 +1062,56 @@
+     unsafe { *output = AfcWriteDiagnostics { queue_seconds: metrics.queue_seconds, worker_seconds: metrics.worker_seconds, return_seconds: metrics.return_seconds, copy_seconds: metrics.copy_seconds, serialize_seconds: metrics.serialize_seconds, socket_write_seconds: metrics.socket_write_seconds, flush_seconds: metrics.flush_seconds, reply_seconds: metrics.reply_seconds, poll_seconds: metrics.poll_seconds, max_poll_seconds: metrics.max_poll_seconds, packets: metrics.packets, replies: metrics.replies, socket_bytes: metrics.socket_bytes, write_polls: metrics.write_polls, pending_polls: metrics.pending_polls, flush_polls: metrics.flush_polls, flush_pending_polls: metrics.flush_pending_polls }; }
+     match res { Ok(_) => null_mut(), Err(e) => ffi_err!(e) }
+ }
++
++#[cfg(test)]
++mod aether_afc_ffi_tests {
++    use super::*;
++    use tokio::io::{AsyncReadExt, AsyncWriteExt};
++
++    unsafe extern "C" fn progress(bytes: u64, context: *mut std::ffi::c_void) {
++        unsafe { (&mut *(context as *mut Vec<u64>)).push(bytes); }
++    }
++    #[test]
++    fn nullable_metrics_ffi_preserves_payload_progress_and_errors() {
++        for profiled in [false, true] {
++            for fail in [false, true] {
++                let (socket, mut peer) = tokio::io::duplex(4096);
++                let worker = crate::GLOBAL_RUNTIME.spawn(async move {
++                    for operation in [0x10u64, 0x14] { // Write, then FileClose
++                        let mut header = [0u8; 40];
++                        peer.read_exact(&mut header).await.unwrap();
++                        let word = |offset| u64::from_le_bytes(header[offset..offset+8].try_into().unwrap());
++                        assert_eq!(word(32), operation);
++                        let mut data = vec![0; word(8) as usize - 40];
++                        peer.read_exact(&mut data).await.unwrap();
++                        assert_eq!(&data[..8], &7u64.to_le_bytes());
++                        if operation == 0x10 { assert!(data[8..].iter().all(|b| *b == 0x5a)); }
++                        let mut response = vec![];
++                        for field in [word(0), 48, 48, word(24), 1, if fail && operation == 0x10 {18} else {0}] {
++                            response.extend_from_slice(&field.to_le_bytes());
++                        }
++                        peer.write_all(&response).await.unwrap();
++                    }
++                });
++                let mut client = idevice::afc::AfcClient::new(idevice::Idevice::new(Box::new(socket), "ffi-test"));
++                // Test peer models a previously opened descriptor with fd 7.
++                let mut file = unsafe { idevice::afc::file::FileDescriptor::new(&mut client, 7, "test.ipa".into()) };
++                let payload = vec![0x5a; 128 * 1024];
++                let mut reports = Vec::<u64>::new();
++                let mut metrics = AfcWriteDiagnostics::default();
++                let error = unsafe { afc_file_write_with_progress(
++                    (&mut file as *mut idevice::afc::file::FileDescriptor).cast(),
++                    payload.as_ptr(), payload.len(), if profiled { &mut metrics } else { std::ptr::null_mut() },
++                    Some(progress), (&mut reports as *mut Vec<u64>).cast()) };
++                assert_eq!(!error.is_null(), fail);
++                if !error.is_null() { unsafe { drop(Box::from_raw(error)); } }
++                if fail { assert!(reports.iter().all(|n| *n < payload.len() as u64)); }
++                else { assert_eq!(reports.last().copied(), Some(payload.len() as u64)); }
++                if profiled { assert_eq!(metrics.packets, 1); assert_eq!(metrics.replies, if fail {0} else {1}); }
++                else { assert_eq!(metrics.write_polls, 0); }
++                crate::GLOBAL_RUNTIME.block_on(file.close()).unwrap();
++                crate::GLOBAL_RUNTIME.block_on(worker).unwrap();
++            }
++        }
++    }
++}
+--- a/ffi/src/logging.rs
++++ b/ffi/src/logging.rs
+@@ -3,12 +3,12 @@
+ use std::{
+     ffi::{CStr, c_char},
+     fs::File,
+-    sync::Once,
++    sync::{Mutex, Once, OnceLock, atomic::{AtomicBool, Ordering}},
+ };
+ 
+ use tracing::Level;
+ use tracing_appender::non_blocking;
+-use tracing_subscriber::{EnvFilter, Layer};
++use tracing_subscriber::{EnvFilter, Layer, filter::LevelFilter, reload};
+ use tracing_subscriber::{Registry, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+ 
+ #[repr(C)]
+@@ -54,6 +54,27 @@
+             IdeviceLogLevel::Trace => "trace",
+         }
+         .to_string()
++    }
++}
++
++// Reloading also rebuilds tracing's callsite cache, so disabled events never
++// evaluate their fields. Do not create a console worker for disabled startup.
++static LOGGING_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
++static LOGGING_ENABLED: AtomicBool = AtomicBool::new(true);
++static LOGGING_FILTER: OnceLock<reload::Handle<LevelFilter, Registry>> = OnceLock::new();
++
++/// Updates Aether's native logging setting. Disabled startup installs no logger;
++/// enabling initializes it once, and later changes reload the global filter.
++#[unsafe(no_mangle)]
++pub extern "C" fn idevice_set_logging_enabled(enabled: bool) {
++    let _settings = LOGGING_SETTINGS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
++    LOGGING_ENABLED.store(enabled, Ordering::SeqCst);
++    if enabled {
++        unsafe { idevice_init_logger(IdeviceLogLevel::Info, IdeviceLogLevel::Disabled, std::ptr::null_mut()); }
++    }
++    if let Some(filter) = LOGGING_FILTER.get() {
++        let level = if LOGGING_ENABLED.load(Ordering::SeqCst) { LevelFilter::TRACE } else { LevelFilter::OFF };
++        let _ = filter.reload(level);
+     }
+ }
+ 
+@@ -130,7 +151,10 @@
+             GUARDS = Some((console_guard, file_guard));
+         }
+ 
+-        let subscriber = Registry::default().with(layers);
++        let level = if LOGGING_ENABLED.load(Ordering::SeqCst) { LevelFilter::TRACE } else { LevelFilter::OFF };
++        let (filter, handle) = reload::Layer::new(level);
++        let _ = LOGGING_FILTER.set(handle);
++        let subscriber = Registry::default().with(filter).with(layers);
+         subscriber.init();
+     });
+ 
+@@ -140,3 +164,25 @@
+         init_result
+     }
+ }
++
++#[cfg(test)]
++mod aether_logging_tests {
++    use super::*;
++    #[test]
++    fn logging_starts_off_and_can_be_disabled_after_enabling() {
++        idevice_set_logging_enabled(false);
++        assert!(!INIT.is_completed(), "disabled startup must not create logging workers");
++        assert!(!tracing::enabled!(tracing::Level::INFO));
++        idevice_set_logging_enabled(true);
++        assert!(INIT.is_completed());
++        assert!(tracing::enabled!(tracing::Level::INFO));
++        idevice_set_logging_enabled(false);
++        assert!(!tracing::enabled!(tracing::Level::INFO));
++        let mut evaluated = false;
++        tracing::info!(value = { evaluated = true; 42 }, "disabled event");
++        assert!(!evaluated, "disabled event fields must not be evaluated");
++        idevice_set_logging_enabled(true);
++        assert!(tracing::enabled!(tracing::Level::INFO));
++        idevice_set_logging_enabled(false);
++    }
++}
+--- a/ffi/src/tunnel_provider.rs
++++ b/ffi/src/tunnel_provider.rs
+@@ -45,6 +45,8 @@
+     let tunnel_stream = run_global_timeout(|| tokio::net::TcpStream::connect(tunnel_addr))
+         .await
+         .map_err(|e| IdeviceError::InternalError(format!("TLS tunnel: {e}")))?;
++    // CDTunnel carries latency-sensitive service requests as well as bulk data.
++    tunnel_stream.set_nodelay(true)?;
+     let tunnel = connect_tls_psk_tunnel_native(tunnel_stream, rpc.encryption_key()).await?;
+ 
+     let client_ip: std::net::IpAddr = tunnel
+@@ -62,7 +64,17 @@
+ 
+     let raw = tunnel.into_inner();
+     let mut adapter = idevice::tcp::adapter::Adapter::new(Box::new(raw), client_ip, server_ip);
++    // Upstream edf2587 caps the complete TCP/IP packet at 8 KiB. Keep it
++    // selectable for a controlled comparison with Aether's existing MTU path.
++    #[cfg(feature = "aether-tunnel-mss-8k")]
++    adapter.set_mss(mtu.min(8192).saturating_sub(60));
++    #[cfg(not(feature = "aether-tunnel-mss-8k"))]
+     adapter.set_mss(mtu.saturating_sub(60));
++    // This cap never overrides the peer's advertised receive window.
++    #[cfg(feature = "aether-large-send-window")]
++    adapter.set_send_window(4 * 1024 * 1024);
++    #[cfg(feature = "aether-tunnel-batching")]
++    adapter.set_write_batch_size(16 * 1024);
+     let mut adapter = adapter.to_async_handle();
+ 
+     let rsd_stream = adapter
+--- a/idevice/src/lib.rs
++++ b/idevice/src/lib.rs
+@@ -504,49 +504,53 @@
+ 
+ 
+     #[cfg(feature = "afc")]
+-    pub(crate) async fn send_raw_profiled(&mut self, message: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics) -> Result<(), IdeviceError> {
+-        self.send_raw_profiled_with_progress(message, metrics, None).await
+-    }
+-
+-    #[cfg(feature = "afc")]
+-    pub(crate) async fn send_raw_profiled_with_progress(&mut self, message: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics,
++    pub(crate) async fn send_raw_afc(&mut self, message: &[u8],
++        mut metrics: Option<&mut crate::afc::AfcWriteDiagnostics>,
+         mut progress: Option<&mut (dyn FnMut(u64) + Send)>) -> Result<(), IdeviceError> {
+-        let initial_bytes = metrics.socket_bytes;
+         let socket = self.socket.as_mut().ok_or(IdeviceError::NoEstablishedConnection)?;
+-        let start = std::time::Instant::now();
++        let start = metrics.as_ref().map(|_| std::time::Instant::now());
++        let mut accepted = 0u64;
+         let result: Result<(), std::io::Error> = async {
+-            // Preserve send_raw_with_progress's 64 KiB subdivisions and write_all semantics.
+             for part in message.chunks(64 * 1024) {
+                 let mut remaining = part;
+                 while !remaining.is_empty() {
+                     let n = std::future::poll_fn(|cx| {
+-                        let poll_start = std::time::Instant::now();
++                        let poll_start = metrics.as_ref().map(|_| std::time::Instant::now());
+                         let result = std::pin::Pin::new(&mut **socket).poll_write(cx, remaining);
+-                        let elapsed = poll_start.elapsed().as_secs_f64();
+-                        metrics.poll_seconds += elapsed;
+-                        metrics.max_poll_seconds = metrics.max_poll_seconds.max(elapsed);
+-                        metrics.write_polls += 1;
+-                        if result.is_pending() { metrics.pending_polls += 1; }
++                        if let Some(m) = metrics.as_deref_mut() {
++                            let elapsed = poll_start.unwrap().elapsed().as_secs_f64();
++                            m.poll_seconds += elapsed;
++                            m.max_poll_seconds = m.max_poll_seconds.max(elapsed);
++                            m.write_polls += 1;
++                            if result.is_pending() { m.pending_polls += 1; }
++                        }
+                         result
+                     }).await?;
+                     if n == 0 { return Err(std::io::ErrorKind::WriteZero.into()); }
+-                    metrics.socket_bytes += n as u64;
++                    accepted += n as u64;
++                    if let Some(m) = metrics.as_deref_mut() { m.socket_bytes += n as u64; }
+                     remaining = &remaining[n..];
+-                    if let Some(callback) = progress.as_mut() { callback(metrics.socket_bytes - initial_bytes); }
++                    if let Some(callback) = progress.as_mut() { callback(accepted); }
+                 }
+             }
+             Ok(())
+         }.await;
+-        metrics.socket_write_seconds += start.elapsed().as_secs_f64();
++        if let Some(m) = metrics.as_deref_mut() {
++            m.socket_write_seconds += start.unwrap().elapsed().as_secs_f64();
++        }
+         result?;
+-        let start = std::time::Instant::now();
++        let start = metrics.as_ref().map(|_| std::time::Instant::now());
+         let result = std::future::poll_fn(|cx| {
+-            metrics.flush_polls += 1;
+             let result = std::pin::Pin::new(&mut **socket).poll_flush(cx);
+-            if result.is_pending() { metrics.flush_pending_polls += 1; }
++            if let Some(m) = metrics.as_deref_mut() {
++                m.flush_polls += 1;
++                if result.is_pending() { m.flush_pending_polls += 1; }
++            }
+             result
+         }).await;
+-        metrics.flush_seconds += start.elapsed().as_secs_f64();
++        if let Some(m) = metrics.as_deref_mut() {
++            m.flush_seconds += start.unwrap().elapsed().as_secs_f64();
++        }
+         result?;
+         Ok(())
+     }
+--- a/idevice/src/services/afc/file.rs
++++ b/idevice/src/services/afc/file.rs
+@@ -131,6 +131,11 @@
+     }
+ 
+ 
++    pub async fn write_entire_with_progress(&mut self, bytes: &[u8],
++        progress: Option<&mut (dyn FnMut(u64) + Send)>) -> Result<(), IdeviceError> {
++        self.inner.as_mut().write_with_progress(bytes, None, progress).await
++    }
++
+     /// Applies an flock(2)-style lock to the file
+     ///
+     /// # Arguments
+--- a/idevice/src/services/afc/inner_file.rs
++++ b/idevice/src/services/afc/inner_file.rs
+@@ -192,55 +192,55 @@
+     /// # Arguments
+     /// * `bytes` - Data to write to the file
+     pub async fn write(mut self: Pin<&mut Self>, bytes: &[u8]) -> Result<(), IdeviceError> {
+-        for chunk in bytes.chunks(MAX_WRITE_TRANSFER) {
+-            let header_payload = self.as_ref().fd.to_le_bytes().to_vec();
+-            self.as_mut()
+-                .send_packet(AfcOpcode::Write, header_payload, chunk.to_vec())
+-                .await?;
+-        }
+-        Ok(())
+-    }
+-
+-
+-    /// Diagnostic equivalent of write: identical packet order, sizes and reply checks.
++        self.as_mut().write_with_progress(bytes, None, None).await
++    }
++
+     pub async fn write_profiled(mut self: Pin<&mut Self>, bytes: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics) -> Result<(), IdeviceError> {
+-        self.as_mut().write_profiled_with_progress(bytes, metrics, None).await
++        self.as_mut().write_with_progress(bytes, Some(metrics), None).await
+     }
+ 
+     pub async fn write_profiled_with_progress(mut self: Pin<&mut Self>, bytes: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics,
++        progress: Option<&mut (dyn FnMut(u64) + Send)>) -> Result<(), IdeviceError> {
++        self.as_mut().write_with_progress(bytes, Some(metrics), progress).await
++    }
++
++    pub async fn write_with_progress(mut self: Pin<&mut Self>, bytes: &[u8],
++        mut metrics: Option<&mut crate::afc::AfcWriteDiagnostics>,
+         mut progress: Option<&mut (dyn FnMut(u64) + Send)>) -> Result<(), IdeviceError> {
++        if bytes.is_empty() { return Ok(()); }
++        let header_len = AfcPacketHeader::LEN + 8;
++        let mut wire = Vec::with_capacity(header_len as usize + bytes.len().min(MAX_WRITE_TRANSFER));
+         let mut acknowledged = 0u64;
+         for chunk in bytes.chunks(MAX_WRITE_TRANSFER) {
+-            let start = std::time::Instant::now();
+-            let header_payload = self.as_ref().fd.to_le_bytes().to_vec();
+-            let payload = chunk.to_vec();
+-            metrics.copy_seconds += start.elapsed().as_secs_f64();
+-            // SAFETY: the pinned fields are not moved, matching send_packet.
++            let start = metrics.as_ref().map(|_| std::time::Instant::now());
++            // SAFETY: no pinned field is moved, matching send_packet.
+             let this = unsafe { self.as_mut().get_unchecked_mut() };
+-            let header_len = header_payload.len() as u64 + AfcPacketHeader::LEN;
+-            let packet = AfcPacket {
+-                header: AfcPacketHeader { magic: MAGIC, entire_len: header_len + payload.len() as u64,
+-                    header_payload_len: header_len, packet_num: this.client.package_number, operation: AfcOpcode::Write },
+-                header_payload, payload,
+-            };
++            wire.clear();
++            for field in [MAGIC, header_len + chunk.len() as u64, header_len,
++                this.client.package_number, AfcOpcode::Write as u64, this.fd] {
++                wire.extend_from_slice(&field.to_le_bytes());
++            }
++            // The only full payload copy; no owned payload then serialization copy.
++            wire.extend_from_slice(chunk);
+             this.client.package_number += 1;
+-            let start = std::time::Instant::now();
+-            let wire = packet.serialize();
+-            metrics.serialize_seconds += start.elapsed().as_secs_f64();
+-            metrics.packets += 1;
++            if let Some(m) = metrics.as_deref_mut() {
++                m.serialize_seconds += start.unwrap().elapsed().as_secs_f64();
++                m.packets += 1;
++            }
+             let mut on_wire = |wire_bytes: u64| {
+                 if let Some(callback) = progress.as_mut() {
+-                    // Header bytes aren't payload. Reserve the final byte until the
+-                    // AFC status reply confirms this packet; never report early success.
+-                    callback(acknowledged + wire_bytes.saturating_sub(header_len).min(chunk.len().saturating_sub(1) as u64));
++                    callback(acknowledged + wire_bytes.saturating_sub(header_len)
++                        .min(chunk.len().saturating_sub(1) as u64));
+                 }
+             };
+-            this.client.idevice.send_raw_profiled_with_progress(&wire, metrics, Some(&mut on_wire)).await?;
+-            let start = std::time::Instant::now();
++            this.client.idevice.send_raw_afc(&wire, metrics.as_deref_mut(), Some(&mut on_wire)).await?;
++            let start = metrics.as_ref().map(|_| std::time::Instant::now());
+             let result = this.client.read().await;
+-            metrics.reply_seconds += start.elapsed().as_secs_f64();
++            if let Some(m) = metrics.as_deref_mut() {
++                m.reply_seconds += start.unwrap().elapsed().as_secs_f64();
++            }
+             result?;
+-            metrics.replies += 1;
++            if let Some(m) = metrics.as_deref_mut() { m.replies += 1; }
+             acknowledged += chunk.len() as u64;
+             if let Some(callback) = progress.as_mut() { callback(acknowledged); }
+         }
+@@ -722,4 +722,46 @@
+         assert_eq!(metrics.replies, 0);
+     }
+ 
+-}
++    #[tokio::test]
++    async fn lightweight_and_profiled_progress_have_identical_wire_and_ack_rules() {
++        for profiled in [false, true] {
++            for fail in [false, true] {
++                for size in [0, 1, MAX_WRITE_TRANSFER + 123] {
++                    let (client, mut server) = tokio::io::duplex(97);
++                    let payload: Vec<u8> = (0..size).map(|n| (n % 251) as u8).collect();
++                    let expected = payload.clone();
++                    let receiver = tokio::spawn(async move {
++                        let mut remaining = &expected[..];
++                        let mut sequence = 0;
++                        while !remaining.is_empty() {
++                            let (actual, bytes) = receive_write(&mut server).await;
++                            assert_eq!(actual, sequence);
++                            let n = remaining.len().min(MAX_WRITE_TRANSFER);
++                            assert_eq!(bytes, &remaining[..n]);
++                            reply(&mut server, sequence, if fail { 18 } else { 0 }).await;
++                            if fail { break; }
++                            sequence += 1;
++                            remaining = &remaining[n..];
++                        }
++                    });
++                    let mut file = file(client);
++                    let mut events = vec![];
++                    let mut publish = |n| events.push(n);
++                    let mut metrics = crate::afc::AfcWriteDiagnostics::default();
++                    let result = file.as_mut().write_with_progress(&payload,
++                        if profiled { Some(&mut metrics) } else { None }, Some(&mut publish)).await;
++                    assert_eq!(result.is_err(), fail && size > 0);
++                    if size > 0 {
++                        assert!(events.windows(2).all(|p| p[0] <= p[1]));
++                        if fail { assert!(events.iter().all(|n| *n < size.min(MAX_WRITE_TRANSFER) as u64)); }
++                        else { assert_eq!(events.last().copied(), Some(size as u64)); }
++                    } else { assert!(events.is_empty()); }
++                    if !profiled { assert_eq!(metrics.write_polls, 0); assert_eq!(metrics.serialize_seconds, 0.0); }
++                    drop(file);
++                    receiver.await.unwrap();
++                }
++            }
++        }
++    }
++
++}

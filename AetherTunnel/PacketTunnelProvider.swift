@@ -39,6 +39,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
 		let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: peer.address)
 		settings.ipv4Settings = ipv4
+		#if AETHER_EXPERIMENTAL_TUNNEL_MTU_8192
+		// Outer reflected interface MTU, separate from the inner CDTunnel MTU.
+		// Opt-in device experiment; keep the system default in normal builds.
+		settings.mtu = 8192
+		#endif
 
 		let generation = UUID()
 		stateLock.withLock { runningGeneration = generation }
