@@ -89,7 +89,7 @@ final class ExportManager: ObservableObject {
 		tasks[export.id] = Task { @MainActor [weak self, weak export] in
 			guard let self else { return }
 			// Keep the artifact protected until the worker actually exits, even
-			// when Cancel removes the export row before a clone finishes.
+			// when Cancel removes the export row before its file worker exits.
 			defer { self.artifactReaders[runID] = nil }
 			guard let export else { return }
 			let handler = ArchiveHandler(app: export.snapshot, viewModel: viewModel, purpose: .export)

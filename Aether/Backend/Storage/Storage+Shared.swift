@@ -24,7 +24,8 @@ extension Storage {
 	@MainActor
 	@discardableResult
 	func deleteApp(for app: AppInfoPresentable, stagedCleanup: ((URL) -> Void)? = nil) -> Bool {
-		guard !AppInstallationManager.shared.containsInstallation(for: app),
+		guard !LibraryArtifactAccess.shared.hasReaders(for: app),
+			!AppInstallationManager.shared.containsInstallation(for: app),
 			!DownloadManager.shared.usesLibraryArtifact(app),
 			!ExportManager.shared.usesLibraryArtifact(app) else {
 			DebugLogManager.shared.log("Kept app files required by an installation, import, or export.", category: "Library", level: .notice)

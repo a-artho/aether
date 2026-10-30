@@ -29,7 +29,7 @@ enum AppMaintenanceGuard {
 
 	static var resetBlockReason: String? {
 		if let reason = pairingBlockReason { return reason }
-		if DownloadManager.shared.hasActiveWork || ExportManager.shared.hasActiveWork {
+		if DownloadManager.shared.hasActiveWork || ExportManager.shared.hasActiveWork || LibraryArtifactAccess.shared.hasReaders {
 			return .localized("Finish or cancel imports, downloads, and exports before resetting data.")
 		}
 		return nil

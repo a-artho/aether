@@ -181,13 +181,32 @@ final class AppFileHandler: NSObject, @unchecked Sendable {
 	}
 
 	static func removeImportTransaction(transactionIdentifier: String) async {
-		await MainActor.run {
-			try? Storage.shared.removeImported(uuid: transactionIdentifier)
+		// Serialize the lease check and retirement with read acquisition. Remove
+		// the retired tree off the main actor after its path is no longer visible.
+		let retiredURL: URL? = await MainActor.run {
+			guard !LibraryArtifactAccess.shared.hasReaders(uuid: transactionIdentifier, isSigned: false) else {
+				DebugLogManager.shared.log("Kept imported app files required by packaging.", category: "Library", level: .notice)
+				return nil
+			}
+			let fileManager = FileManager.default
+			let directory = fileManager.unsigned(transactionIdentifier)
+			let retired = directory.deletingLastPathComponent().appendingPathComponent(".deleting-" + UUID().uuidString)
+			var moved = false
+			do {
+				if fileManager.fileExists(atPath: directory.path) {
+					try fileManager.moveItem(at: directory, to: retired)
+					moved = true
+				}
+				try Storage.shared.removeImported(uuid: transactionIdentifier)
+				return moved ? retired : nil
+			} catch {
+				if moved { try? fileManager.moveItem(at: retired, to: directory) }
+				DebugLogManager.shared.log("Could not remove imported app: \(error.localizedDescription)", category: "Library", level: .error)
+				return nil
+			}
 		}
 		let fileManager = FileManager.default
-		try? fileManager.removeFileIfNeeded(
-			at: fileManager.unsigned(transactionIdentifier)
-		)
+		if let retiredURL { try? fileManager.removeFileIfNeeded(at: retiredURL) }
 		try? fileManager.removeFileIfNeeded(
 			at: fileManager.temporaryDirectory.appendingPathComponent(
 				"AetherImport_\(transactionIdentifier)",

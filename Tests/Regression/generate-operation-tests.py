@@ -32,6 +32,7 @@ import XCTest
  }
  final class LibraryArtifactIndex { static let shared=LibraryArtifactIndex(); func remove(uuid:String,isSigned:Bool) {} }
  final class ExportManager { static let shared=ExportManager();func usesLibraryArtifact(_ app:AppInfoPresentable)->Bool {false} }
+ final class LibraryArtifactAccess { static let shared=LibraryArtifactAccess(); func hasReaders(for app:AppInfoPresentable)->Bool {false} }
  final class DownloadManager { static let shared=DownloadManager(); var active=false; func usesLibraryArtifact(_ app:AppInfoPresentable)->Bool { active } }
  final class DebugLogManager { enum Level { case notice,error }; static let shared=DebugLogManager(); func log(_ message:String,category:String,level:Level) {} }
  final class Storage {

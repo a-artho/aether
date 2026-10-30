@@ -10,7 +10,7 @@ import UIKit.UIApplication
 import Zip
 import IDeviceSwift
 
-// Immutable inputs cross workers; the lock protects payload and cleanup state.
+// Immutable inputs cross workers; the lock protects source and cleanup state.
 final class ArchiveHandler: NSObject, @unchecked Sendable {
 	enum Purpose: Equatable {
 		case install
@@ -21,7 +21,11 @@ final class ArchiveHandler: NSObject, @unchecked Sendable {
 	
 	private let _fileManager = FileManager.default
 	private let _uuid = UUID().uuidString
-	private var _payloadUrl: URL?
+	private struct Source: Sendable {
+		let appURL: URL
+		let lease: LibraryArtifactAccess.ReadLease
+	}
+	private var _source: Source?
 	
 	private let _app: AppSnapshot
 	private let _purpose: Purpose
@@ -46,30 +50,25 @@ final class ArchiveHandler: NSObject, @unchecked Sendable {
 		defer { _finishWorkOperation() }
 
 		let app = _app
+		let lease = try await MainActor.run {
+			try LibraryArtifactAccess.shared.acquireRead(for: app)
+		}
 		let workDirectory = _uniqueWorkDir
 		let worker = Task.detached(priority: .utility) { [fileManager = _fileManager] in
 			try Task.checkCancellation()
-			guard
-				let uuid = app.uuid,
-				let appURL = fileManager.getPath(
-					in: app.isSigned ? fileManager.signed(uuid) : fileManager.unsigned(uuid),
-					for: "app"
-				)
-			else {
+			guard let appURL = fileManager.getPath(in: lease.directory, for: "app") else {
 				throw SigningFileHandlerError.appNotFound
 			}
 
-			let payloadURL = workDirectory.appendingPathComponent("Payload")
-			let movedAppURL = payloadURL.appendingPathComponent(appURL.lastPathComponent)
-			try fileManager.createDirectoryIfNeeded(at: payloadURL)
-			try fileManager.copyItemPreferClone(at: appURL, to: movedAppURL)
+			// Payload is a ZIP path prefix; the app stays in its leased directory.
+			try fileManager.createDirectoryIfNeeded(at: workDirectory)
 			try Task.checkCancellation()
-			return payloadURL
+			return Source(appURL: appURL, lease: lease)
 		}
-		let payloadURL = try await withTaskCancellationHandler {
+		let source = try await withTaskCancellationHandler {
 			try await worker.value
 		} onCancel: { worker.cancel() }
-		_operationLock.withLock { _payloadUrl = payloadURL }
+		_operationLock.withLock { _source = source }
 	}
 	
 	func archive() async throws -> URL {
@@ -78,9 +77,11 @@ final class ArchiveHandler: NSObject, @unchecked Sendable {
 
 		let worker = Task.detached(priority: .utility) { [self] in
 			try Task.checkCancellation()
-			guard let payloadUrl = self._operationLock.withLock({ self._payloadUrl }) else {
+			guard let source = self._operationLock.withLock({ self._source }) else {
 				throw SigningFileHandlerError.appNotFound
 			}
+			// The local reference keeps the read lease alive through cancellation.
+			defer { withExtendedLifetime(source.lease) {} }
 			
 			let ipaUrl = self._uniqueWorkDir.appendingPathComponent("Archive.ipa")
 			
@@ -89,7 +90,8 @@ final class ArchiveHandler: NSObject, @unchecked Sendable {
 			// Install and export packaging both honor Archive & Compression settings.
 			let compression = ArchiveHandler.compressionLevel()
 
-			let entries = try BundlePackageWriter.entries(at: payloadUrl)
+			let entries = try BundlePackageWriter.entries(at: source.appURL,
+				rootName: "Payload/" + source.appURL.lastPathComponent)
 			let level: Int32
 			switch compression {
 			case .NoCompression: level = 0
@@ -182,6 +184,7 @@ final class ArchiveHandler: NSObject, @unchecked Sendable {
 	}
 
 	private func _removeWorkDirectory() {
+		_operationLock.withLock { _source = nil }
 		try? _fileManager.removeItem(at: _uniqueWorkDir)
 	}
 

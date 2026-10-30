@@ -278,6 +278,7 @@ extension ResetView {
 	}
 	
 	static func deleteSignedApps() {
+		guard !LibraryArtifactAccess.shared.hasReaders(isSigned: true) else { return }
 		Storage.shared.deleteSourceMetadata(kind: .signed)
 		Storage.shared.clearContext(request: Signed.fetchRequest())
 		LibraryArtifactIndex.shared.resetSigned()
@@ -285,6 +286,7 @@ extension ResetView {
 	}
 	
 	static func deleteImportedApps() {
+		guard !LibraryArtifactAccess.shared.hasReaders(isSigned: false) else { return }
 		Storage.shared.deleteSourceMetadata(kind: .imported)
 		Storage.shared.clearContext(request: Imported.fetchRequest())
 		LibraryArtifactIndex.shared.resetImported()

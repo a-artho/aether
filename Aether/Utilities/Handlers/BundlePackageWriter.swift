@@ -3,7 +3,7 @@ import Darwin
 import Minizip
 
 /// A bounded, cancellable writer shared by install and export packaging.
-/// All source data comes from ArchiveHandler's private snapshot.
+/// ArchiveHandler holds a read lease on the source until file work has exited.
 enum BundlePackageWriter {
     struct Entry {
         let url: URL
@@ -23,8 +23,14 @@ enum BundlePackageWriter {
     }
     static let bufferSize = 256 * 1024
 
-    static func entries(at root: URL, check: () throws -> Void = { try Task.checkCancellation() }) throws -> [Entry] {
+    static func entries(at root: URL, rootName: String? = nil,
+        check: () throws -> Void = { try Task.checkCancellation() }) throws -> [Entry] {
         let normalizedRoot = root.resolvingSymlinksInPath()
+        let archiveRoot = rootName ?? normalizedRoot.lastPathComponent
+        guard !archiveRoot.isEmpty, !archiveRoot.hasPrefix("/"),
+            archiveRoot.split(separator: "/", omittingEmptySubsequences: false).allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+            throw Failure.archive("app root name")
+        }
         var result = [Entry]()
         func entry(_ url: URL, name: String) throws -> Entry {
             var info = stat()
@@ -33,15 +39,15 @@ enum BundlePackageWriter {
             guard kind == S_IFREG || kind == S_IFDIR || kind == S_IFLNK else {
                 throw Failure.archive("unsupported file: \(name)")
             }
-            // Recursive staging can change directory timestamps. They carry no
-            // app content; canonical ZIP directory metadata keeps cache keys stable.
+            // Canonical directory metadata keeps archives stable across staging
+            // and direct reads; directory timestamps carry no app content.
             if kind == S_IFDIR {
                 info.st_mtimespec = timespec(tv_sec: 315532800, tv_nsec: 0)
                 info.st_size = 0
             }
             return Entry(url: url, name: kind == S_IFDIR ? name + "/" : name, metadata: info)
         }
-        let rootEntry = try entry(normalizedRoot, name: normalizedRoot.lastPathComponent)
+        let rootEntry = try entry(normalizedRoot, name: archiveRoot)
         guard rootEntry.kind == S_IFDIR else { throw Failure.archive("app root") }
         result.append(rootEntry)
         func visit(_ directory: URL, relativeName: String) throws {
@@ -57,7 +63,7 @@ enum BundlePackageWriter {
                 if item.kind == S_IFDIR { try visit(child, relativeName: name) }
             }
         }
-        try visit(normalizedRoot, relativeName: normalizedRoot.lastPathComponent)
+        try visit(normalizedRoot, relativeName: archiveRoot)
         return result.sorted { $0.name < $1.name }
     }
 

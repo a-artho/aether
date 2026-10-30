@@ -48,6 +48,19 @@ final class PackagingTests: XCTestCase {
         XCTAssertFalse(completed)
         XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
+    func testLogicalPayloadPrefixPackagesTheOriginalAppWithoutStaging() throws {
+        let app = payload.appendingPathComponent("Test.app")
+        let destination = output()
+        let entries = try BundlePackageWriter.entries(at: app, rootName: "Payload/Test.app")
+        XCTAssertTrue(entries.allSatisfy { $0.url.path.hasPrefix(app.path + "/") || $0.url == app })
+        try BundlePackageWriter.write(entries, to: destination, compression: 1) { _ in }
+        try assertArchive(destination)
+    }
+    func testInvalidLogicalRootNamesAreRejected() throws {
+        for name in ["", "/Payload/Test.app", "../Test.app", "Payload//Test.app", "Payload/./Test.app"] {
+            XCTAssertThrowsError(try BundlePackageWriter.entries(at: payload, rootName: name))
+        }
+    }
     func testCancellationDuringAFileRemovesPartialArchive() throws {
         let destination = output()
         var cancel = false

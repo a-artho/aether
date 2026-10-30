@@ -26,6 +26,7 @@ enum Level { case notice, info }
 @MainActor final class DebugLogManager { static let shared=DebugLogManager(); func log(_ text:String,category:String,level:Level = .info){} }
 @MainActor final class OnDevicePairingManager { static let shared=OnDevicePairingManager(); var isActive=false }
 @MainActor final class ExportManager { static let shared=ExportManager(); var hasActiveWork=false }
+final class LibraryArtifactAccess { static let shared=LibraryArtifactAccess(); var hasReaders=false }
 @MainActor final class AppInstallationManager {
  static let shared=AppInstallationManager()
  struct App { let identifier:String? }
