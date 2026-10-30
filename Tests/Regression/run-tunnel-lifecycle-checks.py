@@ -103,6 +103,7 @@ NATIVE_RESET
  var diagnostic = Diagnostic.tunnelUnavailable
  var isConnected: Bool { state == .connected }
  var connectionPreparation: UUID? { didSet { _signalConnectionWorkChanged() } }
+ var networkConfigurationWriteID: UUID? { didSet { if networkConfigurationWriteID != oldValue { _signalConnectionWorkChanged() } } }
  var preparationTask: Task<Void, Never>?
  var connectionTask: Task<Void, Never>?
  var attemptTimeoutTask: Task<Void, Never>?
