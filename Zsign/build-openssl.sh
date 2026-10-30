@@ -91,7 +91,9 @@ build_arch ios-arm64 iphoneos ios64-xcrun -target arm64-apple-ios12.0
 for arch in arm64 x86_64; do
   build_arch "sim-$arch" iphonesimulator "iossimulator-$arch-xcrun" -target "$arch-apple-ios12.0-simulator"
   build_arch "mac-$arch" macosx "darwin64-$arch-cc" -arch "$arch" -mmacosx-version-min=10.15
-  build_arch "catalyst-$arch" macosx "darwin64-$arch-cc" -target "$arch-apple-ios13.0-macabi"
+  catalyst_min_version=13.1
+  if [[ "$arch" == arm64 ]]; then catalyst_min_version=14.0; fi
+  build_arch "catalyst-$arch" macosx "darwin64-$arch-cc" -target "$arch-apple-ios${catalyst_min_version}-macabi"
 done
 check_host "mac-$(uname -m)"
 
