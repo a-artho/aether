@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AetherPrimaryPreview.imageset/AetherPrimaryPreview.png",
-      "version": "3.0.11",
-      "versionDate": "2026-10-29T21:26:06Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.11/Aether.ipa",
-      "size": 19732230,
-      "versionDescription": "# Aether 3.0.11\n\n- Prevent the Library from treating partially restored imports as an empty initial snapshot.\n- Avoid animating the Library's initial layout while keeping live row updates animated.\n- Keep Library section titles readable in narrow layouts.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.12",
+      "versionDate": "2026-10-30T01:06:48Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.12/Aether.ipa",
+      "size": 19730620,
+      "versionDescription": "# Aether 3.0.12\n\n- Show restored Imports in Library's first layout during cold launch.\n- Preserve native row and section animations for later import changes.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.12",
+          "date": "2026-10-30T01:06:48Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.12/Aether.ipa",
+          "size": 19730620,
+          "localizedDescription": "# Aether 3.0.12\n\n- Show restored Imports in Library's first layout during cold launch.\n- Preserve native row and section animations for later import changes.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.11",
           "date": "2026-10-29T21:26:06Z",
