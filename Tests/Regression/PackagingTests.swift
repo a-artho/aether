@@ -52,11 +52,11 @@ final class PackagingTests: XCTestCase {
         let app = payload.appendingPathComponent("Test.app")
         let destination = output()
         let entries = try BundlePackageWriter.entries(at: app, rootName: "Payload/Test.app")
-		let canonicalAppPath = app.resolvingSymlinksInPath().standardizedFileURL.path
-		XCTAssertTrue(entries.allSatisfy { entry in
-			let path = entry.url.standardizedFileURL.path
-			return path == canonicalAppPath || path.hasPrefix(canonicalAppPath + "/")
-		})
+        let canonicalAppPath = app.resolvingSymlinksInPath().standardizedFileURL.path
+        XCTAssertTrue(entries.allSatisfy { entry in
+            let path = entry.url.standardizedFileURL.path
+            return path == canonicalAppPath || path.hasPrefix(canonicalAppPath + "/")
+        })
         try BundlePackageWriter.write(entries, to: destination, compression: 1) { _ in }
         try assertArchive(destination)
     }
