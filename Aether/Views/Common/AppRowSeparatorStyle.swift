@@ -16,13 +16,34 @@ enum AppRowSeparatorStyle: Int, CaseIterable, Identifiable {
 		}
 	}
 
-	var listVisibility: Visibility? { self == .off ? .hidden : nil }
 	var listTint: Color? { self == .half ? Color(uiColor: .separator).opacity(0.5) : nil }
 
-	func apply(to tableView: UITableView) {
+	@MainActor func apply(to tableView: UITableView) {
 		tableView.separatorStyle = self == .off ? .none : .singleLine
 		tableView.separatorColor = self == .half
 			? UIColor.separator.withAlphaComponent(0.5)
 			: UIColor.separator
+	}
+}
+
+private struct AppRowSeparatorModifier: ViewModifier {
+	let style: AppRowSeparatorStyle
+
+	@ViewBuilder
+	func body(content: Content) -> some View {
+		switch style {
+		case .standard:
+			content
+		case .half:
+			content.listRowSeparatorTint(style.listTint)
+		case .off:
+			content.listRowSeparator(.hidden)
+		}
+	}
+}
+
+extension View {
+	func appRowSeparatorStyle(_ style: AppRowSeparatorStyle) -> some View {
+		modifier(AppRowSeparatorModifier(style: style))
 	}
 }

@@ -495,8 +495,7 @@ struct UnifiedLibraryImportRows: View {
 					}
 					SplitArtifactGroupDeleteAction(group: group, controller: controller)
 				}
-				.listRowSeparator(rowSeparators.listVisibility)
-				.listRowSeparatorTint(rowSeparators.listTint)
+				.appRowSeparatorStyle(rowSeparators)
 			}
 		}
 	}
@@ -662,8 +661,7 @@ private struct UnifiedImportRow: View {
 		.contextMenu {
 			UnifiedImportActions(entry: entry, controller: controller)
 		}
-		.listRowSeparator(rowSeparators.listVisibility)
-		.listRowSeparatorTint(rowSeparators.listTint)
+		.appRowSeparatorStyle(rowSeparators)
 	}
 
 	private var serverPresentation: Binding<Bool> {

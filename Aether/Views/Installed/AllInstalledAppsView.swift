@@ -64,7 +64,7 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 					.id(app.id)
 					.listRowSeparator(rowSeparators == .off || app.id == apps.first?.id ? .hidden : .visible, edges: .top)
 					.listRowSeparator(rowSeparators == .off || app.id == apps.last?.id ? .hidden : .visible, edges: .bottom)
-					.listRowSeparatorTint(rowSeparators.listTint)
+					.appRowSeparatorStyle(rowSeparators)
 					.swipeActions(edge: .trailing) {
 						// Wait for the device to confirm uninstallation before removing the row.
 						Button(String.localized("Uninstall"), systemImage: "trash") {

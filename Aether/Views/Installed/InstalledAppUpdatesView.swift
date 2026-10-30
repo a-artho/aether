@@ -177,8 +177,7 @@ struct InstalledAppUpdatesView: View {
 				})
 				.listRowBackground(Color.clear)
 				.listRowInsets(.horizontal, horizontalInset.points)
-				.listRowSeparator(rowSeparators.listVisibility)
-				.listRowSeparatorTint(rowSeparators.listTint)
+				.appRowSeparatorStyle(rowSeparators)
 		}
 	}
 }
