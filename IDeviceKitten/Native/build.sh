@@ -10,6 +10,12 @@ if [[ "${AETHER_NATIVE_TEST_ONLY:-0}" != 1 ]]; then
 fi
 command -v cargo >/dev/null || { echo 'Install Rust using https://rustup.rs, then rerun this script.' >&2; exit 1; }
 mkdir -p "$work_dir"
+# These old experiments conflict with packet-boundary preservation and dynamic
+# discovery. Fail explicitly rather than silently producing a different build.
+if [[ "${AETHER_NATIVE_BATCH_IP_PACKETS:-0}" == 1 || "${AETHER_NATIVE_MSS_8K:-0}" == 1 ]]; then
+  echo 'IP packet batching and fixed 8 KiB MSS experiments were removed. Local network tunnels now use validated packet-size probing.' >&2
+  exit 1
+fi
 archive="$work_dir/idevice.tar.gz"
 if [[ ! -f "$archive" ]]; then
   curl -fL "https://codeload.github.com/jkcoxson/idevice/tar.gz/$revision" -o "$archive"
@@ -71,6 +77,7 @@ cargo_for_target "$host_target" test --locked -p idevice --no-default-features -
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features remote_pairing,rustcrypto verification_only_wire_tests
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features afc,remote_pairing,rustcrypto afc_large_write_tests
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features afc,remote_pairing,rustcrypto tls_stream_tests
+cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features afc,remote_pairing,rustcrypto,tunnel_tcp_stack aether_dynamic_tunnel_tests
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features installation_proxy,rustcrypto self_install_handoff_tests
 cargo_for_target "$host_target" test --locked -p idevice --no-default-features --features rsd,rustcrypto rsd_connection_timeout_tests
 # Exercise the stack without pcap (production network configuration) and with
@@ -79,14 +86,6 @@ cargo_for_target "$host_target" test --manifest-path "$source_dir/aether-jktcp/C
 cargo_for_target "$host_target" test --manifest-path "$source_dir/aether-jktcp/Cargo.toml" --locked
 ffi_features=full,rustcrypto
 native_features=""
-if [[ "${AETHER_NATIVE_BATCH_IP_PACKETS:-0}" == 1 ]]; then
-  ffi_features+=,aether-tunnel-batching
-  native_features=aether-tunnel-batching
-fi
-if [[ "${AETHER_NATIVE_MSS_8K:-0}" == 1 ]]; then
-  ffi_features+=,aether-tunnel-mss-8k
-  native_features="${native_features:+${native_features},}aether-tunnel-mss-8k"
-fi
 if [[ "${AETHER_NATIVE_LARGE_SEND_WINDOW:-0}" == 1 ]]; then
   ffi_features+=,aether-large-send-window
   native_features="${native_features:+${native_features},}aether-large-send-window"

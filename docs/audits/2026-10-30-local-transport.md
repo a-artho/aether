@@ -1,5 +1,7 @@
 # Aether local transport: upstream review and implementation
 
+Current implementation update: [dynamic packet sizing](2026-10-30-dynamic-packet-sizing.md) replaces the fixed-MSS experiment with default-on upstream-derived probing on local network tunnels. The IP packet-coalescing experiment described below has been removed. The measurements below describe the earlier implementation.
+
 30 October 2026. Reviewed the supplied investigation against Aether's actual native patches, the pinned idevice source, current idevice upstream, current jktcp upstream, and the relevant installed dependency source.
 
 The first implementation removes repeated payload/packet allocations, makes detailed native profiling opt in, and repairs two remaining cancellation cases. Experimental packet batching is implemented but disabled by default. Device throughput remains unmeasured.

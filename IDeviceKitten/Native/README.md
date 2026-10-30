@@ -49,7 +49,11 @@ Write records reuse their allocation, AES key schedule and pre-keyed HMAC state.
 
 `jktcp-transport-optimization.patch` transfers owned channel buffers into `Bytes` queues and splits shared slices for segments/retransmission. The initial AsyncWrite borrowed-slice-to-owned-channel copy remains necessary. Data packets are built directly in a reusable transport buffer; checksum calculation reads the existing TCP bytes without allocating a copy. Queue consumption and sequence/unacked tracking happen before awaiting the transport. Accepted bytes and the write offset are retained until the underlying flush completes, including cancellation while TLS owns an outstanding record. Zero/error writes propagate. The network CDTunnel socket enables TCP_NODELAY.
 
-Bounded IP batching is experimental and disabled by default. Set `AETHER_NATIVE_BATCH_IP_PACKETS=1` when building to enable up to 16 KiB of complete packets per burst on the network TLS tunnel. A single packet larger than that is sent intact. A short tail or window stall flushes immediately, with no batching timer; control packets continue to flush immediately. Packet sizes and the 1 MiB send window are unchanged. Validate both tunnel providers, cancellation, background behavior and physical-device compatibility before using this flag in release builds.
+Local network tunnels now enable dynamic send-packet sizing by default, using the probing-mode search and recovery rules from pymobiledevice3's pmd-pytcp dependency. IPv6 TCP payloads start at 1,340 bytes (1,400-byte packets), bounded by the negotiated MTU, pymobiledevice3's 16,000-byte interface ceiling and peer-advertised MSS. An 8-byte-aligned binary search tests larger real-data packets one at a time. Three consecutive successful probes validate a candidate. A repaired probe cannot count as success; retransmission timeout revokes an increased working size before repair. The search has no fixed 8 KiB ceiling. The receive capability stays at the smaller of the negotiated MTU and 16,000 bytes, and the ordinary send-window cap remains 1 MiB.
+
+IP packet coalescing has been removed. Every inner packet has its own transport write/flush, including control packets following a cancelled partial write. Neither `AETHER_NATIVE_BATCH_IP_PACKETS=1` nor the old fixed-size `AETHER_NATIVE_MSS_8K=1` is accepted anymore: the build reports an explicit error. No new flag is needed for dynamic sizing, including in the normal GitHub IPA build. This applies to the network TLS path shared by In-App VPN and LocalDevVPN; USB/direct adapters retain static sizing unless explicitly configured for probing.
+
+The new Rust probing module adapts GPL-3.0-or-later pmd-pytcp code; its original copyright, source commit, license text and combined-package license metadata are retained in the generated jktcp source. See [the implementation review](../../docs/audits/2026-10-30-dynamic-packet-sizing.md) for the exact upstream references, integration differences and validation limits.
 
 Run native tests without Xcode or cross-target installation:
 
@@ -57,7 +61,7 @@ Run native tests without Xcode or cross-target installation:
 AETHER_NATIVE_TEST_ONLY=1 ./IDeviceKitten/Native/build.sh
 ```
 
-This downloads and checksum-verifies both pinned archives, reapplies every patch to pristine sources, runs the existing native suites plus jktcp tests with/without pcap, and tests the FFI metrics/progress paths. Two manual privileged TUN tests and the construction microbenchmark are ignored by default. Run the latter explicitly from the generated `aether-jktcp` directory:
+This downloads and checksum-verifies both pinned archives, reapplies every patch to pristine sources, runs the existing native suites plus jktcp tests with/without pcap, verifies complete AFC transfers through both real TLS record ciphers with packet loss/path shrink, and tests the FFI metrics/progress paths. Two manual privileged TUN tests and the construction microbenchmark are ignored by default. Run the latter explicitly from the generated `aether-jktcp` directory:
 
 ```sh
 CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
@@ -65,20 +69,13 @@ CARGO_PROFILE_RELEASE_LTO=true cargo test --locked --release --no-default-featur
 aether_bulk_construction_benchmark -- --ignored --nocapture --test-threads=1
 ```
 
-Set `AETHER_BENCH_BATCH_BYTES=16384` for the batching microbenchmark. It measures host packet construction and transport-write counts with immediate synthetic ACKs, excluding TLS, the VPN, device AFC and disk work; its speedups are not installation-throughput claims. See `docs/audits/2026-10-30-local-transport.md` for the source review and validation results. Rebuild the XCFramework with full Xcode before testing the app on iOS.
+The construction microbenchmark measures host packet construction and transport-write counts with immediate synthetic ACKs, excluding TLS, the VPN, device AFC and disk work; its speedups are not installation-throughput claims. Its former batching option has been removed. See `docs/audits/2026-10-30-local-transport.md` for the source review and validation results. Rebuild the XCFramework with full Xcode before testing the app on iOS.
 
 The same setting now controls native console logging in debug and release builds. `HeartbeatManager` reads the saved preference instead of unconditionally starting the Rust logger in debug builds, and `DebugLogManager` forwards subsequent toggle changes. Disabled startup creates no native logging worker. After enabling once, switching off reloads tracing's global filter to OFF, including its cached callsites; disabled event fields are not evaluated. Native and Swift regression checks cover off → on → off → on transitions.
 
 ## Additional speed experiments (default off)
 
-The follow-up pipeline investigation adds two independent native build flags:
-
-| Environment flag | Network TLS tunnel change |
-| --- | --- |
-| `AETHER_NATIVE_MSS_8K=1` | Cap complete inner TCP/IP packets at 8 KiB, matching upstream idevice commit `edf25870`; IPv6 TCP payload MSS is at most 8,132 bytes. |
-| `AETHER_NATIVE_LARGE_SEND_WINDOW=1` | Raise the adapter's own send-window cap from 1 MiB to 4 MiB; the peer's advertised receive window still limits transmission. |
-
-Use one at a time before combinations, rebuilding the XCFramework for each variant. The existing `AETHER_NATIVE_BATCH_IP_PACKETS=1` flag remains experimental. `AETHER_NATIVE_IOS_ONLY=1` can limit a device-only experiment to the iOS slice. These settings affect the network tunnel used by both local providers, not server-mode HTTP or USB.
+The remaining native experiment is `AETHER_NATIVE_LARGE_SEND_WINDOW=1`: it raises the adapter's own send-window cap from 1 MiB to 4 MiB, while preserving the peer's advertised limit. It remains disabled by default and can be tested separately after rebuilding the XCFramework. `AETHER_NATIVE_IOS_ONLY=1` limits a device build to the iOS slice. Dynamic packet sizing itself is part of the ordinary build, rather than an experiment flag.
 
 A separate Swift compilation condition, `AETHER_EXPERIMENTAL_TUNNEL_MTU_8192`, sets the In-App VPN extension's outer interface MTU to 8,192 bytes. Add it to that target's Active Compilation Conditions to test. It does not change the inner CDTunnel MTU and cannot configure an external LocalDevVPN app. Normal builds leave the outer MTU unset as before.
 

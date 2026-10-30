@@ -69,3 +69,7 @@ Available updates retain the source app row and details view. Their normal cloud
 ## Transfer buffer lifetime
 
 The upload worker drains an autorelease pool around each synchronous FileHandle read. Returned Data remains valid through its synchronous native write. This prevents temporary Foundation read buffers from accumulating until the worker's next async suspension after the whole upload. It applies with logging on or off. Full-payload host hashing verified byte integrity; device memory and throughput still require comparison.
+
+## Dynamic inner packet sizing
+
+Ordinary local network builds now probe the send packet size using the pymobiledevice3/pmd-pytcp policy. The initial IPv6 TCP payload is at most 1,340 bytes; ACK-validated probes can raise it up to the negotiated/peer limit. There is no fixed 8 KiB ceiling, and inner packets are never coalesced into one transport write. The outer VPN interface MTU is separate. AFC packet size, file-read size and progress semantics are unchanged. Existing schema-2 socket polls count write polling at the AFC socket abstraction, not IP packets or probes; they cannot establish the active MSS or retransmission rate. See [the implementation review](audits/2026-10-30-dynamic-packet-sizing.md). Logging continues to control diagnostic work independently of packet-size selection.

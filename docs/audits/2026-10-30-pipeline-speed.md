@@ -1,5 +1,7 @@
 # Aether local-mode pipeline: speed investigation
 
+Current implementation update: [dynamic packet sizing](2026-10-30-dynamic-packet-sizing.md) replaces the fixed-MSS experiment with default-on upstream-derived probing on local network tunnels. The IP packet-coalescing experiment described below has been removed. The measurements below describe the earlier implementation.
+
 30 October 2026. This follows the first transport patch and the pre-change log `Aether-Logs-1793318847.txt`. The primary question is upload speed, not just memory or allocation count.
 
 The investigation found concrete tuning opportunities below AFC, an additional current-upstream packet-size change, and a reproducible Foundation buffer-retention problem. It also tested and rejected a packet-boundary optimization that regressed a delayed-ACK scenario. The exact cause of the phone's 11.21 MiB/s rate is not established by the existing log; the missing distinction is time spent behind the TCP/packet-flow feedback loop versus time spent in the device's AFC service.

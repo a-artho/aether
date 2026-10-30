@@ -1,17 +1,26 @@
 --- a/Cargo.toml
 +++ b/Cargo.toml
+@@ -2,7 +2,7 @@
+ name = "jktcp"
+ version = "0.1.8"
+ edition = "2024"
+-license = "MIT"
++license = "MIT AND GPL-3.0-or-later"
+ description = "A userspace TCP stack that runs over any async read/write transport"
+ authors = ["Jackson Coxson"]
+ documentation = "https://docs.rs/jktcp"
 @@ -20,6 +20,7 @@
  ] }
  futures = { version = "0.3", default-features = false, features = ["std"] }
  tracing = "0.1"
 +bytes = "1.10"
  rand = "0.9"
- 
+
  # Native-only: real tokio runtime + filesystem for pcap, plus crossfire for
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -343,7 +343,7 @@
- 
+
  [[package]]
  name = "jktcp"
 -version = "0.0.0"
@@ -21,21 +30,32 @@
   "futures",
 --- a/src/adapter.rs
 +++ b/src/adapter.rs
-@@ -15,12 +15,12 @@
+@@ -15,12 +15,13 @@
      collections::{HashMap, VecDeque},
      io::ErrorKind,
      net::IpAddr,
 -    sync::Arc,
  };
- 
+
  #[cfg(feature = "pcap")]
  use std::path::Path;
- 
+
 +use bytes::Bytes;
++use crate::pmtud::PathMtu;
  use crate::time::Instant;
  use tokio::io::{AsyncReadExt, AsyncWriteExt};
  use tracing::{debug, trace, warn};
-@@ -57,7 +57,7 @@
+@@ -43,6 +44,9 @@
+
+ /// Initial retransmission timeout in milliseconds. Doubles on each retry.
+ const INITIAL_RTO_MS: u64 = 200;
++// pmd-pytcp's RFC 9293 persist policy: 1s initial, exponential to 60s.
++const INITIAL_PERSIST_MS: u64 = 1000;
++const MAX_PERSIST_MS: u64 = 60_000;
+
+ const OUR_WSCALE: u8 = 8;
+
+@@ -57,9 +61,10 @@
  #[derive(Debug, Clone)]
  struct UnackedSegment {
      seq: u32,
@@ -43,8 +63,11 @@
 +    data: Bytes,
      sent_at: Instant,
      retries: u32,
++    repair_pending: bool,
  }
-@@ -86,7 +86,7 @@
+
+ impl UnackedSegment {
+@@ -86,13 +91,19 @@
      host_port: u16,
      peer_port: u16,
      read_buffer: Vec<u8>,
@@ -53,7 +76,41 @@
      status: ConnectionStatus,
      /// Segments we have sent but not yet received an ACK for, in send order.
      unacked: VecDeque<UnackedSegment>,
-@@ -177,9 +177,10 @@
+     bytes_in_flight: usize,
+     peer_window: u32,
+     peer_wscale: Option<u8>,
++    path_mtu: Option<PathMtu>,
++    duplicate_acks: u8,
++    pending_repairs: usize,
++    last_fast_retransmit: Option<u32>,
++    persist_deadline: Option<Instant>,
++    persist_interval_ms: u64,
+ }
+
+ #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+@@ -116,6 +127,12 @@
+             bytes_in_flight: 0,
+             peer_window: 0,
+             peer_wscale: None,
++            path_mtu: None,
++            duplicate_acks: 0,
++            pending_repairs: 0,
++            last_fast_retransmit: None,
++            persist_deadline: None,
++            persist_interval_ms: INITIAL_PERSIST_MS,
+         }
+     }
+ }
+@@ -144,7 +161,7 @@
+ ///
+ /// `Adapter` drives the TCP state machine: it sends and receives raw IPv4/IPv6
+ /// packets over `peer`, maintains per-connection state, and implements
+-/// stop-and-wait retransmission.
++/// window-limited transmission and retransmission.
+ ///
+ /// # Lifecycle
+ ///
+@@ -177,9 +194,10 @@
      /// through here because the adapter's futures are raced in `select!`s and
      /// may be dropped at any await: a cancelled `write_all` would leave a
      /// partial IP packet on the transport and desync the peer's framing.
@@ -62,36 +119,80 @@
 +    outbox: Vec<u8>,
 +    /// Bytes of the reusable outbox already accepted by the transport.
      outbox_offset: usize,
-+    write_batch_size: usize,
++    probing_mtu: Option<usize>,
  }
- 
+
  impl Adapter {
-@@ -196,8 +197,9 @@
+@@ -196,8 +214,9 @@
              mss: DEFAULT_MSS,
              send_window: DEFAULT_SEND_WINDOW,
              udp_sockets: HashMap::new(),
 -            outbox: VecDeque::new(),
 +            outbox: Vec::new(),
              outbox_offset: 0,
-+            write_batch_size: 0,
++            probing_mtu: None,
          }
      }
- 
-@@ -212,6 +214,13 @@
- 
+
+@@ -213,6 +232,57 @@
      pub fn set_send_window(&mut self, window: usize) -> &mut Self {
          self.send_window = window;
-+        self
+         self
 +    }
 +
-+    /// Opt in to immediate, bounded batches of complete IP packets. Zero
-+    /// preserves one transport flush per packet; no timer delays small writes.
-+    pub fn set_write_batch_size(&mut self, bytes: usize) -> &mut Self {
-+        self.write_batch_size = bytes.min(16 * 1024);
-         self
++    /// Enable the pymobiledevice3/pmd-pytcp probing-mode policy on new TCP
++    /// connections. The negotiated interface MTU remains the receive limit;
++    /// send packets start at 1400 bytes and grow only through validated probes.
++    /// Configure before opening any connections. Static adapters are unchanged.
++    pub fn enable_packet_size_probing(&mut self, mtu: usize) -> Result<&mut Self, std::io::Error> {
++        let minimum = if self.host_ip.is_ipv6() { 1280 } else { 576 };
++        if !self.states.is_empty() || !(minimum..=65535).contains(&mtu) {
++            return Err(std::io::Error::new(ErrorKind::InvalidInput, "invalid probing MTU or active connections"));
++        }
++        self.probing_mtu = Some(mtu);
++        self.mss = mtu - self.tcp_overhead();
++        Ok(self)
++    }
++
++    fn tcp_overhead(&self) -> usize { if self.host_ip.is_ipv6() { 60 } else { 40 } }
++
++    /// Preserve the actual deadline across select! loop restarts, rather than
++    /// restarting a fixed sleep whenever another stream receives traffic.
++    pub(crate) fn maintenance_delay(&self) -> std::time::Duration {
++        let now = Instant::now();
++        let mut delay = std::time::Duration::from_millis(250);
++        // A blocked packet must finish before any repair can be emitted.
++        // Its I/O wakeup drives progress; don't poll an expired RTO every ms.
++        if !self.outbox.is_empty() { return delay; }
++        for state in self.states.values() {
++            if state.peer_window == 0 && state.status == ConnectionStatus::Connected {
++                if let Some(at) = state.persist_deadline {
++                    delay = delay.min(at.saturating_duration_since(now));
++                }
++                if let Some(at) = state.path_mtu.as_ref().and_then(PathMtu::probe_deadline) {
++                    delay = delay.min(at.saturating_duration_since(now));
++                }
++                continue;
++            }
++            if let Some(head) = state.unacked.front() {
++                if !head.repair_pending {
++                    delay = delay.min((head.sent_at + head.rto()).saturating_duration_since(now));
++                }
++                if state.pending_repairs > 0 && state.unacked.iter().find(|seg| seg.repair_pending)
++                    .is_some_and(|seg| (seg.seq.wrapping_sub(head.seq) as usize) < state.peer_window as usize) {
++                    delay = std::time::Duration::ZERO;
++                }
++            }
++            if let Some(at) = state.path_mtu.as_ref().and_then(PathMtu::probe_deadline) {
++                delay = delay.min(at.saturating_duration_since(now));
++            }
++        }
++        // A blocked transport must not spin a zero-duration timer.
++        delay.max(std::time::Duration::from_millis(1))
      }
- 
-@@ -332,16 +341,19 @@
+
+     /// The local (host) IP address of this tunnel endpoint.
+@@ -332,16 +402,19 @@
          payload: &[u8],
          host_port: u16,
      ) -> Result<(), std::io::Error> {
@@ -119,18 +220,19 @@
 +        if !payload.is_empty() { state.write_buffer.push_back(payload); }
 +        Ok(())
      }
- 
+
      pub(crate) fn uncache(
-@@ -424,7 +436,7 @@
- 
+@@ -424,7 +497,8 @@
+
      /// Queue an IP packet and write out as much of the outbox as possible.
      async fn send_packet(&mut self, ip: Vec<u8>) -> Result<(), std::io::Error> {
 -        self.outbox.push_back(ip);
++        self.flush_outbox().await?;
 +        self.outbox.extend_from_slice(&ip);
          self.flush_outbox().await
      }
- 
-@@ -434,21 +446,20 @@
+
+@@ -434,21 +508,20 @@
          if self.outbox.is_empty() {
              return Ok(());
          }
@@ -161,9 +263,9 @@
 +        self.outbox_offset = 0;
 +        Ok(())
      }
- 
+
      // -----------------------------------------------------------------------
-@@ -483,34 +494,36 @@
+@@ -483,34 +556,36 @@
              // Inner loop: keep peeling off MSS-sized chunks until either the
              // write buffer is empty or the window is full.
              loop {
@@ -174,15 +276,6 @@
 -                    if state.write_buffer.is_empty() {
 -                        break;
 -                    }
-+                let ip_header = if self.host_ip.is_ipv6() { 40 } else { 20 };
-+                let next_len = self.states.get(&hp)
-+                    .and_then(|s| s.write_buffer.front().map(|b|
-+                        b.len().min(self.mss).min(self.send_window.min(s.peer_window as usize)
-+                            .saturating_sub(s.bytes_in_flight)) + ip_header + 20))
-+                    .unwrap_or(0);
-+                if !self.outbox.is_empty() && self.outbox.len() + next_len > self.write_batch_size {
-+                    self.flush_outbox().await?;
-+                }
 +                let chunk = {
 +                    let Some(state) = self.states.get_mut(&hp) else { break; };
 +                    if matches!(state.status, ConnectionStatus::Error(_)) { break; }
@@ -199,51 +292,430 @@
 -                    let v: Vec<u8> = state.write_buffer.iter().take(n).copied().collect();
 -                    Arc::from(v)
 +                    let remaining = cap.saturating_sub(state.bytes_in_flight);
-+                    let n = front.len().min(self.mss).min(remaining);
++                    let working_mss = state.path_mtu.as_ref().map_or(self.mss, PathMtu::mss);
++                    let candidate = state.path_mtu.as_ref().and_then(PathMtu::candidate_mss);
++                    // A fixed-cap stack does not grow cwnd like pmd-pytcp. Let
++                    // ACKs accumulate enough window credit for its next probe
++                    // instead of endlessly refilling the window with small data.
++                    // Never hold a short service write or a window too small
++                    // to fit the candidate at all.
++                    if candidate.is_some_and(|n| n <= front.len() && n <= cap && n > remaining) { break; }
++                    let is_probe = candidate.is_some_and(|n| n <= front.len() && n <= remaining);
++                    let mss = if is_probe { candidate.unwrap() } else { working_mss };
++                    let n = front.len().min(mss).min(remaining);
 +                    if n == 0 { break; }
 +                    // Consume before any await. The segment is recorded and its
 +                    // complete IP bytes are queued synchronously by queue_psh.
 +                    let chunk = front.split_to(n);
 +                    if front.is_empty() { state.write_buffer.pop_front(); }
-+                    chunk
++                    (chunk, is_probe)
                  };
 -
 -                let chunk_len = chunk.len();
 -                if self.psh(chunk, hp).await.is_err() {
 -                    break;
-+                self.queue_psh(chunk, hp)?;
-+                if self.write_batch_size == 0 || self.outbox.len() >= self.write_batch_size {
-+                    self.flush_outbox().await?;
-                 }
+-                }
 -                if let Some(state) = self.states.get_mut(&hp) {
 -                    state.write_buffer.drain(..chunk_len);
 -                }
 -            }
++                self.queue_psh(chunk.0, hp, chunk.1)?;
++                // One complete inner IP packet per transport write/flush.
++                self.flush_outbox().await?;
 +            }
-+            // Flush a short final batch immediately, including window stalls.
++            // Finish any pending packet, including a window-limited short tail.
 +            self.flush_outbox().await?;
          }
- 
+
          // Reap connections that were dropped while we had the lock.
-@@ -536,7 +549,7 @@
-             // Decide what to do before borrowing mutably.
-             enum Action {
-                 Kill,
--                Retransmit { seq: u32, data: Arc<[u8]> },
-+                Retransmit { seq: u32, data: Bytes },
-                 None,
-             }
- 
-@@ -899,7 +912,7 @@
+@@ -524,93 +599,169 @@
+         Ok(())
      }
- 
+
+-    /// Check every connection for timed-out unacked segments. Retransmit the
+-    /// oldest in-flight segment with exponential back-off; kill the connection
+-    /// after MAX_RETRIES. Head-only retransmit suffices because TCP's
+-    /// cumulative ACK semantics cause the peer to ACK everything they have
+-    /// once the missing piece arrives.
++    /// Split the oldest outstanding range at the CURRENT safe MSS. Pending
++    /// repairs live in connection state, so cancellation between pieces cannot
++    /// lose the tail or combine it with a control packet. Sequence space and
++    /// bytes_in_flight do not change when the packetization changes.
++    fn prepare_head_repair(state: &mut ConnectionState, static_mss: usize, timeout: bool) {
++        let now = Instant::now();
++        if timeout {
++            if let Some(path) = &mut state.path_mtu {
++                let previous_mss = path.mss();
++                path.timed_out(now);
++                if previous_mss != path.mss() {
++                    debug!(host_port = state.host_port, previous_mss, mss = path.mss(), "tunnel packet size reverted after timeout");
++                }
++            }
++        }
++        let Some(head) = state.unacked.pop_front() else { return; };
++        if let Some(path) = &mut state.path_mtu {
++            path.retransmitting(head.seq, head.seq.wrapping_add(head.data.len() as u32), now);
++        }
++        let mss = state.path_mtu.as_ref().map_or(static_mss, PathMtu::mss).max(1);
++        let retries = head.retries + 1;
++        let mut pieces = Vec::new();
++        let mut data = head.data;
++        let mut seq = head.seq;
++        while !data.is_empty() {
++            let piece = data.split_to(data.len().min(mss));
++            let len = piece.len();
++            pieces.push(UnackedSegment { seq, data: piece, sent_at: now, retries, repair_pending: true });
++            seq = seq.wrapping_add(len as u32);
++        }
++        state.pending_repairs += pieces.len();
++        for piece in pieces.into_iter().rev() { state.unacked.push_front(piece); }
++        state.duplicate_acks = 0;
++    }
++
++    /// A genuinely closed receive window needs persist, not data-RTO repair.
++    /// Follow pmd-pytcp's one-byte/exponential-backoff policy. A fresh probe
++    /// consumes exactly one queued byte once; later probes retransmit that byte.
++    /// All timer/bookkeeping changes precede the cancellable transport await.
++    async fn send_zero_window_probe(&mut self, hp: u16) -> Result<(), std::io::Error> {
++        let now = Instant::now();
++        let (seq, ack, peer_port, data, fresh) = {
++            let state = self.states.get_mut(&hp).unwrap();
++            if state.unacked.is_empty() && state.write_buffer.is_empty() {
++                state.persist_deadline = None;
++                state.persist_interval_ms = INITIAL_PERSIST_MS;
++                return Ok(());
++            }
++            match state.persist_deadline {
++                None => {
++                    state.persist_interval_ms = INITIAL_PERSIST_MS;
++                    state.persist_deadline = Some(now + std::time::Duration::from_millis(INITIAL_PERSIST_MS));
++                    return Ok(());
++                }
++                Some(deadline) if now < deadline => return Ok(()),
++                _ => {}
++            }
++            state.persist_interval_ms = (state.persist_interval_ms * 2).min(MAX_PERSIST_MS);
++            state.persist_deadline = Some(now + std::time::Duration::from_millis(state.persist_interval_ms));
++            if let Some(head) = state.unacked.front_mut() {
++                let seq = head.seq;
++                let data = head.data.slice(..1);
++                head.sent_at = now;
++                if let Some(path) = &mut state.path_mtu { path.retransmitting(seq, seq.wrapping_add(1), now); }
++                (seq, state.ack, state.peer_port, data, false)
++            } else {
++                let front = state.write_buffer.front_mut().unwrap();
++                let data = front.split_to(1);
++                if front.is_empty() { state.write_buffer.pop_front(); }
++                (state.seq, state.ack, state.peer_port, data, true)
++            }
++        };
++        if fresh {
++            self.queue_psh(data, hp, false)?;
++            self.flush_outbox().await
++        } else {
++            let tcp = TcpPacket::create(self.host_ip, self.peer_ip, hp, peer_port,
++                seq, ack, TcpFlags { ack: true, ..Default::default() }, u16::MAX - 1, &[], &data);
++            let ip = self.ip_wrap(&tcp);
++            self.log_packet(&ip)?;
++            self.send_packet(ip).await
++        }
++    }
++
+     async fn check_retransmissions(&mut self) -> Result<(), std::io::Error> {
+-        let host_ports: Vec<u16> = self.states.keys().cloned().collect();
+-
++        self.flush_outbox().await?;
++        let host_ports: Vec<u16> = self.states.keys().copied().collect();
+         for hp in host_ports {
+-            // Decide what to do before borrowing mutably.
+-            enum Action {
+-                Kill,
+-                Retransmit { seq: u32, data: Arc<[u8]> },
+-                None,
+-            }
+-
+-            let action = match self.states.get(&hp) {
+-                Some(state) => match state.unacked.front() {
+-                    Some(seg) if seg.is_timed_out() => {
+-                        if seg.retries >= MAX_RETRIES {
+-                            Action::Kill
+-                        } else {
+-                            Action::Retransmit {
+-                                seq: seg.seq,
+-                                data: seg.data.clone(),
+-                            }
++            let state = self.states.get_mut(&hp).unwrap();
++            if matches!(state.status, ConnectionStatus::Error(_)) { continue; }
++            if let Some(path) = &mut state.path_mtu { path.poll(Instant::now()); }
++            if state.status == ConnectionStatus::Connected && state.peer_window == 0 {
++                self.send_zero_window_probe(hp).await?;
++                continue;
++            }
++            // A queued-but-unsent piece has no running retransmission timer.
++            // A sent head can still time out while its repair tail waits for
++            // receive-window credit; never strand that head behind the tail.
++            if let Some(head) = state.unacked.front() {
++                if !head.repair_pending {
++                    let fast = state.path_mtu.is_some() && state.duplicate_acks >= 3
++                        && state.last_fast_retransmit != Some(head.seq);
++                    let timeout = head.is_timed_out();
++                    if fast || timeout {
++                        if head.retries >= MAX_RETRIES {
++                            warn!("hp={hp} timed out after {MAX_RETRIES} retransmissions; closing");
++                            state.status = ConnectionStatus::Error(ErrorKind::TimedOut);
++                            state.unacked.clear();
++                            state.write_buffer.clear();
++                            state.bytes_in_flight = 0;
++                            state.pending_repairs = 0;
++                            continue;
+                         }
+-                    }
+-                    _ => Action::None,
+-                },
+-                None => Action::None,
+-            };
+-
+-            match action {
+-                Action::Kill => {
+-                    warn!("hp={hp} timed out after {MAX_RETRIES} retransmissions; closing");
+-                    if let Some(state) = self.states.get_mut(&hp) {
+-                        state.status = ConnectionStatus::Error(ErrorKind::TimedOut);
+-                        // Nothing will be sent on this connection again. Leaving the
+-                        // segments queued would kill it again on every check and keep
+-                        // reporting pending work forever.
+-                        state.unacked.clear();
+-                        state.bytes_in_flight = 0;
+-                        state.write_buffer.clear();
++                        state.last_fast_retransmit = if timeout { None } else { Some(head.seq) };
++                        Self::prepare_head_repair(state, self.mss, timeout);
+                     }
+                 }
+-                Action::Retransmit { seq, data } => {
+-                    debug!("retransmitting {} bytes for hp={hp}", data.len());
+-
+-                    // Bump retry counter before the await so it's visible even if we're cancelled.
+-                    if let Some(state) = self.states.get_mut(&hp)
+-                        && let Some(seg) = state.unacked.front_mut()
+-                    {
+-                        seg.retries += 1;
+-                        seg.sent_at = Instant::now();
++            }
++            loop {
++                let (seq, ack, host_port, peer_port, data) = {
++                    let state = self.states.get_mut(&hp).unwrap();
++                    if state.pending_repairs == 0 { break; }
++                    let index = state.unacked.iter().position(|seg| seg.repair_pending).expect("pending repair exists");
++                    let oldest = state.unacked.front().unwrap().seq;
++                    let offset = state.unacked[index].seq.wrapping_sub(oldest) as usize;
++                    let credit = (state.peer_window as usize).saturating_sub(offset);
++                    if credit == 0 { break; }
++                    let mut seg = state.unacked.remove(index).unwrap();
++                    // This piece may predate a later RTO/probe-expiry demotion.
++                    // Re-check the authoritative MSS at emission, not only when
++                    // the original head was split into pending repairs.
++                    let mss = state.path_mtu.as_ref().map_or(self.mss, PathMtu::mss).max(1);
++                    let n = seg.data.len().min(credit).min(mss);
++                    let data = seg.data.split_to(n);
++                    let seq = seg.seq;
++                    let retries = seg.retries;
++                    if !seg.data.is_empty() {
++                        seg.seq = seg.seq.wrapping_add(n as u32);
++                        state.unacked.insert(index, seg);
++                        // The suffix remains pending; replacing one pending
++                        // range with one pending suffix leaves the count alone.
++                    } else { state.pending_repairs -= 1; }
++                    let now = Instant::now();
++                    state.unacked.insert(index, UnackedSegment {
++                        seq, data: data.clone(), sent_at: now, retries, repair_pending: false,
++                    });
++                    // Invalidate before this repaired range can be ACKed.
++                    if let Some(path) = &mut state.path_mtu {
++                        path.retransmitting(seq, seq.wrapping_add(n as u32), now);
+                     }
+-
+-                    let ip = {
+-                        let Some(state) = self.states.get(&hp) else {
+-                            continue;
+-                        };
+-                        let tcp = TcpPacket::create(
+-                            self.host_ip,
+-                            self.peer_ip,
+-                            state.host_port,
+-                            state.peer_port,
+-                            seq,
+-                            state.ack,
+-                            TcpFlags {
+-                                psh: true,
+-                                ack: true,
+-                                ..Default::default()
+-                            },
+-                            u16::MAX - 1,
+-                            &[],
+-                            &data,
+-                        );
+-                        self.ip_wrap(&tcp)
+-                    };
+-
+-                    self.log_packet(&ip)?;
+-                    self.send_packet(ip).await?;
+-                }
+-                Action::None => {}
+-            }
+-        }
+-
++                    (seq, state.ack, state.host_port, state.peer_port, data)
++                };
++                let tcp = TcpPacket::create(self.host_ip, self.peer_ip, host_port, peer_port,
++                    seq, ack, TcpFlags { psh: true, ack: true, ..Default::default() },
++                    u16::MAX - 1, &[], &data);
++                let ip = self.ip_wrap(&tcp);
++                self.log_packet(&ip)?;
++                // flush_outbox has already completed at entry; enqueue before
++                // awaiting so this piece survives cancellation just like new data.
++                self.outbox.extend_from_slice(&ip);
++                self.flush_outbox().await?;
++            }
++        }
+         Ok(())
+     }
+
+@@ -619,6 +770,7 @@
+     // -----------------------------------------------------------------------
+
+     pub(crate) async fn process_tcp_packet(&mut self) -> Result<(), std::io::Error> {
++        let maintenance_delay = self.maintenance_delay();
+         tokio::select! {
+             ip_packet = self.read_ip_packet() => {
+                 let (protocol, payload) = ip_packet?;
+@@ -633,9 +785,9 @@
+                     _ => Ok(()),
+                 }
+             }
+-            // Short timeout so retransmissions fire in the AdapterStream case
+-            // (the AdapterHandle has a 1ms tick that calls write_buffer_flush directly).
+-            _ = crate::time::sleep(std::time::Duration::from_millis(500)) => {
++            // Every retransmission path first finishes a cancelled frame.
++            _ = crate::time::sleep(maintenance_delay) => {
++                self.flush_outbox().await?;
+                 self.check_retransmissions().await
+             }
+         }
+@@ -723,24 +875,51 @@
+             // The peer's acknowledgment_number is the next seq they expect from us,
+             // so any segment with (seg.seq + seg.len) <= ack_num has been received.
+             // ------------------------------------------------------------------
+-            if res.flags.ack {
++            if res.source_port != state.peer_port { return Ok(()); }
++            if res.flags.ack && !matches!(state.status, ConnectionStatus::WaitingForSyn) {
+                 let ack_num = res.acknowledgment_number;
+-                while let Some(seg) = state.unacked.front() {
+-                    let seg_end = seg.seq.wrapping_add(seg.data.len() as u32);
+-                    if seq_lte(seg_end, ack_num) {
+-                        let popped = state.unacked.pop_front().unwrap();
+-                        state.bytes_in_flight =
+-                            state.bytes_in_flight.saturating_sub(popped.data.len());
+-                    } else {
+-                        break;
++                let oldest = state.unacked.front().map_or(state.seq, |seg| seg.seq);
++                // Future/stale ACKs cannot validate probes or open a send window.
++                if seq_lte(oldest, ack_num) && seq_lte(ack_num, state.seq) {
++                    let previous_window = state.peer_window;
++                    if !res.flags.syn {
++                        let shift = state.peer_wscale.unwrap_or(0);
++                        state.peer_window = (res.window_size as u32) << shift;
++                        if previous_window == 0 && state.peer_window > 0 {
++                            state.persist_deadline = None;
++                            state.persist_interval_ms = INITIAL_PERSIST_MS;
++                            state.duplicate_acks = 0;
++                            state.last_fast_retransmit = None;
++                            // Time spent in peer-imposed flow control is not
++                            // evidence of a size-induced black hole.
++                            for seg in &mut state.unacked { seg.sent_at = Instant::now(); }
++                        }
++                    }
++                    if ack_num == oldest && !state.unacked.is_empty() && res.payload.is_empty()
++                        && state.peer_window > 0 && previous_window == state.peer_window && !res.flags.syn && !res.flags.fin && !res.flags.rst {
++                        state.duplicate_acks = state.duplicate_acks.saturating_add(1);
++                    } else if seq_lt(oldest, ack_num) {
++                        state.duplicate_acks = 0;
++                        state.last_fast_retransmit = None;
++                    }
++                    if let Some(path) = &mut state.path_mtu {
++                        let previous_mss = path.mss();
++                        path.acknowledged(ack_num, Instant::now());
++                        if path.mss() != previous_mss {
++                            debug!(host_port = res.destination_port, mss = path.mss(), "validated tunnel packet size");
++                        }
++                    }
++                    while let Some(seg) = state.unacked.front_mut() {
++                        if !seq_lt(seg.seq, ack_num) { break; }
++                        let n = (ack_num.wrapping_sub(seg.seq) as usize).min(seg.data.len());
++                        state.bytes_in_flight = state.bytes_in_flight.saturating_sub(n);
++                        if n == seg.data.len() {
++                            if seg.repair_pending { state.pending_repairs -= 1; }
++                            state.unacked.pop_front();
++                        }
++                        else { seg.seq = seg.seq.wrapping_add(n as u32); seg.data = seg.data.slice(n..); break; }
+                     }
+                 }
+-            }
+-
+-            // Update peer's advertised receive window
+-            if !(res.flags.syn) {
+-                let shift = state.peer_wscale.unwrap_or(0);
+-                state.peer_window = (res.window_size as u32) << shift;
+             }
+
+             // ------------------------------------------------------------------
+@@ -755,15 +934,22 @@
+             match state.status {
+                 ConnectionStatus::WaitingForSyn => {
+                     // We expect a SYN-ACK.
+-                    if res.flags.syn && res.flags.ack {
++                    if res.flags.syn && res.flags.ack
++                        && res.acknowledgment_number == state.seq.wrapping_add(1) {
+                         // SYN-ACK: peer's SYN consumes one seq number.
+                         state.ack = res.sequence_number.wrapping_add(1);
+                         // Our SYN consumed one sequence number on our side.
+                         state.seq = state.seq.wrapping_add(1);
+                         state.status = ConnectionStatus::Connected;
++                        if let Some(mtu) = self.probing_mtu {
++                            let overhead = if self.host_ip.is_ipv6() { 60 } else { 40 };
++                            // RFC default MSS when the SYN-ACK omits the option.
++                            let default_mss = if self.host_ip.is_ipv6() { 1220 } else { 536 };
++                            let peer_mss = crate::packets::parse_mss(&res.options).unwrap_or(default_mss);
++                            state.path_mtu = Some(PathMtu::new(mtu.min(peer_mss + overhead), overhead));
++                        }
+                         state.peer_wscale = crate::packets::parse_window_scale(&res.options);
+-                        let shift = state.peer_wscale.unwrap_or(0);
+-                        state.peer_window = (res.window_size as u32) << shift;
++                        state.peer_window = res.window_size as u32;
+                         ack_me = Some(res.destination_port);
+                     }
+                     // Anything else while waiting for SYN-ACK is ignored.
+@@ -849,7 +1035,11 @@
+             ));
+         };
+         // Advertise window scaling so the peer can scale its window field.
+-        let wscale = crate::packets::window_scale_option(OUR_WSCALE);
++        let mut wscale = crate::packets::window_scale_option(OUR_WSCALE).to_vec();
++        if let Some(mtu) = self.probing_mtu {
++            wscale.extend_from_slice(&[2, 4]);
++            wscale.extend_from_slice(&((mtu - self.tcp_overhead()) as u16).to_be_bytes());
++        }
+         let tcp = TcpPacket::create(
+             self.host_ip,
+             self.peer_ip,
+@@ -899,7 +1089,7 @@
+     }
+
      /// Send a PSH segment and record it in the unacked queue.
 -    async fn psh(&mut self, data: Arc<[u8]>, host_port: u16) -> Result<(), std::io::Error> {
-+    fn queue_psh(&mut self, data: Bytes, host_port: u16) -> Result<(), std::io::Error> {
++    fn queue_psh(&mut self, data: Bytes, host_port: u16, is_probe: bool) -> Result<(), std::io::Error> {
          let Some(state) = self.states.get(&host_port) else {
              return Err(std::io::Error::new(
                  ErrorKind::NotConnected,
-@@ -911,7 +924,9 @@
+@@ -911,7 +1101,9 @@
          }
          trace!("psh {} bytes on hp={host_port}", data.len());
          let seq = state.seq;
@@ -254,26 +726,47 @@
              self.host_ip,
              self.peer_ip,
              state.host_port,
-@@ -927,7 +942,6 @@
+@@ -927,7 +1119,6 @@
              &[],
              &data,
          );
 -        let ip = self.ip_wrap(&tcp);
          let _ = state;
- 
+
          // Record the segment before the await: the packet is queued either way, so
-@@ -944,8 +958,8 @@
+@@ -940,12 +1131,16 @@
+                 data,
+                 sent_at: Instant::now(),
+                 retries: 0,
++                repair_pending: false,
+             });
++            if let Some(path) = &mut state.path_mtu {
++                path.sent(seq, len, is_probe, Instant::now());
++            }
              state.seq = state.seq.wrapping_add(len as u32);
          }
- 
+
 -        self.log_packet(&ip)?;
 -        self.send_packet(ip).await
 +        self.log_packet(&self.outbox[packet_start..])?;
 +        Ok(())
      }
- 
+
      async fn read_ip_packet(&mut self) -> Result<(u8, Vec<u8>), std::io::Error> {
-@@ -1647,4 +1661,194 @@
+@@ -1508,6 +1703,12 @@
+         let hp = hp_result.expect("connect failed");
+         assert_eq!(hp, peer_hp);
+
++        assert_eq!(adapter.states[&hp].peer_window, peer_raw_window as u32, "SYN window is unscaled");
++        let end = adapter.states[&hp].seq;
++        let window_update = TcpPacket::create(PEER_IP.into(), HOST_IP.into(), PEER_PORT, hp,
++            PEER_ISN + 1, end, TcpFlags { ack: true, ..Default::default() }, peer_raw_window, &[], &[]);
++        adapter.process_tcp_packet_from_payload(&window_update).await.unwrap();
++
+         // Try to send 100 bytes. With peer_window=32 and mss=10, we expect
+         // 3 full segments (30 bytes) plus one short segment (2 bytes) = 32
+         // bytes on the wire; the remaining 68 bytes must be held.
+@@ -1647,4 +1848,597 @@
              "duplicate payload must not be re-buffered"
          );
      }
@@ -283,6 +776,7 @@
 +    struct Capture {
 +        wire: Vec<u8>, calls: usize, flushes: usize, max_write: usize,
 +        block_after: Option<usize>, block_flush: bool, zero: bool, fail: bool,
++        strict_packets: bool, packet_remaining: usize,
 +    }
 +    #[derive(Debug, Clone)]
 +    struct CaptureTransport(std::sync::Arc<std::sync::Mutex<Capture>>);
@@ -296,7 +790,15 @@
 +            if c.fail { return Poll::Ready(Err(ErrorKind::BrokenPipe.into())); }
 +            if c.zero { return Poll::Ready(Ok(0)); }
 +            if c.block_after.is_some_and(|n| c.wire.len() >= n) { return Poll::Pending; }
++            if c.strict_packets {
++                if c.packet_remaining == 0 {
++                    assert!(bytes.len() >= 40 && bytes[0] >> 4 == 6);
++                    c.packet_remaining = 40 + u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
++                }
++                assert_eq!(bytes.len(), c.packet_remaining, "transport write contains multiple inner packets");
++            }
 +            let n = bytes.len().min(if c.max_write == 0 { usize::MAX } else { c.max_write });
++            if c.strict_packets { c.packet_remaining -= n; }
 +            c.wire.extend_from_slice(&bytes[..n]);
 +            Poll::Ready(Ok(n))
 +        }
@@ -306,10 +808,10 @@
 +        }
 +        fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> { self.poll_flush(cx) }
 +    }
-+    fn captured_adapter(batch: usize) -> (Adapter, std::sync::Arc<std::sync::Mutex<Capture>>) {
-+        let capture = std::sync::Arc::new(std::sync::Mutex::new(Capture::default()));
++    fn captured_adapter() -> (Adapter, std::sync::Arc<std::sync::Mutex<Capture>>) {
++        let capture = std::sync::Arc::new(std::sync::Mutex::new(Capture { strict_packets: true, ..Default::default() }));
 +        let mut adapter = Adapter::new(Box::new(CaptureTransport(capture.clone())), HOST_IP.into(), PEER_IP.into());
-+        adapter.set_mss(1220).set_write_batch_size(batch);
++        adapter.set_mss(1220);
 +        let mut state = ConnectionState::new(1234, PEER_PORT);
 +        state.seq = u32::MAX - 100;
 +        state.ack = PEER_ISN + 1;
@@ -338,8 +840,8 @@
 +    }
 +    #[tokio::test]
 +    async fn aether_cancelled_partial_packet_does_not_requeue_payload() {
-+        for batch in [0, 16 * 1024] {
-+            let (mut adapter, capture) = captured_adapter(batch);
++        for _ in 0..1 {
++            let (mut adapter, capture) = captured_adapter();
 +            { let mut c = capture.lock().unwrap(); c.max_write = 7; c.block_after = Some(7); }
 +            let payload: Vec<u8> = (0..4000).map(|n| (n % 251) as u8).collect();
 +            adapter.queue_send(&payload, 1234).unwrap();
@@ -364,7 +866,7 @@
 +    }
 +    #[tokio::test]
 +    async fn aether_cancelled_underlying_flush_is_resumed_even_without_new_data() {
-+        let (mut adapter, capture) = captured_adapter(0);
++        let (mut adapter, capture) = captured_adapter();
 +        capture.lock().unwrap().block_flush = true;
 +        adapter.queue_send(b"last TLS record", 1234).unwrap();
 +        poll_once(adapter.write_buffer_flush());
@@ -379,7 +881,7 @@
 +    }
 +    #[tokio::test]
 +    async fn aether_owned_chunks_and_retransmits_share_payload_storage() {
-+        let (mut adapter, _) = captured_adapter(0);
++        let (mut adapter, _) = captured_adapter();
 +        let payload = Bytes::from(vec![0x5a; 4000]);
 +        let ptr = payload.as_ptr();
 +        adapter.queue_send_owned(payload, 1234).unwrap();
@@ -394,16 +896,16 @@
 +        assert_eq!(offset, 4000);
 +    }
 +    #[tokio::test]
-+    async fn aether_batches_preserve_framing_and_flush_short_window_limited_tail() {
-+        for batch in [0, 16 * 1024] {
-+            let (mut adapter, capture) = captured_adapter(batch);
++    async fn aether_packets_remain_separate_with_a_window_limited_tail() {
++        for _ in 0..1 {
++            let (mut adapter, capture) = captured_adapter();
 +            adapter.set_send_window(20_000);
 +            adapter.queue_send(&vec![42; 25_000], 1234).unwrap();
 +            adapter.write_buffer_flush().await.unwrap();
 +            let packets = captured_packets(&capture);
 +            assert_eq!(packets.iter().map(|p| p.payload.len()).sum::<usize>(), 20_000);
 +            assert!(packets.iter().all(|p| p.payload.len() <= 1220));
-+            assert_eq!(capture.lock().unwrap().calls, if batch == 0 { 17 } else { 2 });
++            assert_eq!(capture.lock().unwrap().calls, 17);
 +            assert!(adapter.outbox.is_empty());
 +            assert_eq!(adapter.states[&1234].write_buffer[0].len(), 5000);
 +        }
@@ -411,7 +913,7 @@
 +    #[tokio::test]
 +    async fn aether_zero_and_failed_transport_writes_propagate_and_retain_packet() {
 +        for fail in [false, true] {
-+            let (mut adapter, capture) = captured_adapter(0);
++            let (mut adapter, capture) = captured_adapter();
 +            { let mut c = capture.lock().unwrap(); c.fail = fail; c.zero = !fail; }
 +            adapter.queue_send(b"payload", 1234).unwrap();
 +            let error = adapter.write_buffer_flush().await.unwrap_err();
@@ -445,8 +947,6 @@
 +                let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
 +                let mut adapter = Adapter::new(Box::new(BenchSink(calls.clone())), HOST_IP.into(), PEER_IP.into());
 +                adapter.set_mss(mss);
-+                adapter.set_write_batch_size(std::env::var("AETHER_BENCH_BATCH_BYTES")
-+                    .ok().and_then(|n| n.parse().ok()).unwrap_or(0));
 +                let mut state = ConnectionState::new(1234, PEER_PORT);
 +                state.status = ConnectionStatus::Connected;
 +                state.peer_window = u32::MAX;
@@ -467,6 +967,402 @@
 +        }
 +    }
 +
++    fn probing_adapter(mtu: usize) -> (Adapter, std::sync::Arc<std::sync::Mutex<Capture>>) {
++        let (mut adapter, capture) = captured_adapter();
++        adapter.probing_mtu = Some(mtu);
++        adapter.mss = mtu - 60;
++        let state = adapter.states.get_mut(&1234).unwrap();
++        state.path_mtu = Some(PathMtu::new(mtu, 60));
++        state.peer_wscale = Some(8);
++        state.peer_window = (u16::MAX as u32 - 1) << 8;
++        (adapter, capture)
++    }
++    async fn ack_sent(adapter: &mut Adapter, ack: u32) {
++        adapter.process_tcp_packet_from_payload(&tcp_seg(1234, PEER_ISN + 1, ack,
++            TcpFlags { ack: true, ..Default::default() }, &[])).await.unwrap();
++    }
++    fn take_packets(capture: &std::sync::Arc<std::sync::Mutex<Capture>>) -> Vec<TcpPacket> {
++        let packets = captured_packets(capture);
++        capture.lock().unwrap().wire.clear();
++        packets
++    }
++    async fn raise_size(adapter: &mut Adapter, capture: &std::sync::Arc<std::sync::Mutex<Capture>>) {
++        for round in 0..4 {
++            adapter.queue_send(&vec![0x5a; 32000], 1234).unwrap();
++            adapter.write_buffer_flush().await.unwrap();
++            let packets = take_packets(capture);
++            let large = packets.iter().filter(|p| p.payload.len() > 1340).count();
++            assert_eq!(large, if round == 0 { 0 } else { 1 });
++            let end = adapter.states[&1234].seq;
++            ack_sent(adapter, end).await;
++            if round < 3 { assert_eq!(adapter.states[&1234].path_mtu.as_ref().unwrap().mss(), 1340); }
++        }
++        assert_eq!(adapter.states[&1234].path_mtu.as_ref().unwrap().mss(), 8636);
++    }
++
++    #[tokio::test]
++    async fn aether_probe_requires_valid_ack_and_three_independent_deliveries() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        adapter.queue_send(&vec![1; 32000], 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        let end = adapter.states[&1234].seq;
++        ack_sent(&mut adapter, end.wrapping_add(1)).await;
++        assert_eq!(adapter.states[&1234].bytes_in_flight, 32000);
++        assert!(adapter.states[&1234].path_mtu.as_ref().unwrap().candidate_mss().is_none());
++        // An ACK from a different peer port is equally invalid.
++        let bad = TcpPacket::create(PEER_IP.into(), HOST_IP.into(), PEER_PORT + 1, 1234,
++            PEER_ISN + 1, end, TcpFlags { ack: true, ..Default::default() }, 65534, &[], &[]);
++        adapter.process_tcp_packet_from_payload(&bad).await.unwrap();
++        assert_eq!(adapter.states[&1234].bytes_in_flight, 32000);
++        ack_sent(&mut adapter, end).await;
++        take_packets(&capture);
++        for round in 0..3 {
++            adapter.queue_send(&vec![1; 32000], 1234).unwrap();
++            adapter.write_buffer_flush().await.unwrap();
++            let packets = take_packets(&capture);
++            assert_eq!(packets.iter().filter(|p| p.payload.len() > 1340).count(), 1);
++            let end = adapter.states[&1234].seq;
++            ack_sent(&mut adapter, end).await;
++            assert_eq!(adapter.states[&1234].path_mtu.as_ref().unwrap().mss(), if round == 2 { 8636 } else { 1340 });
++        }
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn aether_probe_repair_resegments_and_cannot_false_validate() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        adapter.queue_send(&vec![7; 1340], 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        let end = adapter.states[&1234].seq;
++        ack_sent(&mut adapter, end).await;
++        take_packets(&capture);
++        adapter.queue_send(&vec![9; 8636], 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        let original = take_packets(&capture).pop().unwrap();
++        assert_eq!(original.payload.len(), 8636);
++        tokio::time::advance(Duration::from_millis(201)).await;
++        adapter.write_buffer_flush().await.unwrap();
++        let repaired = take_packets(&capture);
++        assert_eq!(repaired.len(), 7);
++        assert!(repaired.iter().all(|p| p.payload.len() <= 1340));
++        assert_eq!(repaired.concat_payload(), original.payload);
++        let mut seq = original.sequence_number;
++        for p in repaired { assert_eq!(p.sequence_number, seq); seq = seq.wrapping_add(p.payload.len() as u32); }
++        ack_sent(&mut adapter, seq).await;
++        let state = &adapter.states[&1234];
++        assert!(state.unacked.is_empty());
++        assert_eq!(state.bytes_in_flight, 0);
++        assert_eq!(state.path_mtu.as_ref().unwrap().mss(), 1340);
++    }
++
++    // Local helper keeps byte assertions independent of packet construction.
++    trait Payloads { fn concat_payload(&self) -> Vec<u8>; }
++    impl Payloads for Vec<TcpPacket> {
++        fn concat_payload(&self) -> Vec<u8> { self.iter().flat_map(|p| p.payload.iter().copied()).collect() }
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn aether_blackhole_recovery_and_partial_repair_cancellation() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        raise_size(&mut adapter, &capture).await;
++        // Shorter than the next candidate: send at the newly validated size.
++        let payload: Vec<u8> = (0..8636).map(|n| (n % 251) as u8).collect();
++        adapter.queue_send(&payload, 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        let original = take_packets(&capture).pop().unwrap();
++        tokio::time::advance(Duration::from_millis(201)).await;
++        { let mut c = capture.lock().unwrap(); c.max_write = 7; c.block_after = Some(7); }
++        poll_once(adapter.write_buffer_flush());
++        assert_eq!(adapter.states[&1234].path_mtu.as_ref().unwrap().mss(), 1340);
++        assert!(adapter.states[&1234].pending_repairs > 0);
++        { let mut c = capture.lock().unwrap(); c.max_write = 0; c.block_after = None; }
++        // A control write resumes only the pending frame; never coalesces it.
++        adapter.ack(1234).await.unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        let repaired: Vec<_> = take_packets(&capture).into_iter().filter(|p| !p.payload.is_empty()).collect();
++        assert_eq!(repaired.concat_payload(), payload);
++        assert!(repaired.iter().all(|p| p.payload.len() <= 1340));
++        let mut seq = original.sequence_number;
++        for p in repaired { assert_eq!(p.sequence_number, seq); seq = seq.wrapping_add(p.payload.len() as u32); }
++        ack_sent(&mut adapter, seq).await;
++        assert_eq!(adapter.states[&1234].bytes_in_flight, 0);
++        assert_eq!(adapter.states[&1234].pending_repairs, 0);
++    }
++
++    #[tokio::test]
++    async fn aether_short_writes_and_insufficient_probe_window_never_arm_a_probe() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        adapter.queue_send(&vec![1; 1340], 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        let end = adapter.states[&1234].seq;
++        ack_sent(&mut adapter, end).await;
++        take_packets(&capture);
++        adapter.set_send_window(2000);
++        adapter.queue_send(&vec![2; 2000], 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        assert_eq!(take_packets(&capture).concat_payload(), vec![2; 2000]);
++        assert!(adapter.states[&1234].path_mtu.as_ref().unwrap().probe_deadline().is_none());
++        let end = adapter.states[&1234].seq;
++        ack_sent(&mut adapter, end).await;
++        adapter.queue_send(b"interactive service request", 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        assert_eq!(take_packets(&capture).concat_payload(), b"interactive service request");
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn aether_mtu_probe_loss_and_path_changes_preserve_complete_payload() {
++        for (initial_limit, later_limit) in [(8192, 8192), (1400, 1400), (16000, 16000), (16000, 1400)] {
++            let (mut adapter, capture) = probing_adapter(16000);
++            adapter.set_send_window(65536);
++            let payload: Vec<u8> = (0..2 * 1024 * 1024).map(|n| (n % 251) as u8).collect();
++            let initial_seq = adapter.states[&1234].seq;
++            adapter.queue_send(&payload, 1234).unwrap();
++            let mut received = Vec::new();
++            let mut reordered = std::collections::BTreeMap::<usize, Vec<u8>>::new();
++            let mut drops = 0;
++            let mut largest = 0;
++            for step in 0..10000 {
++                adapter.write_buffer_flush().await.unwrap();
++                let packets = take_packets(&capture);
++                if packets.is_empty() { tokio::time::advance(Duration::from_millis(201)).await; }
++                for packet in packets {
++                    if packet.payload.is_empty() { continue; }
++                    largest = largest.max(packet.payload.len() + 60);
++                    let limit = if received.len() >= 512 * 1024 { later_limit } else { initial_limit };
++                    if packet.payload.len() + 60 > limit { drops += 1; continue; }
++                    let offset = packet.sequence_number.wrapping_sub(initial_seq) as usize;
++                    let skip = received.len().saturating_sub(offset).min(packet.payload.len());
++                    if skip < packet.payload.len() {
++                        reordered.insert(offset + skip, packet.payload[skip..].to_vec());
++                    }
++                    while let Some(bytes) = reordered.remove(&received.len()) { received.extend_from_slice(&bytes); }
++                    let ack = initial_seq.wrapping_add(received.len() as u32);
++                    ack_sent(&mut adapter, ack).await;
++                }
++                assert!(!matches!(adapter.states[&1234].status, ConnectionStatus::Error(_)), "path {initial_limit}->{later_limit}, step {step}");
++                if received.len() == payload.len() { break; }
++            }
++            assert_eq!(received, payload, "path {initial_limit}->{later_limit}");
++            assert_eq!(adapter.states[&1234].bytes_in_flight, 0);
++            if initial_limit == 16000 { assert!(largest > 8192, "must search above 8 KiB"); }
++            if later_limit < 16000 { assert!(drops > 0, "must exercise loss and repair"); }
++            assert!(adapter.states[&1234].path_mtu.as_ref().unwrap().mss() + 60 <= later_limit);
++        }
++    }
++
++    #[tokio::test]
++    async fn aether_probe_handshake_respects_peer_mss_and_advertises_full_receive_mtu() {
++        for peer_mss in [None, Some(512u16), Some(1220), Some(8132), Some(15940)] {
++            let (adapter_end, test_end) = tokio::io::duplex(65536);
++            let (mut rx, mut tx) = tokio::io::split(test_end);
++            let mut adapter = Adapter::new(Box::new(TestTransport(adapter_end)), HOST_IP.into(), PEER_IP.into());
++            adapter.enable_packet_size_probing(16000).unwrap();
++            let (result, _) = tokio::join!(adapter.connect(PEER_PORT), async {
++                let syn = read_pkt(&mut rx).await;
++                assert_eq!(crate::packets::parse_mss(&syn.options), Some(15940));
++                let mut options = crate::packets::window_scale_option(8).to_vec();
++                if let Some(mss) = peer_mss { options.extend_from_slice(&[2, 4]); options.extend_from_slice(&mss.to_be_bytes()); }
++                let tcp = TcpPacket::create(PEER_IP.into(), HOST_IP.into(), PEER_PORT, syn.source_port,
++                    PEER_ISN, syn.sequence_number.wrapping_add(1), TcpFlags { syn: true, ack: true, ..Default::default() },
++                    65534, &options, &[]);
++                tx.write_all(&Ipv6Packet::create(PEER_IP, HOST_IP, ProtocolNumber::Tcp, 255, &tcp)).await.unwrap();
++                read_pkt(&mut rx).await;
++            });
++            let hp = result.unwrap();
++            let expected = peer_mss.unwrap_or(1220) as usize;
++            assert_eq!(adapter.states[&hp].path_mtu.as_ref().unwrap().mss(), expected.min(1340));
++            assert!(adapter.enable_packet_size_probing(16000).is_err(), "cannot reconfigure live flows");
++        }
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn aether_maintenance_keeps_deadline_despite_unrelated_traffic() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        adapter.queue_send(b"pending data", 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        take_packets(&capture);
++        for _ in 0..19 {
++            tokio::time::advance(Duration::from_millis(10)).await;
++            assert!(adapter.maintenance_delay() <= Duration::from_millis(200));
++        }
++        assert!(adapter.maintenance_delay() <= Duration::from_millis(10));
++        tokio::time::advance(Duration::from_millis(11)).await;
++        adapter.write_buffer_flush().await.unwrap();
++        assert_eq!(take_packets(&capture).concat_payload(), b"pending data");
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn aether_partial_ack_releases_only_acked_bytes_and_repair_keeps_suffix() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        let start = adapter.states[&1234].seq;
++        let payload: Vec<u8> = (0..1340).map(|n| (n % 251) as u8).collect();
++        adapter.queue_send(&payload, 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        take_packets(&capture);
++        ack_sent(&mut adapter, start.wrapping_add(1000)).await;
++        assert_eq!(adapter.states[&1234].bytes_in_flight, 340);
++        tokio::time::advance(Duration::from_millis(201)).await;
++        adapter.write_buffer_flush().await.unwrap();
++        let packets = take_packets(&capture);
++        assert_eq!(packets.len(), 1);
++        assert_eq!(packets[0].sequence_number, start.wrapping_add(1000));
++        assert_eq!(packets[0].payload, payload[1000..]);
++        let end = adapter.states[&1234].seq;
++        ack_sent(&mut adapter, end).await;
++        assert_eq!(adapter.states[&1234].bytes_in_flight, 0);
++    }
++
++    #[tokio::test]
++    async fn aether_duplicate_ack_storm_repairs_each_hole_once_before_progress() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        let start = adapter.states[&1234].seq;
++        adapter.queue_send(&vec![1; 1340], 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        take_packets(&capture);
++        // Old duplicate ACKs can already be queued when the repair is sent.
++        // They must not exhaust all retries before its advancing ACK arrives.
++        for _ in 0..100 {
++            ack_sent(&mut adapter, start).await;
++            adapter.write_buffer_flush().await.unwrap();
++        }
++        assert_eq!(take_packets(&capture).len(), 1);
++        assert_eq!(adapter.states[&1234].unacked[0].retries, 1);
++        assert_eq!(adapter.states[&1234].status, ConnectionStatus::Connected);
++        ack_sent(&mut adapter, start.wrapping_add(1340)).await;
++        assert!(adapter.states[&1234].unacked.is_empty());
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn aether_repairs_respect_shrunk_and_zero_windows_without_stranding_head() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        let start = adapter.states[&1234].seq;
++        adapter.queue_send(&vec![1; 1340], 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        take_packets(&capture);
++        adapter.states.get_mut(&1234).unwrap().peer_window = 32;
++        tokio::time::advance(Duration::from_millis(201)).await;
++        adapter.write_buffer_flush().await.unwrap();
++        let packets = take_packets(&capture);
++        assert_eq!(packets.concat_payload().len(), 32);
++        assert!(adapter.states[&1234].pending_repairs > 0);
++        // The first 32-byte repair is lost. Its timer must remain active even
++        // though the rest of the repaired range waits for window credit.
++        tokio::time::advance(Duration::from_millis(401)).await;
++        adapter.write_buffer_flush().await.unwrap();
++        assert_eq!(take_packets(&capture).concat_payload().len(), 32);
++        let window_update = |ack, window| TcpPacket::create(PEER_IP.into(), HOST_IP.into(), PEER_PORT, 1234,
++            PEER_ISN + 1, ack, TcpFlags { ack: true, ..Default::default() }, window, &[], &[]);
++        adapter.states.get_mut(&1234).unwrap().peer_wscale = None;
++        adapter.process_tcp_packet_from_payload(&window_update(start.wrapping_add(32), 0)).await.unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        assert!(take_packets(&capture).is_empty());
++        assert!(adapter.maintenance_delay() >= Duration::from_millis(100));
++        adapter.process_tcp_packet_from_payload(&window_update(start.wrapping_add(32), 65534)).await.unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        assert_eq!(take_packets(&capture).concat_payload().len(), 1308);
++        ack_sent(&mut adapter, start.wrapping_add(1340)).await;
++        assert_eq!(adapter.states[&1234].bytes_in_flight, 0);
++        assert_eq!(adapter.states[&1234].pending_repairs, 0);
++    }
++
++    #[test]
++    fn aether_peer_mss_parser_handles_unknown_and_malformed_options() {
++        use crate::packets::parse_mss;
++        assert_eq!(parse_mss(&[1, 3, 3, 8, 2, 4, 0x1f, 0xc4]), Some(8132));
++        for options in [&[][..], &[0, 2, 4, 0x1f, 0xc4], &[2, 4, 0], &[2, 4, 0, 0], &[8, 0], &[8, 20, 2, 4, 1, 1]] {
++            assert_eq!(parse_mss(options), None);
++        }
++        let mut packet = tcp_seg(1234, 0, 0, TcpFlags::default(), &[]);
++        packet[12] = 0x10;
++        assert!(TcpPacket::parse(&packet).is_err());
++        packet[12] = 0xf0;
++        assert!(TcpPacket::parse(&packet).is_err());
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn aether_no_progress_at_safe_seed_preserves_bounded_retry_failure() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        adapter.queue_send(&vec![1; 1340], 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        take_packets(&capture);
++        for retry in 0..=MAX_RETRIES {
++            tokio::time::advance(Duration::from_millis((INITIAL_RTO_MS << retry) + 1)).await;
++            adapter.write_buffer_flush().await.unwrap();
++            take_packets(&capture);
++        }
++        assert_eq!(adapter.states[&1234].status, ConnectionStatus::Error(ErrorKind::TimedOut));
++        assert!(!adapter.has_pending_work());
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn aether_blocked_frame_uses_io_wakeup_without_expired_timer_spin() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        capture.lock().unwrap().block_flush = true;
++        adapter.queue_send(b"pending TLS record", 1234).unwrap();
++        poll_once(adapter.write_buffer_flush());
++        tokio::time::advance(Duration::from_secs(1)).await;
++        assert_eq!(adapter.maintenance_delay(), Duration::from_millis(250));
++        assert_eq!(capture.lock().unwrap().calls, 1);
++    }
++
++    // Source-review regressions: added for the next normal native/CI run.
++    #[tokio::test(start_paused = true)]
++    async fn aether_unsent_repair_tail_rechecks_mss_after_a_later_demotion() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        raise_size(&mut adapter, &capture).await;
++        let length = adapter.states[&1234].path_mtu.as_ref().unwrap().candidate_mss().unwrap();
++        let start = adapter.states[&1234].seq;
++        let payload = vec![7; length];
++        adapter.queue_send(&payload, 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        take_packets(&capture);
++        {
++            let state = adapter.states.get_mut(&1234).unwrap();
++            state.peer_window = 8636;
++            state.duplicate_acks = 3;
++        }
++        adapter.write_buffer_flush().await.unwrap();
++        assert_eq!(take_packets(&capture).concat_payload().len(), 8636);
++        assert!(adapter.states[&1234].pending_repairs > 0);
++        tokio::time::advance(Duration::from_millis(401)).await;
++        adapter.write_buffer_flush().await.unwrap();
++        take_packets(&capture);
++        assert_eq!(adapter.states[&1234].path_mtu.as_ref().unwrap().mss(), 1340);
++        ack_sent(&mut adapter, start.wrapping_add(8636)).await;
++        adapter.write_buffer_flush().await.unwrap();
++        let tail = take_packets(&capture);
++        assert!(tail.iter().all(|packet| packet.payload.len() <= 1340));
++        assert_eq!(tail.concat_payload(), payload[8636..]);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn aether_closed_window_probes_one_byte_without_consuming_it_twice() {
++        let (mut adapter, capture) = probing_adapter(16000);
++        let start = adapter.states[&1234].seq;
++        adapter.states.get_mut(&1234).unwrap().peer_window = 0;
++        adapter.queue_send(b"abc", 1234).unwrap();
++        adapter.write_buffer_flush().await.unwrap();
++        assert!(take_packets(&capture).is_empty());
++        tokio::time::advance(Duration::from_millis(1001)).await;
++        adapter.write_buffer_flush().await.unwrap();
++        let first = take_packets(&capture);
++        assert_eq!(first.concat_payload(), b"a");
++        assert_eq!(first[0].sequence_number, start);
++        assert_eq!(adapter.states[&1234].seq, start.wrapping_add(1));
++        tokio::time::advance(Duration::from_millis(2001)).await;
++        adapter.write_buffer_flush().await.unwrap();
++        let repeat = take_packets(&capture);
++        assert_eq!(repeat.concat_payload(), b"a");
++        assert_eq!(repeat[0].sequence_number, start);
++        assert_eq!(adapter.states[&1234].seq, start.wrapping_add(1));
++        assert_eq!(adapter.states[&1234].unacked[0].retries, 0);
++        ack_sent(&mut adapter, start.wrapping_add(1)).await;
++        adapter.write_buffer_flush().await.unwrap();
++        assert_eq!(take_packets(&capture).concat_payload(), b"bc");
++        ack_sent(&mut adapter, start.wrapping_add(3)).await;
++        assert_eq!(adapter.states[&1234].bytes_in_flight, 0);
++        assert!(adapter.states[&1234].persist_deadline.is_none());
++    }
++
  }
 --- a/src/handle.rs
 +++ b/src/handle.rs
@@ -479,7 +1375,31 @@
  //!    checks for retransmission timeouts.
  //!
  //! The task exits when the last [`AdapterHandle`] is dropped or when
-@@ -180,7 +180,7 @@
+@@ -129,6 +129,15 @@
+     }
+ }
+
++// A transport error affects every stream sharing this adapter. Do not await
++// best-effort FIN writes on an already broken/partially written transport.
++fn fail_streams(
++    handles: &mut HashMap<u16, mpsc::UnboundedSender<Result<Vec<u8>, std::io::Error>>>,
++    kind: std::io::ErrorKind,
++) {
++    for (_, tx) in handles.drain() { let _ = tx.send(Err(kind.into())); }
++}
++
+ /// A cloneable, thread-safe handle to a background [`crate::adapter::Adapter`] task.
+ ///
+ /// Constructed via [`crate::adapter::Adapter::to_async_handle`]. Cheap to clone.
+@@ -154,6 +163,7 @@
+
+             loop {
+                 let has_pending_work = adapter.has_pending_work();
++                let maintenance_delay = adapter.maintenance_delay();
+
+                 tokio::select! {
+                     // check for messages for us
+@@ -180,11 +190,16 @@
                                      data,
                                      res,
                                  } => {
@@ -488,36 +1408,102 @@
                                          res.send(Err(e)).ok();
                                      } else {
                                          let response = adapter.write_buffer_flush().await;
-@@ -245,7 +245,7 @@
++                                        let failure = response.as_ref().err().map(std::io::Error::kind);
+                                         res.send(response).ok();
++                                        if let Some(kind) = failure {
++                                            fail_streams(&mut handles, kind);
++                                            break;
++                                        }
+                                     }
+                                 }
+                                 HandleMessage::BindUdp { port, res } => {
+@@ -227,11 +242,7 @@
+
+                     r = adapter.process_tcp_packet() => {
+                         if let Err(e) = r {
+-                            // propagate error to all streams; close them
+-                            for (hp, tx) in handles.drain() {
+-                                let _ = tx.send(Err(e.kind().into())); // or clone/convert
+-                                let _ = adapter.close(hp).await;
+-                            }
++                            fail_streams(&mut handles, e.kind());
+                             break;
                          }
- 
+
+@@ -245,12 +256,18 @@
+                         }
+
                          // An ACK in that packet may have cleared `unacked` for some
 -                        // connection; flush now instead of waiting up to 1ms for the tick.
+-                        let _ = adapter.write_buffer_flush().await;
 +                        // connection; flush now instead of waiting up to 250ms for the tick.
-                         let _ = adapter.write_buffer_flush().await;
++                        if let Err(e) = adapter.write_buffer_flush().await {
++                            fail_streams(&mut handles, e.kind());
++                            break;
++                        }
                      }
- 
+
+-                    _ = crate::time::sleep(std::time::Duration::from_millis(250)), if has_pending_work => {
+-                        let _ = adapter.write_buffer_flush().await;
++                    _ = crate::time::sleep(maintenance_delay), if has_pending_work => {
++                        if let Err(e) = adapter.write_buffer_flush().await {
++                            fail_streams(&mut handles, e.kind());
++                            break;
++                        }
+                     }
+                 }
+
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -296,6 +296,7 @@
+@@ -2,7 +2,7 @@
+ //!
+ //! `jktcp` is intentionally simplified: it targets **reliable, ordered transports**
+ //! (e.g. CDTunnel, a Unix socket carrying raw IP frames) where real packet loss is
+-//! rare. It still implements stop-and-wait retransmission with exponential back-off
++//! rare. It implements window-limited transmission and retransmission with exponential back-off
+ //! so that transient glitches do not silently drop data.
+ //!
+ //! # Two usage patterns
+@@ -78,8 +78,10 @@
+ //!
+ //! Both paths share the same [`adapter::Adapter`] logic:
+ //!
+-//! - Data is sent stop-and-wait: a second segment is not put on the wire until
+-//!   the first is acknowledged.
++//! - Data is sent up to the smaller of the local cap and peer receive window.
++//! - Adapters explicitly configured for packet-size probing use the
++//!   pymobiledevice3/pmd-pytcp search and black-hole recovery policy. Each
++//!   packet keeps its own transport write/flush boundary.
+ //! - If no ACK arrives within the RTO (200 ms initially, doubling on each retry),
+ //!   the segment is retransmitted.
+ //! - After 5 failed attempts the connection is closed with
+@@ -96,6 +98,7 @@
+
+ use tokio::io::{AsyncRead, AsyncWrite};
+
++mod pmtud;
+ pub mod adapter;
+ pub mod handle;
+ pub mod packets;
+@@ -296,6 +299,7 @@
      const SERVER_PORT: u16 = 5555;
- 
+
      #[tokio::test]
 +    #[ignore = "manual root-only TUN/Wireshark test"]
      async fn local_tcp() {
          let our_ip = Ipv6Addr::from_str("fd12:3456:789a::1").unwrap();
          let their_ip = Ipv6Addr::from_str("fd12:3456:789a::2").unwrap();
-@@ -315,6 +316,7 @@
+@@ -315,6 +319,7 @@
              IpAddr::V6(our_ip),
              IpAddr::V6(their_ip),
          );
 +        #[cfg(feature = "pcap")]
          adapter.pcap("./local_tcp.pcap").await.expect("no pcap");
- 
+
          tokio::task::spawn(async move {
-@@ -379,6 +381,7 @@
+@@ -379,6 +384,7 @@
      const SPEED_PORT: u16 = 5556;
- 
+
      #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 +    #[ignore = "manual root-only TUN throughput test"]
      async fn handle_speed() {
@@ -525,7 +1511,17 @@
          const CHUNK_SIZE: usize = 4096;
 --- a/src/packets.rs
 +++ b/src/packets.rs
-@@ -553,34 +553,88 @@
+@@ -502,6 +502,9 @@
+         let acknowledgment_number =
+             u32::from_be_bytes([packet[8], packet[9], packet[10], packet[11]]);
+         let data_offset = (packet[12] >> 4) * 4; // Convert from 32-bit words to bytes
++        if data_offset < 20 || data_offset as usize > packet.len() {
++            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid TCP data offset"));
++        }
+         let flags = TcpFlags::from_byte(packet[13]); // Parse flags
+         let window_size = u16::from_be_bytes([packet[14], packet[15]]);
+         let checksum = u16::from_be_bytes([packet[16], packet[17]]);
+@@ -553,34 +556,88 @@
          options: &[u8],
          payload: &[u8],
      ) -> Vec<u8> {
@@ -588,25 +1584,25 @@
          let data_offset = 5_u8 + (opt_total / 4) as u8;
 -        let mut packet = Vec::with_capacity(20 + opt_total + payload.len());
 +        out.reserve(20 + opt_total + payload.len());
- 
+
          // Source and Destination Ports
 -        packet.extend_from_slice(&source_port.to_be_bytes());
 -        packet.extend_from_slice(&destination_port.to_be_bytes());
 +        out.extend_from_slice(&source_port.to_be_bytes());
 +        out.extend_from_slice(&destination_port.to_be_bytes());
- 
+
          // Sequence and Acknowledgment Numbers
 -        packet.extend_from_slice(&sequence_number.to_be_bytes());
 -        packet.extend_from_slice(&acknowledgment_number.to_be_bytes());
 +        out.extend_from_slice(&sequence_number.to_be_bytes());
 +        out.extend_from_slice(&acknowledgment_number.to_be_bytes());
- 
+
          // Data Offset and Flags
 -        packet.push(data_offset << 4); // Data offset (4 bits) and reserved bits (4 bits)
 -        packet.push(flags.to_byte()); // Flags byte
 +        out.push(data_offset << 4); // Data offset (4 bits) and reserved bits (4 bits)
 +        out.push(flags.to_byte()); // Flags byte
- 
+
          // Window Size, Checksum (set to zero first), and Urgent Pointer
 -        packet.extend_from_slice(&window_size.to_be_bytes());
 -        packet.extend_from_slice(&[0, 0]); // Checksum placeholder
@@ -614,7 +1610,7 @@
 +        out.extend_from_slice(&window_size.to_be_bytes());
 +        out.extend_from_slice(&[0, 0]); // Checksum placeholder
 +        out.extend_from_slice(&[0, 0]); // Urgent pointer
- 
+
          // Options + NOP padding to 4-byte boundary.
 -        packet.extend_from_slice(options);
 -        packet.extend(std::iter::repeat_n(1, pad));
@@ -624,21 +1620,21 @@
 +        out.extend_from_slice(payload);
 +
 +        let packet = &mut out[start..];
- 
+
          // Compute checksum with the appropriate pseudo-header
          let checksum = match (source_ip, destination_ip) {
-@@ -599,7 +653,6 @@
- 
+@@ -599,7 +656,6 @@
+
          packet[16..18].copy_from_slice(&checksum.to_be_bytes());
- 
+
 -        packet
      }
- 
+
      fn calculate_checksum(
-@@ -644,21 +697,12 @@
+@@ -644,21 +700,12 @@
              sum += packet.len() as u32;
          }
- 
+
 -        // Create a copy of the packet with checksum field zeroed out
 -        let mut packet_copy = packet.to_vec();
 -        if packet_copy.len() >= 18 {
@@ -661,9 +1657,9 @@
 +            sum += words.by_ref().map(|w| u16::from_be_bytes([w[0], w[1]]) as u32).sum::<u32>();
 +            if let Some(&last) = words.remainder().first() { sum += (last as u32) << 8; }
          }
- 
+
          // Fold sum to 16 bits
-@@ -920,3 +964,53 @@
+@@ -920,3 +967,74 @@
          println!("{t1:#?}");
      }
  }
@@ -717,3 +1713,1134 @@
 +        }
 +    }
 +}
++
++/// Read the peer MSS from a SYN option list. Ignore malformed/zero MSS values.
++pub(crate) fn parse_mss(options: &[u8]) -> Option<usize> {
++    let mut offset = 0;
++    while offset < options.len() {
++        match options[offset] {
++            0 => break,
++            1 => offset += 1,
++            kind => {
++                let len = *options.get(offset + 1)? as usize;
++                if len < 2 || offset + len > options.len() { return None; }
++                if kind == 2 && len == 4 {
++                    let mss = u16::from_be_bytes([options[offset + 2], options[offset + 3]]) as usize;
++                    return (mss > 0).then_some(mss);
++                }
++                offset += len;
++            }
++        }
++    }
++    None
++}
+--- /dev/null
++++ b/src/pmtud.rs
+@@ -0,0 +1,323 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++// Adapted from PyTCP / pmd-pytcp's PmtuSearch and TcpPlpmtudAdapter.
++// Copyright (C) 2020-present Sebastian Majewski and pmd-pytcp contributors.
++// Reference: doronz88/pmd-pytcp@80628207dde459b305a262f98596328e405f32bd
++// lib/plpmtud.py and protocols/tcp/tcp__plpmtud_adapter.py.
++// Aether's Rust adaptation retains the probing-mode search, three-ACK
++// validation, retransmission invalidation and RTO black-hole demotion rules.
++
++use crate::time::Instant;
++use std::time::Duration;
++
++const VALIDATION_ACKS: u8 = 3;
++const MAX_PROBES: u8 = 3;
++const GRANULARITY: usize = 8;
++const PROBE_TIMER: Duration = Duration::from_millis(1500);
++const RAISE_TIMER: Duration = Duration::from_secs(600);
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum Phase { Base, Searching, Complete, Error }
++
++#[derive(Clone, Copy, Debug)]
++struct Range { start: u32, end: u32, size: usize }
++
++#[derive(Clone, Debug)]
++pub(crate) struct PathMtu {
++    phase: Phase,
++    overhead: usize,
++    seed: usize,
++    current: usize,
++    low: usize,
++    high: usize,
++    maximum: usize,
++    base: usize,
++    candidate: Option<usize>,
++    validation: u8,
++    losses: u8,
++    deadline: Option<Instant>,
++    raise_at: Option<Instant>,
++    probe: Option<Range>,
++    implicit: Option<Range>,
++}
++
++impl PathMtu {
++    /// `maximum` is bounded by the negotiated MTU AND the peer's MSS.
++    /// A very small peer MSS also bounds the seed; it must never be exceeded.
++    pub(crate) fn new(maximum: usize, overhead: usize) -> Self {
++        let minimum = if overhead == 60 { 1280 } else { 576 };
++        let base = if overhead == 60 { 1280 } else { 1200 }.min(maximum);
++        let seed = 1400.min(maximum);
++        Self {
++            phase: Phase::Base, overhead, seed, current: seed,
++            low: minimum.min(maximum), high: maximum, maximum, base,
++            candidate: Some(base), validation: 0, losses: 0,
++            deadline: None, raise_at: None, probe: None, implicit: None,
++        }
++    }
++
++    pub(crate) fn mss(&self) -> usize { self.current - self.overhead }
++
++    pub(crate) fn probe_deadline(&self) -> Option<Instant> { self.deadline }
++
++    fn next_candidate(&self) -> Option<usize> {
++        if self.high.saturating_sub(self.low) <= GRANULARITY { return None; }
++        let mut mid = ((self.low + self.high) / 2 / GRANULARITY) * GRANULARITY;
++        if mid <= self.low { mid = self.low + GRANULARITY; }
++        (mid < self.high).then_some(mid)
++    }
++
++    fn search(&mut self, now: Instant) {
++        self.candidate = self.next_candidate();
++        self.deadline = None;
++        if self.candidate.is_some() { self.phase = Phase::Searching; }
++        else {
++            self.phase = Phase::Complete;
++            self.raise_at = Some(now + RAISE_TIMER);
++        }
++    }
++
++    fn probe_loss(&mut self, now: Instant) {
++        if !matches!(self.phase, Phase::Base | Phase::Searching) { return; }
++        self.losses += 1;
++        self.deadline = None;
++        self.validation = 0;
++        if self.losses >= MAX_PROBES {
++            self.phase = Phase::Error;
++            self.current = self.seed;
++            self.candidate = None;
++            self.losses = 0;
++            self.raise_at = Some(now + RAISE_TIMER);
++        } else if self.phase == Phase::Searching {
++            if let Some(candidate) = self.candidate { self.high = candidate - 1; }
++            self.search(now);
++        }
++    }
++
++    /// Called by the maintenance path too, so a short final write cannot
++    /// strand an expired probe waiting for another application write.
++    pub(crate) fn poll(&mut self, now: Instant) {
++        if self.probe.is_some() && self.deadline.is_some_and(|at| now >= at) {
++            self.probe = None;
++            self.probe_loss(now);
++        }
++        if self.raise_at.is_some_and(|at| now >= at) {
++            self.raise_at = None;
++            match self.phase {
++                Phase::Complete => { self.high = self.maximum; self.search(now); }
++                Phase::Error => {
++                    self.phase = Phase::Base;
++                    self.candidate = Some(self.base);
++                    self.losses = 0;
++                }
++                _ => {}
++            }
++        }
++    }
++
++    /// Query only; arm the deadline when a feasible packet is actually queued.
++    pub(crate) fn candidate_mss(&self) -> Option<usize> {
++        if self.probe.is_some() || self.phase != Phase::Searching { return None; }
++        self.candidate.filter(|size| *size > self.current).map(|size| size - self.overhead)
++    }
++
++    pub(crate) fn sent(&mut self, start: u32, length: usize, is_probe: bool, now: Instant) {
++        let range = Range { start, end: start.wrapping_add(length as u32), size: length + self.overhead };
++        if is_probe {
++            debug_assert!(self.probe.is_none());
++            debug_assert_eq!(self.candidate, Some(range.size));
++            self.probe = Some(range);
++            self.deadline = Some(now + PROBE_TIMER);
++        } else if self.implicit.is_none_or(|old| range.size > old.size) {
++            self.implicit = Some(range);
++        }
++    }
++
++    /// The caller first validates that ACK is in the live sent sequence range.
++    pub(crate) fn acknowledged(&mut self, ack: u32, now: Instant) {
++        if self.probe.is_some_and(|p| seq_le(p.end, ack)) {
++            let probe = self.probe.take().unwrap();
++            self.losses = 0;
++            self.validation += 1;
++            self.deadline = None;
++            if self.validation >= VALIDATION_ACKS {
++                self.validation = 0;
++                self.low = self.low.max(probe.size);
++                self.current = self.current.max(probe.size);
++                self.search(now);
++            }
++        }
++        if self.implicit.is_some_and(|p| seq_le(p.end, ack)) {
++            let size = self.implicit.take().unwrap().size;
++            // A late ACK after demotion must not restore the revoked size.
++            if size <= self.current { self.low = self.low.max(size); }
++            if self.phase == Phase::Base && size >= self.base {
++                self.losses = 0;
++                self.search(now);
++            }
++        }
++    }
++
++    /// Invalidate BEFORE repair: a cumulative ACK of smaller repaired pieces
++    /// cannot prove delivery of the original large packet. Unrelated repairs
++    /// leave the probe alone, as in upstream's overlap-specific adapter hook.
++    pub(crate) fn retransmitting(&mut self, start: u32, end: u32, now: Instant) {
++        if self.implicit.is_some_and(|p| overlaps(start, end, p.start, p.end)) { self.implicit = None; }
++        if self.probe.is_some_and(|p| overlaps(start, end, p.start, p.end)) {
++            self.probe = None;
++            self.probe_loss(now);
++        }
++    }
++
++    pub(crate) fn timed_out(&mut self, now: Instant) {
++        self.implicit = None;
++        if self.probe.take().is_some() { self.probe_loss(now); }
++        // A size that passed isolated probes may fail under sustained load.
++        // Revoke it on RTO BEFORE choosing the retransmission segment sizes.
++        if self.current > self.seed {
++            let revoked = self.current;
++            self.current = self.seed;
++            self.low = self.low.min(self.seed);
++            self.high = self.high.min(revoked - 1);
++            self.losses = 0;
++            self.validation = 0;
++            self.deadline = None;
++            self.search(now);
++        }
++    }
++}
++
++fn seq_le(a: u32, b: u32) -> bool { b.wrapping_sub(a) as i32 >= 0 }
++fn seq_lt(a: u32, b: u32) -> bool { b.wrapping_sub(a) as i32 > 0 }
++fn overlaps(a: u32, b: u32, c: u32, d: u32) -> bool { seq_lt(a, d) && seq_lt(c, b) }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn searching() -> PathMtu {
++        let mut p = PathMtu::new(16000, 60);
++        p.sent(0, 1340, false, Instant::now());
++        p.acknowledged(1340, Instant::now());
++        assert_eq!(p.current, 1400);
++        assert_eq!(p.candidate, Some(8696));
++        p
++    }
++    fn successful_probe(p: &mut PathMtu, start: u32) {
++        let mss = p.candidate_mss().unwrap();
++        p.sent(start, mss, true, Instant::now());
++        assert!(p.candidate_mss().is_none());
++        p.acknowledged(start.wrapping_add(mss as u32), Instant::now());
++    }
++
++    #[test]
++    fn upstream_three_ack_validation_and_failed_streak() {
++        let mut p = searching();
++        successful_probe(&mut p, 1340);
++        successful_probe(&mut p, 10000);
++        assert_eq!(p.current, 1400);
++        let mss = p.candidate_mss().unwrap();
++        p.sent(20000, mss, true, Instant::now());
++        p.retransmitting(20001, 20002, Instant::now());
++        p.acknowledged(20000 + mss as u32, Instant::now());
++        assert_eq!(p.current, 1400);
++        assert_eq!(p.validation, 0);
++        assert_eq!(p.candidate, Some(5040));
++        for start in [30000, 40000, 50000] { successful_probe(&mut p, start); }
++        assert_eq!(p.current, 5040);
++    }
++
++    #[test]
++    fn upstream_repair_overlap_wraparound_and_implicit_confirmation() {
++        let mut p = searching();
++        let start = u32::MAX - 100;
++        let mss = p.candidate_mss().unwrap();
++        let end = start.wrapping_add(mss as u32);
++        p.sent(start, mss, true, Instant::now());
++        p.retransmitting(start.wrapping_sub(10), start, Instant::now());
++        assert!(p.probe.is_some());
++        p.retransmitting(start, start.wrapping_add(1), Instant::now());
++        assert!(p.probe.is_none());
++        p.acknowledged(end, Instant::now());
++        assert_eq!(p.current, 1400);
++        assert_eq!(p.validation, 0);
++    }
++
++    #[test]
++    fn upstream_rto_reverts_validated_size_and_late_ack_cannot_restore_it() {
++        let mut p = searching();
++        for start in [1340, 10000, 20000] { successful_probe(&mut p, start); }
++        assert_eq!(p.current, 8696);
++        p.sent(40000, 8636, false, Instant::now());
++        p.timed_out(Instant::now());
++        assert_eq!(p.current, 1400);
++        assert!(p.high < 8696);
++        p.acknowledged(48636, Instant::now());
++        assert_eq!(p.current, 1400);
++        assert_eq!(p.low, 1400);
++        // Ordinary loss at the seed does not narrow the search.
++        let high = p.high;
++        p.timed_out(Instant::now());
++        assert_eq!(p.high, high);
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn upstream_probe_deadline_error_fallback_and_periodic_research() {
++        let mut p = searching();
++        for i in 0..3 {
++            let n = p.candidate_mss().unwrap();
++            p.sent(i * 20000, n, true, Instant::now());
++            tokio::time::advance(PROBE_TIMER).await;
++            p.poll(Instant::now());
++        }
++        assert_eq!(p.phase, Phase::Error);
++        assert_eq!(p.current, 1400);
++        tokio::time::advance(RAISE_TIMER).await;
++        p.poll(Instant::now());
++        assert_eq!(p.phase, Phase::Base);
++        p.sent(100000, 1340, false, Instant::now());
++        p.acknowledged(101340, Instant::now());
++        assert!(p.candidate_mss().is_some());
++    }
++
++    #[test]
++    fn no_eight_kib_cap_and_peer_bound_is_respected() {
++        for maximum in [572, 1280, 1400, 8192, 16000] {
++            let mut p = PathMtu::new(maximum, 60);
++            assert_eq!(p.current, maximum.min(1400));
++            p.sent(0, p.mss(), false, Instant::now());
++            p.acknowledged(p.mss() as u32, Instant::now());
++            let mut seq = 30000;
++            while p.candidate_mss().is_some() {
++                for _ in 0..3 { successful_probe(&mut p, seq); seq += 20000; }
++                assert!(p.current <= maximum);
++            }
++            assert!(maximum - p.current <= GRANULARITY);
++        }
++    }
++
++    #[test]
++    fn matches_unmodified_pmd_pytcp_search_and_blackhole_trace() {
++        // Generated by running the pinned upstream Python engine, not this
++        // implementation. See the native-source README for provenance.
++        let mut p = PathMtu::new(16000, 60);
++        for line in include_str!("pmtud_reference.txt").lines().filter(|s| !s.starts_with('#')) {
++            let fields: Vec<_> = line.split_whitespace().collect();
++            let value: usize = fields[1].parse().unwrap();
++            match fields[0] {
++                "confirm" => { p.sent(0, value - 60, false, Instant::now()); p.acknowledged((value - 60) as u32, Instant::now()); }
++                "ack" => successful_probe(&mut p, 100000),
++                "loss" => p.probe_loss(Instant::now()),
++                "rto" => p.timed_out(Instant::now()),
++                _ => unreachable!(),
++            }
++            let phase = match p.phase { Phase::Base => "BASE", Phase::Searching => "SEARCHING", Phase::Complete => "SEARCH_COMPLETE", Phase::Error => "ERROR" };
++            assert_eq!(p.current, fields[2].parse::<usize>().unwrap(), "{line}");
++            assert_eq!(p.candidate.unwrap_or(0), fields[3].parse::<usize>().unwrap(), "{line}");
++            assert_eq!(phase, fields[4], "{line}");
++            assert_eq!(p.low, fields[5].parse::<usize>().unwrap(), "{line}");
++            assert_eq!(p.high, fields[6].parse::<usize>().unwrap(), "{line}");
++            assert_eq!(p.validation, fields[7].parse::<u8>().unwrap(), "{line}");
++            assert_eq!(p.losses, fields[8].parse::<u8>().unwrap(), "{line}");
++        }
++    }
++}
+--- /dev/null
++++ b/src/pmtud_reference.txt
+@@ -0,0 +1,51 @@
++# Golden trace from unmodified pmd-pytcp 80628207, operator seed 1400, ceiling 16000.
++confirm 1400 1400 8696 SEARCHING 1400 16000 0 0
++loss 8696 1400 5040 SEARCHING 1400 8695 0 1
++ack 5040 1400 5040 SEARCHING 1400 8695 1 0
++ack 5040 1400 5040 SEARCHING 1400 8695 2 0
++ack 5040 5040 6864 SEARCHING 5040 8695 0 0
++ack 6864 5040 6864 SEARCHING 5040 8695 1 0
++ack 6864 5040 6864 SEARCHING 5040 8695 2 0
++ack 6864 6864 7776 SEARCHING 6864 8695 0 0
++ack 7776 6864 7776 SEARCHING 6864 8695 1 0
++ack 7776 6864 7776 SEARCHING 6864 8695 2 0
++ack 7776 7776 8232 SEARCHING 7776 8695 0 0
++loss 8232 7776 8000 SEARCHING 7776 8231 0 1
++ack 8000 7776 8000 SEARCHING 7776 8231 1 0
++ack 8000 7776 8000 SEARCHING 7776 8231 2 0
++ack 8000 8000 8112 SEARCHING 8000 8231 0 0
++ack 8112 8000 8112 SEARCHING 8000 8231 1 0
++ack 8112 8000 8112 SEARCHING 8000 8231 2 0
++ack 8112 8112 8168 SEARCHING 8112 8231 0 0
++ack 8168 8112 8168 SEARCHING 8112 8231 1 0
++ack 8168 8112 8168 SEARCHING 8112 8231 2 0
++ack 8168 8168 8192 SEARCHING 8168 8231 0 0
++ack 8192 8168 8192 SEARCHING 8168 8231 1 0
++ack 8192 8168 8192 SEARCHING 8168 8231 2 0
++ack 8192 8192 8208 SEARCHING 8192 8231 0 0
++loss 8208 8192 8200 SEARCHING 8192 8207 0 1
++loss 8200 8192 0 SEARCH_COMPLETE 8192 8199 0 2
++rto 0 1400 4792 SEARCHING 1400 8191 0 0
++ack 4792 1400 4792 SEARCHING 1400 8191 1 0
++ack 4792 1400 4792 SEARCHING 1400 8191 2 0
++ack 4792 4792 6488 SEARCHING 4792 8191 0 0
++loss 6488 4792 5632 SEARCHING 4792 6487 0 1
++ack 5632 4792 5632 SEARCHING 4792 6487 1 0
++ack 5632 4792 5632 SEARCHING 4792 6487 2 0
++ack 5632 5632 6056 SEARCHING 5632 6487 0 0
++loss 6056 5632 5840 SEARCHING 5632 6055 0 1
++ack 5840 5632 5840 SEARCHING 5632 6055 1 0
++ack 5840 5632 5840 SEARCHING 5632 6055 2 0
++ack 5840 5840 5944 SEARCHING 5840 6055 0 0
++ack 5944 5840 5944 SEARCHING 5840 6055 1 0
++ack 5944 5840 5944 SEARCHING 5840 6055 2 0
++ack 5944 5944 5992 SEARCHING 5944 6055 0 0
++ack 5992 5944 5992 SEARCHING 5944 6055 1 0
++ack 5992 5944 5992 SEARCHING 5944 6055 2 0
++ack 5992 5992 6016 SEARCHING 5992 6055 0 0
++loss 6016 5992 6000 SEARCHING 5992 6015 0 1
++ack 6000 5992 6000 SEARCHING 5992 6015 1 0
++ack 6000 5992 6000 SEARCHING 5992 6015 2 0
++ack 6000 6000 6008 SEARCHING 6000 6015 0 0
++loss 6008 6000 0 SEARCH_COMPLETE 6000 6007 0 1
++rto 0 1400 3696 SEARCHING 1400 5999 0 0
+--- /dev/null
++++ b/LICENSE-AETHER-PMTUD
+@@ -0,0 +1,674 @@
++                    GNU GENERAL PUBLIC LICENSE
++                       Version 3, 29 June 2007
++
++ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
++ Everyone is permitted to copy and distribute verbatim copies
++ of this license document, but changing it is not allowed.
++
++                            Preamble
++
++  The GNU General Public License is a free, copyleft license for
++software and other kinds of works.
++
++  The licenses for most software and other practical works are designed
++to take away your freedom to share and change the works.  By contrast,
++the GNU General Public License is intended to guarantee your freedom to
++share and change all versions of a program--to make sure it remains free
++software for all its users.  We, the Free Software Foundation, use the
++GNU General Public License for most of our software; it applies also to
++any other work released this way by its authors.  You can apply it to
++your programs, too.
++
++  When we speak of free software, we are referring to freedom, not
++price.  Our General Public Licenses are designed to make sure that you
++have the freedom to distribute copies of free software (and charge for
++them if you wish), that you receive source code or can get it if you
++want it, that you can change the software or use pieces of it in new
++free programs, and that you know you can do these things.
++
++  To protect your rights, we need to prevent others from denying you
++these rights or asking you to surrender the rights.  Therefore, you have
++certain responsibilities if you distribute copies of the software, or if
++you modify it: responsibilities to respect the freedom of others.
++
++  For example, if you distribute copies of such a program, whether
++gratis or for a fee, you must pass on to the recipients the same
++freedoms that you received.  You must make sure that they, too, receive
++or can get the source code.  And you must show them these terms so they
++know their rights.
++
++  Developers that use the GNU GPL protect your rights with two steps:
++(1) assert copyright on the software, and (2) offer you this License
++giving you legal permission to copy, distribute and/or modify it.
++
++  For the developers' and authors' protection, the GPL clearly explains
++that there is no warranty for this free software.  For both users' and
++authors' sake, the GPL requires that modified versions be marked as
++changed, so that their problems will not be attributed erroneously to
++authors of previous versions.
++
++  Some devices are designed to deny users access to install or run
++modified versions of the software inside them, although the manufacturer
++can do so.  This is fundamentally incompatible with the aim of
++protecting users' freedom to change the software.  The systematic
++pattern of such abuse occurs in the area of products for individuals to
++use, which is precisely where it is most unacceptable.  Therefore, we
++have designed this version of the GPL to prohibit the practice for those
++products.  If such problems arise substantially in other domains, we
++stand ready to extend this provision to those domains in future versions
++of the GPL, as needed to protect the freedom of users.
++
++  Finally, every program is threatened constantly by software patents.
++States should not allow patents to restrict development and use of
++software on general-purpose computers, but in those that do, we wish to
++avoid the special danger that patents applied to a free program could
++make it effectively proprietary.  To prevent this, the GPL assures that
++patents cannot be used to render the program non-free.
++
++  The precise terms and conditions for copying, distribution and
++modification follow.
++
++                       TERMS AND CONDITIONS
++
++  0. Definitions.
++
++  "This License" refers to version 3 of the GNU General Public License.
++
++  "Copyright" also means copyright-like laws that apply to other kinds of
++works, such as semiconductor masks.
++
++  "The Program" refers to any copyrightable work licensed under this
++License.  Each licensee is addressed as "you".  "Licensees" and
++"recipients" may be individuals or organizations.
++
++  To "modify" a work means to copy from or adapt all or part of the work
++in a fashion requiring copyright permission, other than the making of an
++exact copy.  The resulting work is called a "modified version" of the
++earlier work or a work "based on" the earlier work.
++
++  A "covered work" means either the unmodified Program or a work based
++on the Program.
++
++  To "propagate" a work means to do anything with it that, without
++permission, would make you directly or secondarily liable for
++infringement under applicable copyright law, except executing it on a
++computer or modifying a private copy.  Propagation includes copying,
++distribution (with or without modification), making available to the
++public, and in some countries other activities as well.
++
++  To "convey" a work means any kind of propagation that enables other
++parties to make or receive copies.  Mere interaction with a user through
++a computer network, with no transfer of a copy, is not conveying.
++
++  An interactive user interface displays "Appropriate Legal Notices"
++to the extent that it includes a convenient and prominently visible
++feature that (1) displays an appropriate copyright notice, and (2)
++tells the user that there is no warranty for the work (except to the
++extent that warranties are provided), that licensees may convey the
++work under this License, and how to view a copy of this License.  If
++the interface presents a list of user commands or options, such as a
++menu, a prominent item in the list meets this criterion.
++
++  1. Source Code.
++
++  The "source code" for a work means the preferred form of the work
++for making modifications to it.  "Object code" means any non-source
++form of a work.
++
++  A "Standard Interface" means an interface that either is an official
++standard defined by a recognized standards body, or, in the case of
++interfaces specified for a particular programming language, one that
++is widely used among developers working in that language.
++
++  The "System Libraries" of an executable work include anything, other
++than the work as a whole, that (a) is included in the normal form of
++packaging a Major Component, but which is not part of that Major
++Component, and (b) serves only to enable use of the work with that
++Major Component, or to implement a Standard Interface for which an
++implementation is available to the public in source code form.  A
++"Major Component", in this context, means a major essential component
++(kernel, window system, and so on) of the specific operating system
++(if any) on which the executable work runs, or a compiler used to
++produce the work, or an object code interpreter used to run it.
++
++  The "Corresponding Source" for a work in object code form means all
++the source code needed to generate, install, and (for an executable
++work) run the object code and to modify the work, including scripts to
++control those activities.  However, it does not include the work's
++System Libraries, or general-purpose tools or generally available free
++programs which are used unmodified in performing those activities but
++which are not part of the work.  For example, Corresponding Source
++includes interface definition files associated with source files for
++the work, and the source code for shared libraries and dynamically
++linked subprograms that the work is specifically designed to require,
++such as by intimate data communication or control flow between those
++subprograms and other parts of the work.
++
++  The Corresponding Source need not include anything that users
++can regenerate automatically from other parts of the Corresponding
++Source.
++
++  The Corresponding Source for a work in source code form is that
++same work.
++
++  2. Basic Permissions.
++
++  All rights granted under this License are granted for the term of
++copyright on the Program, and are irrevocable provided the stated
++conditions are met.  This License explicitly affirms your unlimited
++permission to run the unmodified Program.  The output from running a
++covered work is covered by this License only if the output, given its
++content, constitutes a covered work.  This License acknowledges your
++rights of fair use or other equivalent, as provided by copyright law.
++
++  You may make, run and propagate covered works that you do not
++convey, without conditions so long as your license otherwise remains
++in force.  You may convey covered works to others for the sole purpose
++of having them make modifications exclusively for you, or provide you
++with facilities for running those works, provided that you comply with
++the terms of this License in conveying all material for which you do
++not control copyright.  Those thus making or running the covered works
++for you must do so exclusively on your behalf, under your direction
++and control, on terms that prohibit them from making any copies of
++your copyrighted material outside their relationship with you.
++
++  Conveying under any other circumstances is permitted solely under
++the conditions stated below.  Sublicensing is not allowed; section 10
++makes it unnecessary.
++
++  3. Protecting Users' Legal Rights From Anti-Circumvention Law.
++
++  No covered work shall be deemed part of an effective technological
++measure under any applicable law fulfilling obligations under article
++11 of the WIPO copyright treaty adopted on 20 December 1996, or
++similar laws prohibiting or restricting circumvention of such
++measures.
++
++  When you convey a covered work, you waive any legal power to forbid
++circumvention of technological measures to the extent such circumvention
++is effected by exercising rights under this License with respect to
++the covered work, and you disclaim any intention to limit operation or
++modification of the work as a means of enforcing, against the work's
++users, your or third parties' legal rights to forbid circumvention of
++technological measures.
++
++  4. Conveying Verbatim Copies.
++
++  You may convey verbatim copies of the Program's source code as you
++receive it, in any medium, provided that you conspicuously and
++appropriately publish on each copy an appropriate copyright notice;
++keep intact all notices stating that this License and any
++non-permissive terms added in accord with section 7 apply to the code;
++keep intact all notices of the absence of any warranty; and give all
++recipients a copy of this License along with the Program.
++
++  You may charge any price or no price for each copy that you convey,
++and you may offer support or warranty protection for a fee.
++
++  5. Conveying Modified Source Versions.
++
++  You may convey a work based on the Program, or the modifications to
++produce it from the Program, in the form of source code under the
++terms of section 4, provided that you also meet all of these conditions:
++
++    a) The work must carry prominent notices stating that you modified
++    it, and giving a relevant date.
++
++    b) The work must carry prominent notices stating that it is
++    released under this License and any conditions added under section
++    7.  This requirement modifies the requirement in section 4 to
++    "keep intact all notices".
++
++    c) You must license the entire work, as a whole, under this
++    License to anyone who comes into possession of a copy.  This
++    License will therefore apply, along with any applicable section 7
++    additional terms, to the whole of the work, and all its parts,
++    regardless of how they are packaged.  This License gives no
++    permission to license the work in any other way, but it does not
++    invalidate such permission if you have separately received it.
++
++    d) If the work has interactive user interfaces, each must display
++    Appropriate Legal Notices; however, if the Program has interactive
++    interfaces that do not display Appropriate Legal Notices, your
++    work need not make them do so.
++
++  A compilation of a covered work with other separate and independent
++works, which are not by their nature extensions of the covered work,
++and which are not combined with it such as to form a larger program,
++in or on a volume of a storage or distribution medium, is called an
++"aggregate" if the compilation and its resulting copyright are not
++used to limit the access or legal rights of the compilation's users
++beyond what the individual works permit.  Inclusion of a covered work
++in an aggregate does not cause this License to apply to the other
++parts of the aggregate.
++
++  6. Conveying Non-Source Forms.
++
++  You may convey a covered work in object code form under the terms
++of sections 4 and 5, provided that you also convey the
++machine-readable Corresponding Source under the terms of this License,
++in one of these ways:
++
++    a) Convey the object code in, or embodied in, a physical product
++    (including a physical distribution medium), accompanied by the
++    Corresponding Source fixed on a durable physical medium
++    customarily used for software interchange.
++
++    b) Convey the object code in, or embodied in, a physical product
++    (including a physical distribution medium), accompanied by a
++    written offer, valid for at least three years and valid for as
++    long as you offer spare parts or customer support for that product
++    model, to give anyone who possesses the object code either (1) a
++    copy of the Corresponding Source for all the software in the
++    product that is covered by this License, on a durable physical
++    medium customarily used for software interchange, for a price no
++    more than your reasonable cost of physically performing this
++    conveying of source, or (2) access to copy the
++    Corresponding Source from a network server at no charge.
++
++    c) Convey individual copies of the object code with a copy of the
++    written offer to provide the Corresponding Source.  This
++    alternative is allowed only occasionally and noncommercially, and
++    only if you received the object code with such an offer, in accord
++    with subsection 6b.
++
++    d) Convey the object code by offering access from a designated
++    place (gratis or for a charge), and offer equivalent access to the
++    Corresponding Source in the same way through the same place at no
++    further charge.  You need not require recipients to copy the
++    Corresponding Source along with the object code.  If the place to
++    copy the object code is a network server, the Corresponding Source
++    may be on a different server (operated by you or a third party)
++    that supports equivalent copying facilities, provided you maintain
++    clear directions next to the object code saying where to find the
++    Corresponding Source.  Regardless of what server hosts the
++    Corresponding Source, you remain obligated to ensure that it is
++    available for as long as needed to satisfy these requirements.
++
++    e) Convey the object code using peer-to-peer transmission, provided
++    you inform other peers where the object code and Corresponding
++    Source of the work are being offered to the general public at no
++    charge under subsection 6d.
++
++  A separable portion of the object code, whose source code is excluded
++from the Corresponding Source as a System Library, need not be
++included in conveying the object code work.
++
++  A "User Product" is either (1) a "consumer product", which means any
++tangible personal property which is normally used for personal, family,
++or household purposes, or (2) anything designed or sold for incorporation
++into a dwelling.  In determining whether a product is a consumer product,
++doubtful cases shall be resolved in favor of coverage.  For a particular
++product received by a particular user, "normally used" refers to a
++typical or common use of that class of product, regardless of the status
++of the particular user or of the way in which the particular user
++actually uses, or expects or is expected to use, the product.  A product
++is a consumer product regardless of whether the product has substantial
++commercial, industrial or non-consumer uses, unless such uses represent
++the only significant mode of use of the product.
++
++  "Installation Information" for a User Product means any methods,
++procedures, authorization keys, or other information required to install
++and execute modified versions of a covered work in that User Product from
++a modified version of its Corresponding Source.  The information must
++suffice to ensure that the continued functioning of the modified object
++code is in no case prevented or interfered with solely because
++modification has been made.
++
++  If you convey an object code work under this section in, or with, or
++specifically for use in, a User Product, and the conveying occurs as
++part of a transaction in which the right of possession and use of the
++User Product is transferred to the recipient in perpetuity or for a
++fixed term (regardless of how the transaction is characterized), the
++Corresponding Source conveyed under this section must be accompanied
++by the Installation Information.  But this requirement does not apply
++if neither you nor any third party retains the ability to install
++modified object code on the User Product (for example, the work has
++been installed in ROM).
++
++  The requirement to provide Installation Information does not include a
++requirement to continue to provide support service, warranty, or updates
++for a work that has been modified or installed by the recipient, or for
++the User Product in which it has been modified or installed.  Access to a
++network may be denied when the modification itself materially and
++adversely affects the operation of the network or violates the rules and
++protocols for communication across the network.
++
++  Corresponding Source conveyed, and Installation Information provided,
++in accord with this section must be in a format that is publicly
++documented (and with an implementation available to the public in
++source code form), and must require no special password or key for
++unpacking, reading or copying.
++
++  7. Additional Terms.
++
++  "Additional permissions" are terms that supplement the terms of this
++License by making exceptions from one or more of its conditions.
++Additional permissions that are applicable to the entire Program shall
++be treated as though they were included in this License, to the extent
++that they are valid under applicable law.  If additional permissions
++apply only to part of the Program, that part may be used separately
++under those permissions, but the entire Program remains governed by
++this License without regard to the additional permissions.
++
++  When you convey a copy of a covered work, you may at your option
++remove any additional permissions from that copy, or from any part of
++it.  (Additional permissions may be written to require their own
++removal in certain cases when you modify the work.)  You may place
++additional permissions on material, added by you to a covered work,
++for which you have or can give appropriate copyright permission.
++
++  Notwithstanding any other provision of this License, for material you
++add to a covered work, you may (if authorized by the copyright holders of
++that material) supplement the terms of this License with terms:
++
++    a) Disclaiming warranty or limiting liability differently from the
++    terms of sections 15 and 16 of this License; or
++
++    b) Requiring preservation of specified reasonable legal notices or
++    author attributions in that material or in the Appropriate Legal
++    Notices displayed by works containing it; or
++
++    c) Prohibiting misrepresentation of the origin of that material, or
++    requiring that modified versions of such material be marked in
++    reasonable ways as different from the original version; or
++
++    d) Limiting the use for publicity purposes of names of licensors or
++    authors of the material; or
++
++    e) Declining to grant rights under trademark law for use of some
++    trade names, trademarks, or service marks; or
++
++    f) Requiring indemnification of licensors and authors of that
++    material by anyone who conveys the material (or modified versions of
++    it) with contractual assumptions of liability to the recipient, for
++    any liability that these contractual assumptions directly impose on
++    those licensors and authors.
++
++  All other non-permissive additional terms are considered "further
++restrictions" within the meaning of section 10.  If the Program as you
++received it, or any part of it, contains a notice stating that it is
++governed by this License along with a term that is a further
++restriction, you may remove that term.  If a license document contains
++a further restriction but permits relicensing or conveying under this
++License, you may add to a covered work material governed by the terms
++of that license document, provided that the further restriction does
++not survive such relicensing or conveying.
++
++  If you add terms to a covered work in accord with this section, you
++must place, in the relevant source files, a statement of the
++additional terms that apply to those files, or a notice indicating
++where to find the applicable terms.
++
++  Additional terms, permissive or non-permissive, may be stated in the
++form of a separately written license, or stated as exceptions;
++the above requirements apply either way.
++
++  8. Termination.
++
++  You may not propagate or modify a covered work except as expressly
++provided under this License.  Any attempt otherwise to propagate or
++modify it is void, and will automatically terminate your rights under
++this License (including any patent licenses granted under the third
++paragraph of section 11).
++
++  However, if you cease all violation of this License, then your
++license from a particular copyright holder is reinstated (a)
++provisionally, unless and until the copyright holder explicitly and
++finally terminates your license, and (b) permanently, if the copyright
++holder fails to notify you of the violation by some reasonable means
++prior to 60 days after the cessation.
++
++  Moreover, your license from a particular copyright holder is
++reinstated permanently if the copyright holder notifies you of the
++violation by some reasonable means, this is the first time you have
++received notice of violation of this License (for any work) from that
++copyright holder, and you cure the violation prior to 30 days after
++your receipt of the notice.
++
++  Termination of your rights under this section does not terminate the
++licenses of parties who have received copies or rights from you under
++this License.  If your rights have been terminated and not permanently
++reinstated, you do not qualify to receive new licenses for the same
++material under section 10.
++
++  9. Acceptance Not Required for Having Copies.
++
++  You are not required to accept this License in order to receive or
++run a copy of the Program.  Ancillary propagation of a covered work
++occurring solely as a consequence of using peer-to-peer transmission
++to receive a copy likewise does not require acceptance.  However,
++nothing other than this License grants you permission to propagate or
++modify any covered work.  These actions infringe copyright if you do
++not accept this License.  Therefore, by modifying or propagating a
++covered work, you indicate your acceptance of this License to do so.
++
++  10. Automatic Licensing of Downstream Recipients.
++
++  Each time you convey a covered work, the recipient automatically
++receives a license from the original licensors, to run, modify and
++propagate that work, subject to this License.  You are not responsible
++for enforcing compliance by third parties with this License.
++
++  An "entity transaction" is a transaction transferring control of an
++organization, or substantially all assets of one, or subdividing an
++organization, or merging organizations.  If propagation of a covered
++work results from an entity transaction, each party to that
++transaction who receives a copy of the work also receives whatever
++licenses to the work the party's predecessor in interest had or could
++give under the previous paragraph, plus a right to possession of the
++Corresponding Source of the work from the predecessor in interest, if
++the predecessor has it or can get it with reasonable efforts.
++
++  You may not impose any further restrictions on the exercise of the
++rights granted or affirmed under this License.  For example, you may
++not impose a license fee, royalty, or other charge for exercise of
++rights granted under this License, and you may not initiate litigation
++(including a cross-claim or counterclaim in a lawsuit) alleging that
++any patent claim is infringed by making, using, selling, offering for
++sale, or importing the Program or any portion of it.
++
++  11. Patents.
++
++  A "contributor" is a copyright holder who authorizes use under this
++License of the Program or a work on which the Program is based.  The
++work thus licensed is called the contributor's "contributor version".
++
++  A contributor's "essential patent claims" are all patent claims
++owned or controlled by the contributor, whether already acquired or
++hereafter acquired, that would be infringed by some manner, permitted
++by this License, of making, using, or selling its contributor version,
++but do not include claims that would be infringed only as a
++consequence of further modification of the contributor version.  For
++purposes of this definition, "control" includes the right to grant
++patent sublicenses in a manner consistent with the requirements of
++this License.
++
++  Each contributor grants you a non-exclusive, worldwide, royalty-free
++patent license under the contributor's essential patent claims, to
++make, use, sell, offer for sale, import and otherwise run, modify and
++propagate the contents of its contributor version.
++
++  In the following three paragraphs, a "patent license" is any express
++agreement or commitment, however denominated, not to enforce a patent
++(such as an express permission to practice a patent or covenant not to
++sue for patent infringement).  To "grant" such a patent license to a
++party means to make such an agreement or commitment not to enforce a
++patent against the party.
++
++  If you convey a covered work, knowingly relying on a patent license,
++and the Corresponding Source of the work is not available for anyone
++to copy, free of charge and under the terms of this License, through a
++publicly available network server or other readily accessible means,
++then you must either (1) cause the Corresponding Source to be so
++available, or (2) arrange to deprive yourself of the benefit of the
++patent license for this particular work, or (3) arrange, in a manner
++consistent with the requirements of this License, to extend the patent
++license to downstream recipients.  "Knowingly relying" means you have
++actual knowledge that, but for the patent license, your conveying the
++covered work in a country, or your recipient's use of the covered work
++in a country, would infringe one or more identifiable patents in that
++country that you have reason to believe are valid.
++
++  If, pursuant to or in connection with a single transaction or
++arrangement, you convey, or propagate by procuring conveyance of, a
++covered work, and grant a patent license to some of the parties
++receiving the covered work authorizing them to use, propagate, modify
++or convey a specific copy of the covered work, then the patent license
++you grant is automatically extended to all recipients of the covered
++work and works based on it.
++
++  A patent license is "discriminatory" if it does not include within
++the scope of its coverage, prohibits the exercise of, or is
++conditioned on the non-exercise of one or more of the rights that are
++specifically granted under this License.  You may not convey a covered
++work if you are a party to an arrangement with a third party that is
++in the business of distributing software, under which you make payment
++to the third party based on the extent of your activity of conveying
++the work, and under which the third party grants, to any of the
++parties who would receive the covered work from you, a discriminatory
++patent license (a) in connection with copies of the covered work
++conveyed by you (or copies made from those copies), or (b) primarily
++for and in connection with specific products or compilations that
++contain the covered work, unless you entered into that arrangement,
++or that patent license was granted, prior to 28 March 2007.
++
++  Nothing in this License shall be construed as excluding or limiting
++any implied license or other defenses to infringement that may
++otherwise be available to you under applicable patent law.
++
++  12. No Surrender of Others' Freedom.
++
++  If conditions are imposed on you (whether by court order, agreement or
++otherwise) that contradict the conditions of this License, they do not
++excuse you from the conditions of this License.  If you cannot convey a
++covered work so as to satisfy simultaneously your obligations under this
++License and any other pertinent obligations, then as a consequence you may
++not convey it at all.  For example, if you agree to terms that obligate you
++to collect a royalty for further conveying from those to whom you convey
++the Program, the only way you could satisfy both those terms and this
++License would be to refrain entirely from conveying the Program.
++
++  13. Use with the GNU Affero General Public License.
++
++  Notwithstanding any other provision of this License, you have
++permission to link or combine any covered work with a work licensed
++under version 3 of the GNU Affero General Public License into a single
++combined work, and to convey the resulting work.  The terms of this
++License will continue to apply to the part which is the covered work,
++but the special requirements of the GNU Affero General Public License,
++section 13, concerning interaction through a network will apply to the
++combination as such.
++
++  14. Revised Versions of this License.
++
++  The Free Software Foundation may publish revised and/or new versions of
++the GNU General Public License from time to time.  Such new versions will
++be similar in spirit to the present version, but may differ in detail to
++address new problems or concerns.
++
++  Each version is given a distinguishing version number.  If the
++Program specifies that a certain numbered version of the GNU General
++Public License "or any later version" applies to it, you have the
++option of following the terms and conditions either of that numbered
++version or of any later version published by the Free Software
++Foundation.  If the Program does not specify a version number of the
++GNU General Public License, you may choose any version ever published
++by the Free Software Foundation.
++
++  If the Program specifies that a proxy can decide which future
++versions of the GNU General Public License can be used, that proxy's
++public statement of acceptance of a version permanently authorizes you
++to choose that version for the Program.
++
++  Later license versions may give you additional or different
++permissions.  However, no additional obligations are imposed on any
++author or copyright holder as a result of your choosing to follow a
++later version.
++
++  15. Disclaimer of Warranty.
++
++  THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY
++APPLICABLE LAW.  EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT
++HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY
++OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO,
++THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++PURPOSE.  THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM
++IS WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF
++ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
++
++  16. Limitation of Liability.
++
++  IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING
++WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS
++THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY
++GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE
++USE OR INABILITY TO USE THE PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF
++DATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD
++PARTIES OR A FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS),
++EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF
++SUCH DAMAGES.
++
++  17. Interpretation of Sections 15 and 16.
++
++  If the disclaimer of warranty and limitation of liability provided
++above cannot be given local legal effect according to their terms,
++reviewing courts shall apply local law that most closely approximates
++an absolute waiver of all civil liability in connection with the
++Program, unless a warranty or assumption of liability accompanies a
++copy of the Program in return for a fee.
++
++                     END OF TERMS AND CONDITIONS
++
++            How to Apply These Terms to Your New Programs
++
++  If you develop a new program, and you want it to be of the greatest
++possible use to the public, the best way to achieve this is to make it
++free software which everyone can redistribute and change under these terms.
++
++  To do so, attach the following notices to the program.  It is safest
++to attach them to the start of each source file to most effectively
++state the exclusion of warranty; and each file should have at least
++the "copyright" line and a pointer to where the full notice is found.
++
++    <one line to give the program's name and a brief idea of what it does.>
++    Copyright (C) <year>  <name of author>
++
++    This program is free software: you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation, either version 3 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program.  If not, see <https://www.gnu.org/licenses/>.
++
++Also add information on how to contact you by electronic and paper mail.
++
++  If the program does terminal interaction, make it output a short
++notice like this when it starts in an interactive mode:
++
++    <program>  Copyright (C) <year>  <name of author>
++    This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
++    This is free software, and you are welcome to redistribute it
++    under certain conditions; type `show c' for details.
++
++The hypothetical commands `show w' and `show c' should show the appropriate
++parts of the General Public License.  Of course, your program's commands
++might be different; for a GUI interface, you would use an "about box".
++
++  You should also get your employer (if you work as a programmer) or school,
++if any, to sign a "copyright disclaimer" for the program, if necessary.
++For more information on this, and how to apply and follow the GNU GPL, see
++<https://www.gnu.org/licenses/>.
++
++  The GNU General Public License does not permit incorporating your program
++into proprietary programs.  If your program is a subroutine library, you
++may consider it more useful to permit linking proprietary applications with
++the library.  If this is what you want to do, use the GNU Lesser General
++Public License instead of this License.  But first, please read
++<https://www.gnu.org/licenses/why-not-lgpl.html>.
+--- /dev/null
++++ b/AETHER-PMTUD.md
+@@ -0,0 +1,50 @@
++# Aether packet-size probing adaptation
++
++The new `src/pmtud.rs` adapts probing-mode PmtuSearch and TcpPlpmtudAdapter
++from doronz88/pmd-pytcp, commit 80628207dde459b305a262f98596328e405f32bd:
++https://github.com/doronz88/pmd-pytcp/blob/80628207dde459b305a262f98596328e405f32bd/packages/pmd_pytcp/pmd_pytcp/lib/plpmtud.py
++https://github.com/doronz88/pmd-pytcp/blob/80628207dde459b305a262f98596328e405f32bd/packages/pmd_pytcp/pmd_pytcp/protocols/tcp/tcp__plpmtud_adapter.py
++
++Copyright (C) 2020-present Sebastian Majewski and pmd-pytcp contributors.
++The adaptation is GPL-3.0-or-later; see LICENSE-AETHER-PMTUD. Upstream jktcp
++retains its MIT notice in LICENSE. The combined Aether-patched source contains
++both licenses, reflected in Cargo.toml.
++
++The starting packet size is 1400 bytes (1340 TCP payload over IPv6), capped by
++negotiated MTU and peer MSS. Binary search uses 8-byte granularity and three
++consecutive probe ACKs. Probe deadline 1500 ms; search reopens after 600 s.
++One probe is outstanding at a time. Repairs invalidate overlapping probes
++before cumulative ACK processing; RTO revokes an increased working size.
++The peer MSS can require an initial packet smaller than the configured seed.
++
++pmtud_reference.txt is a 50-transition golden trace generated by executing the
++unmodified pinned upstream PmtuSearch, with operator seed 1400 and interface
++MTU 16000. Events confirm 1400, ACK candidates <=8192 and lose larger ones
++until convergence, revoke on RTO, repeat with a 6000-byte limit, and revoke
++again. It records current size, candidate, phase, search bounds, validation
++ACK count and loss count after every event. Rust unit tests match every field.
++
++TCP integration uses jktcp's existing window/200-ms exponential-RTO machinery,
++plus a guarded three-duplicate-ACK head repair. It does not import the Python
++stack's RACK/TLP, SACK, congestion control or ICMP subsystem. A fixed-cap sender
++reserves enough window credit for a feasible probe, without delaying short
++service writes. Repairs share owned byte slices, retain pending pieces through
++cancellation and obey receive-window changes. Each inner packet has its own
++transport write/flush, including control packets after a cancelled write.
++
++Enabled by Aether only at the network TLS tunnel constructor. Other Adapter
++users keep static MSS unless they explicitly enable probing. Functional tests
++cover complete AFC payloads through both real TLS ciphers and the background
++adapter, including packet loss, path shrink and individual TLS-record framing.
++
++Source-review follow-up: pending repair slices are capped again at emission,
++so a later demotion also governs tails created before it. Closed windows use
++pmd-pytcp's TCP persist policy (one-byte data probes, 1000-ms initial deadline,
++exponential backoff to 60000 ms), rather than leaving unsent repair pieces
++without a future event. Window reopening resets flow-control timers without
++interpreting the closed interval as an MTU black hole. Source references:
++https://github.com/doronz88/pmd-pytcp/blob/80628207dde459b305a262f98596328e405f32bd/packages/pmd_pytcp/pmd_pytcp/protocols/tcp/session/tcp__session__tx.py
++https://github.com/doronz88/pmd-pytcp/blob/80628207dde459b305a262f98596328e405f32bd/packages/pmd_pytcp/pmd_pytcp/protocols/tcp/state/tcp__state__persist.py
++Write errors from every shared-driver flush branch terminate and notify all
++active streams; fatal error cleanup does not await FIN writes on the broken
++transport. Two follow-up regression cases are included for the next test run.

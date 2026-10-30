@@ -1,11 +1,11 @@
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -2,9 +2,13 @@
- 
+
  resolver = "2"
  members = ["ffi", "idevice", "tests", "tools"]
 +exclude = ["aether-jktcp"]
- 
+
  [profile.release]
  opt-level = "z"
  codegen-units = 1
@@ -17,7 +17,7 @@
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -1365,10 +1365,9 @@
- 
+
  [[package]]
  name = "jktcp"
 -version = "0.1.7"
@@ -38,18 +38,16 @@
  ns-keyed-archive = { version = "0.1.5", optional = true }
 -jktcp = { version = "0.1.7", optional = true, default-features = false }
 +jktcp = { version = "=0.1.8", optional = true, default-features = false }
- 
+
  thiserror = { version = "2" }
  tracing = { version = "0.1.41" }
 --- a/ffi/Cargo.toml
 +++ b/ffi/Cargo.toml
-@@ -23,6 +23,10 @@
+@@ -23,6 +23,8 @@
  windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }
- 
+
  [features]
 +# Experimental: requires physical-device compatibility/throughput validation.
-+aether-tunnel-batching = []
-+aether-tunnel-mss-8k = []
 +aether-large-send-window = []
  aws-lc = ["idevice/aws-lc"]
  ring = ["idevice/ring"]
@@ -63,7 +61,7 @@
 +    if output.is_null() { return ffi_err!(IdeviceError::FfiInvalidArg); }
      unsafe { afc_file_write_with_progress(handle, data, length, output, None, std::ptr::null_mut()) }
  }
- 
+
  /// Progress counts payload bytes accepted by transport; the last byte is held
  /// until the AFC reply validates the write. Context remains valid until return.
 +/// A null output pointer disables diagnostic instrumentation while preserving progress.
@@ -167,13 +165,13 @@
 -    sync::Once,
 +    sync::{Mutex, Once, OnceLock, atomic::{AtomicBool, Ordering}},
  };
- 
+
  use tracing::Level;
  use tracing_appender::non_blocking;
 -use tracing_subscriber::{EnvFilter, Layer};
 +use tracing_subscriber::{EnvFilter, Layer, filter::LevelFilter, reload};
  use tracing_subscriber::{Registry, fmt, layer::SubscriberExt, util::SubscriberInitExt};
- 
+
  #[repr(C)]
 @@ -54,6 +54,27 @@
              IdeviceLogLevel::Trace => "trace",
@@ -202,11 +200,11 @@
 +        let _ = filter.reload(level);
      }
  }
- 
+
 @@ -130,7 +151,10 @@
              GUARDS = Some((console_guard, file_guard));
          }
- 
+
 -        let subscriber = Registry::default().with(layers);
 +        let level = if LOGGING_ENABLED.load(Ordering::SeqCst) { LevelFilter::TRACE } else { LevelFilter::OFF };
 +        let (filter, handle) = reload::Layer::new(level);
@@ -214,7 +212,7 @@
 +        let subscriber = Registry::default().with(filter).with(layers);
          subscriber.init();
      });
- 
+
 @@ -140,3 +164,25 @@
          init_result
      }
@@ -250,31 +248,36 @@
 +    // CDTunnel carries latency-sensitive service requests as well as bulk data.
 +    tunnel_stream.set_nodelay(true)?;
      let tunnel = connect_tls_psk_tunnel_native(tunnel_stream, rpc.encryption_key()).await?;
- 
+
      let client_ip: std::net::IpAddr = tunnel
-@@ -62,7 +64,17 @@
- 
+@@ -57,12 +59,20 @@
+         .server_address
+         .parse()
+         .map_err(|e| IdeviceError::InternalError(format!("{e}")))?;
+-    let mtu = tunnel.info.mtu as usize;
++    // Same interface ceiling as pymobiledevice3. A complete inner packet
++    // stays below the TLS plaintext-record limit (16,384 bytes).
++    let mtu = (tunnel.info.mtu as usize).min(16000);
+     let rsd_port = tunnel.info.server_rsd_port;
+
      let raw = tunnel.into_inner();
      let mut adapter = idevice::tcp::adapter::Adapter::new(Box::new(raw), client_ip, server_ip);
-+    // Upstream edf2587 caps the complete TCP/IP packet at 8 KiB. Keep it
-+    // selectable for a controlled comparison with Aether's existing MTU path.
-+    #[cfg(feature = "aether-tunnel-mss-8k")]
-+    adapter.set_mss(mtu.min(8192).saturating_sub(60));
-+    #[cfg(not(feature = "aether-tunnel-mss-8k"))]
-     adapter.set_mss(mtu.saturating_sub(60));
+-    adapter.set_mss(mtu.saturating_sub(60));
++    // Follow pymobiledevice3/pmd-pytcp: start at the safe 1400-byte
++    // packet size and discover the path limit using validated TCP probes.
++    // The negotiated MTU remains the receive ceiling; no fixed 8 KiB limit.
++    adapter.enable_packet_size_probing(mtu)?;
 +    // This cap never overrides the peer's advertised receive window.
 +    #[cfg(feature = "aether-large-send-window")]
 +    adapter.set_send_window(4 * 1024 * 1024);
-+    #[cfg(feature = "aether-tunnel-batching")]
-+    adapter.set_write_batch_size(16 * 1024);
      let mut adapter = adapter.to_async_handle();
- 
+
      let rsd_stream = adapter
 --- a/idevice/src/lib.rs
 +++ b/idevice/src/lib.rs
 @@ -504,49 +504,53 @@
- 
- 
+
+
      #[cfg(feature = "afc")]
 -    pub(crate) async fn send_raw_profiled(&mut self, message: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics) -> Result<(), IdeviceError> {
 -        self.send_raw_profiled_with_progress(message, metrics, None).await
@@ -352,8 +355,8 @@
 +++ b/idevice/src/services/afc/file.rs
 @@ -131,6 +131,11 @@
      }
- 
- 
+
+
 +    pub async fn write_entire_with_progress(&mut self, bytes: &[u8],
 +        progress: Option<&mut (dyn FnMut(u64) + Send)>) -> Result<(), IdeviceError> {
 +        self.inner.as_mut().write_with_progress(bytes, None, progress).await
@@ -386,7 +389,7 @@
 -        self.as_mut().write_profiled_with_progress(bytes, metrics, None).await
 +        self.as_mut().write_with_progress(bytes, Some(metrics), None).await
      }
- 
+
      pub async fn write_profiled_with_progress(mut self: Pin<&mut Self>, bytes: &[u8], metrics: &mut crate::afc::AfcWriteDiagnostics,
 +        progress: Option<&mut (dyn FnMut(u64) + Send)>) -> Result<(), IdeviceError> {
 +        self.as_mut().write_with_progress(bytes, Some(metrics), progress).await
@@ -457,7 +460,7 @@
 @@ -722,4 +722,46 @@
          assert_eq!(metrics.replies, 0);
      }
- 
+
 -}
 +    #[tokio::test]
 +    async fn lightweight_and_profiled_progress_have_identical_wire_and_ack_rules() {
@@ -501,4 +504,158 @@
 +        }
 +    }
 +
++}
+--- a/idevice/src/remote_pairing/tls_psk.rs
++++ b/idevice/src/remote_pairing/tls_psk.rs
+@@ -819,3 +819,7 @@
+         assert!(decrypt_record(&s.keys, false, 0, CT_APPLICATION_DATA, &record).is_err());
+     }
+ }
++
++#[cfg(all(test, feature = "tunnel_tcp_stack", feature = "afc"))]
++#[path = "dynamic_tunnel_tests.rs"]
++mod aether_dynamic_tunnel_tests;
+--- /dev/null
++++ b/idevice/src/remote_pairing/dynamic_tunnel_tests.rs
+@@ -0,0 +1,141 @@
++//! Functional AFC -> background jktcp -> real TLS-record -> TCP-socket tests.
++//! Fixed symmetric fixture keys bypass pairing only; both production ciphers,
++//! record MACs, packet boundaries, ACKs, loss repair and AFC status are real.
++use super::*;
++use crate::tcp::packets::{Ipv6Packet, ProtocolNumber, TcpFlags, TcpPacket};
++use std::{collections::BTreeMap, net::Ipv6Addr, time::Duration};
++use tokio::net::{TcpListener, TcpStream};
++
++const HOST: Ipv6Addr = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 1);
++const PEER: Ipv6Addr = Ipv6Addr::new(0xfd00, 0, 0, 0, 0, 0, 0, 2);
++
++fn keyed(inner: TcpStream, suite: CipherSuite) -> TlsPskStream<TcpStream> {
++    TlsPskStream {
++        inner, keys: KeyBlock::new(vec![1; suite.mac_key_len()], vec![1; suite.mac_key_len()],
++            vec![2; suite.enc_key_len()], vec![2; suite.enc_key_len()], suite),
++        write_seq: 0, read_seq: 0, read_buf: vec![], pending_record: vec![],
++        pending_record_total: 0, write_buf: vec![], write_buf_offset: 0,
++    }
++}
++
++async fn respond(peer: &mut TlsPskStream<TcpStream>, port: u16, ack: u32,
++    sequence: &mut u32, syn: bool, payload: &[u8]) {
++    let options: &[u8] = if syn { &[3, 3, 8, 1, 2, 4, 0x3e, 0x44] } else { &[] }; // MSS 15940
++    let tcp = TcpPacket::create(PEER.into(), HOST.into(), 1234, port, *sequence, ack,
++        TcpFlags { syn, ack: true, psh: !payload.is_empty(), ..Default::default() },
++        65534, options, payload);
++    let packet = Ipv6Packet::create(PEER, HOST, ProtocolNumber::Tcp, 255, &tcp);
++    peer.write_all(&packet).await.unwrap();
++    peer.flush().await.unwrap();
++    *sequence = sequence.wrapping_add(payload.len() as u32 + u32::from(syn));
++}
++
++async fn serve(mut peer: TlsPskStream<TcpStream>, shrinks: bool,
++    completed: tokio::sync::oneshot::Sender<(usize, usize, usize)>) {
++    let mut initial_seq = 0;
++    let mut received: usize = 0;
++    let mut afc = Vec::new();
++    let mut reordered = BTreeMap::<usize, Vec<u8>>::new();
++    let mut sequence = u32::MAX - 100;
++    let mut payload_offset = 0;
++    let mut drops = 0;
++    let mut largest = 0;
++    loop {
++        // Inspect individual authenticated TLS records, rather than combining
++        // reads into an IP byte stream that would hide forbidden coalescing.
++        let (ct, encrypted) = read_record(&mut peer.inner).await.unwrap();
++        assert_eq!(ct, CT_APPLICATION_DATA);
++        let packet = decrypt_record(&peer.keys, false, peer.read_seq, ct, &encrypted).unwrap();
++        peer.read_seq += 1;
++        assert!(packet.len() >= 60);
++        assert_eq!(packet[0] >> 4, 6);
++        assert_eq!(packet.len(), 40 + u16::from_be_bytes([packet[4], packet[5]]) as usize,
++            "one complete inner IP packet per TLS record");
++        let tcp = TcpPacket::parse(&packet[40..]).unwrap();
++        if tcp.flags.syn {
++            initial_seq = tcp.sequence_number.wrapping_add(1);
++            respond(&mut peer, tcp.source_port, initial_seq, &mut sequence, true, &[]).await;
++            continue;
++        }
++        if tcp.payload.is_empty() { continue; }
++        largest = largest.max(packet.len());
++        let limit = if shrinks && received >= 512 * 1024 { 1400 } else { 8192 };
++        if packet.len() > limit { drops += 1; continue; }
++        let offset = tcp.sequence_number.wrapping_sub(initial_seq) as usize;
++        let skip = received.saturating_sub(offset).min(tcp.payload.len());
++        if skip < tcp.payload.len() { reordered.insert(offset + skip, tcp.payload[skip..].to_vec()); }
++        while let Some(bytes) = reordered.remove(&received) { received += bytes.len(); afc.extend_from_slice(&bytes); }
++        let ack = initial_seq.wrapping_add(received as u32);
++        let mut replied = false;
++        while afc.len() >= 48 {
++            let word = |at| u64::from_le_bytes(afc[at..at + 8].try_into().unwrap());
++            let entire = word(8) as usize;
++            assert!((48..=4 * 1024 * 1024 + 48).contains(&entire));
++            if afc.len() < entire { break; }
++            assert_eq!(word(16), 48);
++            assert_eq!(word(40), 7);
++            let opcode = word(32);
++            assert!([0x10, 0x14].contains(&opcode));
++            if opcode == 0x10 {
++                for (n, byte) in afc[48..entire].iter().enumerate() {
++                    assert_eq!(*byte, ((payload_offset + n) % 251) as u8);
++                }
++                payload_offset += entire - 48;
++            }
++            let mut status = Vec::new();
++            for value in [word(0), 48, 48, word(24), 1, 0] { status.extend_from_slice(&value.to_le_bytes()); }
++            afc.drain(..entire);
++            respond(&mut peer, tcp.source_port, ack, &mut sequence, false, &status).await;
++            replied = true;
++            if opcode == 0x14 {
++                completed.send((payload_offset, drops, largest)).unwrap();
++                // Keep the socket alive until the test explicitly stops it.
++                std::future::pending::<()>().await;
++                unreachable!();
++            }
++        }
++        if !replied { respond(&mut peer, tcp.source_port, ack, &mut sequence, false, &[]).await; }
++    }
++}
++
++#[tokio::test]
++async fn afc_payload_and_record_boundaries_survive_probing_and_path_shrink() {
++    for suite in [CipherSuite::Aes128CbcSha, CipherSuite::Aes256CbcSha384] {
++        for shrinks in [false, true] {
++            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
++            let client = TcpStream::connect(listener.local_addr().unwrap()).await.unwrap();
++            let (server, _) = listener.accept().await.unwrap();
++            client.set_nodelay(true).unwrap();
++            server.set_nodelay(true).unwrap();
++            let (completed, completion) = tokio::sync::oneshot::channel();
++            let worker = tokio::spawn(serve(keyed(server, suite), shrinks, completed));
++            let mut adapter = crate::tcp::adapter::Adapter::new(Box::new(keyed(client, suite)), HOST.into(), PEER.into());
++            adapter.enable_packet_size_probing(16000).unwrap();
++            let mut handle = adapter.to_async_handle();
++            let stream = handle.connect(1234).await.unwrap();
++            let mut client = crate::afc::AfcClient::new(crate::Idevice::new(Box::new(stream), "dynamic-tunnel-test"));
++            // On a deliberately failing test, suppress the descriptor's debug
++            // drop assertion so the original transfer failure stays readable.
++            let mut file = std::mem::ManuallyDrop::new(unsafe {
++                crate::afc::file::FileDescriptor::new(&mut client, 7, "fixture.ipa".into())
++            });
++            let payload: Vec<u8> = (0..4 * 1024 * 1024 + 123).map(|n| (n % 251) as u8).collect();
++            let outcome = tokio::time::timeout(Duration::from_secs(30), async {
++                file.write_entire(&payload).await.map_err(|e| e.to_string())?;
++                // SAFETY: take once after a successful write; ManuallyDrop
++                // itself never drops the moved value, including on timeout.
++                let owned = unsafe { std::mem::ManuallyDrop::take(&mut file) };
++                owned.close().await.map_err(|e| e.to_string())?;
++                completion.await.map_err(|e| e.to_string())
++            }).await;
++            worker.abort();
++            let worker_result = worker.await;
++            let _ = handle.close().await;
++            assert!(!worker_result.is_err_and(|e| e.is_panic()), "TLS/AFC peer failed");
++            let (bytes, drops, largest) = outcome.expect("dynamic TLS/AFC transfer stalled").expect("TLS/AFC transfer failed");
++            assert_eq!(bytes, payload.len());
++            assert!(drops > 0, "must exercise oversized probes and recovery");
++            assert!(largest > 8192, "the search is not hard-capped at 8 KiB");
++        }
++    }
 +}
