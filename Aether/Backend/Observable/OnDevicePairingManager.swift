@@ -179,12 +179,9 @@ final class OnDevicePairingManager: ObservableObject {
 			do {
 				try _store(record)
 				HeartbeatManager.useOnDevicePairingFile()
-				HeartbeatManager.shared.resetRSDTunnel()
+				DeviceConnectionManager.shared.refreshAfterPairingRecordChange()
 				state = .completed
 				_log("Pairing completed and the pairing record was saved.", level: .notice)
-				Task {
-					await DeviceConnectionManager.shared.refresh()
-				}
 			} catch {
 				state = .failed(error.localizedDescription)
 				_log("Could not save the pairing record: \(error.localizedDescription)", level: .error)

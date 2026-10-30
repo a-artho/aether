@@ -218,14 +218,74 @@ extension InstallationAppProxy {
 	private static let iconDiskCache = InstalledIconDiskCache()
 	private static let iconConnection = InstalledIconConnection()
 	private static var selectedIconScope: String?
-	private static var iconRequests: [String: (id: UUID, task: Task<UIImage?, Error>)] = [:]
+	private static var iconScopeID = UUID()
+	private typealias IconStream = AsyncThrowingStream<UIImage?, Error>
+	private struct IconRequest {
+		let id: UUID
+		let task: Task<Void, Never>
+		let cancellation: InstalledIconCancellation
+		var waiters: [UUID: IconStream.Continuation]
+	}
+	private static var iconRequests: [String: IconRequest] = [:]
 	private static let iconCacheQueue = DispatchQueue(label: "InstallationAppProxy.iconCache")
 
 	/// The connection manager already reads the selected pairing digest. Reuse that
 	/// identity instead of scheduling file metadata work for every cached icon.
 	static public func setIconDeviceScope(pairingDigest: Data?, endpoint: String) {
 		let scope = pairingDigest.map { $0.map { String(format: "%02x", $0) }.joined() + "|" + endpoint }
-		iconCacheQueue.sync { selectedIconScope = scope }
+		let retired: [IconRequest]? = iconCacheQueue.sync {
+			guard selectedIconScope != scope else { return nil }
+			selectedIconScope = scope
+			iconScopeID = UUID()
+			let requests = Array(iconRequests.values)
+			iconRequests.removeAll()
+			return requests
+		}
+		if let retired {
+			iconConnection.invalidate()
+			cancelIconRequests(retired)
+		}
+	}
+
+	fileprivate static func cancelPendingIconRequests() {
+		let retired = iconCacheQueue.sync {
+			let requests = Array(iconRequests.values)
+			iconRequests.removeAll()
+			return requests
+		}
+		cancelIconRequests(retired)
+	}
+
+	private static func cancelIconRequests(_ requests: [IconRequest]) {
+		for request in requests {
+			request.cancellation.cancel()
+			request.task.cancel()
+			for waiter in request.waiters.values { waiter.finish(throwing: CancellationError()) }
+		}
+	}
+
+	private static func releaseIconWaiter(_ id: UUID, key: String) {
+		let retired: IconRequest? = iconCacheQueue.sync {
+			guard var request = iconRequests[key], request.waiters.removeValue(forKey: id) != nil else { return nil }
+			if request.waiters.isEmpty { iconRequests[key] = nil; return request }
+			iconRequests[key] = request
+			return nil
+		}
+		if let retired { retired.cancellation.cancel(); retired.task.cancel() }
+	}
+
+	private static func completeIconRequest(_ id: UUID, key: String, result: Result<UIImage?, Error>) {
+		let waiters: [IconStream.Continuation] = iconCacheQueue.sync {
+			guard let request = iconRequests[key], request.id == id else { return [] }
+			iconRequests[key] = nil
+			return Array(request.waiters.values)
+		}
+		for waiter in waiters {
+			switch result {
+			case .success(let image): waiter.yield(image); waiter.finish()
+			case .failure(let error): waiter.finish(throwing: error)
+			}
+		}
 	}
 
 	static public func iconCacheRevision(for id: String) -> String {
@@ -249,39 +309,87 @@ extension InstallationAppProxy {
 	}
 
 	static public func getAppIconCached(for id: String, cacheVersion: String? = nil) async throws -> UIImage? {
+		try Task.checkCancellation()
 		// File I/O and identity hashing never run on the UI thread.
+		let selection = iconCacheQueue.sync { (scope: selectedIconScope, id: iconScopeID) }
 		let scope: String
-		if let verified = iconCacheQueue.sync(execute: { selectedIconScope }) { scope = verified }
+		if let verified = selection.scope { scope = verified }
 		else { scope = await Task.detached(priority: .userInitiated) { iconDiskCache.deviceScope() }.value }
+		try Task.checkCancellation()
 		let cacheKey = "\(scope)|\(id)|\(cacheVersion ?? "")|\(iconCacheRevision(for: id))"
 		if let cached = iconCache.image(for: cacheKey) { return cached }
-		let request = iconCacheQueue.sync { () -> (id: UUID, task: Task<UIImage?, Error>) in
-			if let existing = iconRequests[cacheKey] { return existing }
-			let request = (id: UUID(), task: Task.detached(priority: .userInitiated) { () throws -> UIImage? in
-				if let image = iconDiskCache.image(for: cacheKey) {
-					iconCache.insert(image, for: cacheKey)
-					return image
+		let waiterID = UUID()
+		let (stream, continuation) = IconStream.makeStream()
+		defer { releaseIconWaiter(waiterID, key: cacheKey); continuation.finish() }
+		return try await withTaskCancellationHandler {
+			// Registration and the background notification share the main actor.
+			// No request can slip in between the active check and retirement.
+			try await MainActor.run {
+				try Task.checkCancellation()
+				guard UIApplication.shared.applicationState == .active else { throw CancellationError() }
+				_ = iconConnection
+				try iconCacheQueue.sync {
+					guard iconScopeID == selection.id else { throw CancellationError() }
+					if var request = iconRequests[cacheKey] {
+						request.waiters[waiterID] = continuation
+						iconRequests[cacheKey] = request
+						return
+					}
+					let requestID = UUID()
+					let cancellation = InstalledIconCancellation()
+					let task = Task.detached(priority: .userInitiated) {
+						let result: Result<UIImage?, Error>
+						do {
+							try cancellation.check()
+							if let image = iconDiskCache.image(for: cacheKey) {
+								try cancellation.check()
+								iconCache.insert(image, for: cacheKey)
+								result = .success(image)
+							} else {
+								let data = try await iconConnection.iconData(for: id, scope: scope, cancellation: cancellation)
+								try cancellation.check()
+								let image = preparedRowIcon(data: data)
+								if let image {
+									iconDiskCache.store(data, for: cacheKey)
+									iconCache.insert(image, for: cacheKey)
+								}
+								result = .success(image)
+							}
+						} catch { result = .failure(error) }
+						completeIconRequest(requestID, key: cacheKey, result: result)
+					}
+					iconRequests[cacheKey] = IconRequest(id: requestID, task: task, cancellation: cancellation,
+						waiters: [waiterID: continuation])
 				}
-				let data = try await iconConnection.iconData(for: id, scope: scope)
-				guard let image = preparedRowIcon(data: data) else { return nil }
-				iconDiskCache.store(data, for: cacheKey)
-				iconCache.insert(image, for: cacheKey)
-				return image
-			})
-			iconRequests[cacheKey] = request
-			return request
-		}
-		defer {
-			iconCacheQueue.sync {
-				if iconRequests[cacheKey]?.id == request.id { iconRequests[cacheKey] = nil }
 			}
+			for try await image in stream { try Task.checkCancellation(); return image }
+			throw CancellationError()
+		} onCancel: {
+			continuation.finish(throwing: CancellationError())
+			releaseIconWaiter(waiterID, key: cacheKey)
 		}
-		return try await request.task.value
 	}
 
 	static public func getAppIcon(for id: String) async throws -> UIImage? {
-		let scope = await Task.detached { iconDiskCache.deviceScope() }.value
-		return UIImage(data: try await iconConnection.iconData(for: id, scope: scope))
+		let cancellation = InstalledIconCancellation()
+		return try await withTaskCancellationHandler {
+			try Task.checkCancellation()
+			let scope = await Task.detached { iconDiskCache.deviceScope() }.value
+			let data = try await iconConnection.iconData(for: id, scope: scope, cancellation: cancellation)
+			try cancellation.check()
+			return UIImage(data: data)
+		} onCancel: { cancellation.cancel() }
+	}
+}
+
+private final class InstalledIconCancellation: @unchecked Sendable {
+	private let lock = NSLock()
+	private var cancelled = false
+	var isCancelled: Bool { lock.withLock { cancelled } }
+	func cancel() { lock.withLock { cancelled = true } }
+	func check() throws {
+		try Task.checkCancellation()
+		if isCancelled { throw CancellationError() }
 	}
 }
 
@@ -290,6 +398,8 @@ extension InstallationAppProxy {
 // Connection ownership and idle-close work are serialized by a private queue.
 private final class InstalledIconConnection: @unchecked Sendable {
 	private let queue = DispatchQueue(label: "InstallationAppProxy.icons", qos: .userInitiated)
+	private let lifecycleLock = NSLock()
+	private var lifecycleID = UUID()
 	private var client: OpaquePointer?
 	private var scope: String?
 	private var generation: UInt64?
@@ -298,9 +408,10 @@ private final class InstalledIconConnection: @unchecked Sendable {
 
 	init() {
 		backgroundObserver = NotificationCenter.default.addObserver(
-			forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil
+			forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
 		) { [weak self] _ in
-			self?.queue.async { [weak self] in self?.close() }
+			self?.invalidate()
+			InstallationAppProxy.cancelPendingIconRequests()
 		}
 	}
 
@@ -310,16 +421,30 @@ private final class InstalledIconConnection: @unchecked Sendable {
 		if let client { springboard_services_free(client) }
 	}
 
-	func iconData(for id: String, scope: String) async throws -> Data {
-		try await withCheckedThrowingContinuation { continuation in
+	func invalidate() {
+		lifecycleLock.withLock { lifecycleID = UUID() }
+		queue.async { [weak self] in self?.close() }
+	}
+
+	func iconData(for id: String, scope: String, cancellation: InstalledIconCancellation = InstalledIconCancellation()) async throws -> Data {
+		let lifecycle = try await MainActor.run {
+			try cancellation.check()
+			guard UIApplication.shared.applicationState == .active else { throw CancellationError() }
+			return self.lifecycleLock.withLock { self.lifecycleID }
+		}
+		let shouldProceed: @Sendable () -> Bool = { !cancellation.isCancelled && self.lifecycleLock.withLock { self.lifecycleID == lifecycle } }
+		return try await withCheckedThrowingContinuation { continuation in
 			queue.async {
 				self.idleClose?.cancel()
 				do {
+					try cancellation.check()
+					guard shouldProceed() else { throw CancellationError() }
 					let heartbeat = HeartbeatManager.shared
 					if self.scope != scope || self.generation != heartbeat.serviceConnectionGeneration { self.close() }
+					guard shouldProceed() else { throw CancellationError() }
 					if self.client == nil {
 						do {
-							try heartbeat.withRSDServiceConnection { adapter, handshake in
+							try heartbeat.withRSDServiceConnection(shouldProceed: shouldProceed) { adapter, handshake in
 								let error = springboard_services_connect_rsd(adapter, handshake, &self.client)
 								if error == nil { self.generation = heartbeat.rsdGeneration }
 								return error
@@ -328,11 +453,13 @@ private final class InstalledIconConnection: @unchecked Sendable {
 						self.scope = scope
 
 					}
+					guard shouldProceed() else { throw CancellationError() }
 					var bytes: UnsafeMutableRawPointer?
 					var length = 0
 					if let error = springboard_services_get_icon(self.client, id, &bytes, &length) { throw IDeviceSwiftError(error) }
 					guard let bytes else { throw IDeviceSwiftError(message: "SpringBoard returned an empty icon buffer.") }
 					defer { idevice_data_free(bytes.assumingMemoryBound(to: UInt8.self), UInt(length)) }
+					guard shouldProceed() else { throw CancellationError() }
 					continuation.resume(returning: Data(bytes: bytes, count: length))
 					let close = DispatchWorkItem { [weak self] in self?.close() }
 					self.idleClose = close

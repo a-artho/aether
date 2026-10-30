@@ -127,7 +127,7 @@ final class NativeCancellation: @unchecked Sendable {
  var ensured = 0
  func didEnter(_ semaphore: DispatchSemaphore) -> Bool { semaphore.wait(timeout: .now()) == .success }
  func hold() { rsdConnectionLock.lock() }; func release() { rsdConnectionLock.unlock() }
- func _ensureRSDTunnelLocked(discoveryTimeout: TimeInterval?) throws { ensured += 1 }
+ func _ensureRSDTunnelLocked(discoveryTimeout: TimeInterval?,shouldProceed:(()->Bool)?=nil) throws { ensured += 1 }
  static func shouldRetryRSDService(_ error: IDeviceSwiftError) -> Bool { false }
  func _invalidateRSDTunnelLocked() {}
  func invoke() throws { try connectRSDServiceOnce(discoveryTimeout: 1) { _, _ in nil } }

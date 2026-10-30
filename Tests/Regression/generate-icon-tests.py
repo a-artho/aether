@@ -18,7 +18,11 @@ private final class IconImage:NSObject {
  init?(data:Data) { if data.isEmpty { return nil }; super.init() }
  func preparingThumbnail(of size:CGSize)->IconImage? { self }
 }
-private enum IconApplication { static let didEnterBackgroundNotification=Notification.Name("IconTestBackground"); static let didReceiveMemoryWarningNotification=Notification.Name("IconTestMemory") }
+private final class IconApplication {
+ enum State { case active, inactive, background }
+ static let shared=IconApplication(); var applicationState=State.active
+ static let didEnterBackgroundNotification=Notification.Name("IconTestBackground"); static let didReceiveMemoryWarningNotification=Notification.Name("IconTestMemory")
+}
 private final class IconProxy {}
 private enum IconConnectionError:Error { case tcpProviderUnavailable }
 private struct IconError:Error { init(_ pointer:UnsafeMutablePointer<Int>) { pointer.deallocate() }; init(message:String) {} }
@@ -29,7 +33,8 @@ private final class IconHeartbeat {
  var ipAddress="10.7.0.1"; var isRsd=true; var rsdGeneration:UInt64=0
  var serviceConnectionGeneration:UInt64 { rsdGeneration }
  var provider:OpaquePointer? { OpaquePointer(bitPattern:1) }
- func withRSDServiceConnection(_ connect:(OpaquePointer,OpaquePointer)->UnsafeMutablePointer<Int>?) throws {
+ func withRSDServiceConnection(shouldProceed:()->Bool={true},_ connect:(OpaquePointer,OpaquePointer)->UnsafeMutablePointer<Int>?) throws {
+  guard shouldProceed() else { throw CancellationError() }
   if let error=connect(OpaquePointer(bitPattern:1)!,OpaquePointer(bitPattern:2)!) { throw IconError(error) }
  }
 }

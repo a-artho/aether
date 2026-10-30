@@ -172,11 +172,8 @@ struct PairingFileView: View {
 	}
 
 	private func _switchPairingRecord() {
-		HeartbeatManager.shared.resetRSDTunnel()
 		_refreshPairingState()
-		Task {
-			await DeviceConnectionManager.shared.refresh()
-		}
+		_connection.refreshAfterPairingRecordChange()
 	}
 
 	private func _refreshPairingState() {

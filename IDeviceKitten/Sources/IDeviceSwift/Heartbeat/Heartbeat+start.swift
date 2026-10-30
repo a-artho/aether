@@ -13,19 +13,22 @@ extension HeartbeatManager {
 	// MARK: - RSD Tunnel
 
 	func withRSDServiceConnection(
+		shouldProceed: (() -> Bool)? = nil,
 		_ connect: (AdapterHandle, RsdHandshakeHandle) -> UnsafeMutablePointer<IdeviceFfiError>?
 	) throws {
-		try withRSDServiceConnection(discoveryTimeout: nil, connect)
+		try withRSDServiceConnection(discoveryTimeout: nil, shouldProceed: shouldProceed, connect)
 	}
 
 	func withRSDServiceConnection(
 		discoveryTimeout: TimeInterval?,
+		shouldProceed: (() -> Bool)? = nil,
 		_ connect: (AdapterHandle, RsdHandshakeHandle) -> UnsafeMutablePointer<IdeviceFfiError>?
 	) throws {
 		for attempt in 0..<3 {
 			try Task.checkCancellation()
+			guard shouldProceed?() ?? true else { throw CancellationError() }
 			do {
-				try connectRSDServiceOnce(discoveryTimeout: discoveryTimeout, connect)
+				try connectRSDServiceOnce(discoveryTimeout: discoveryTimeout, shouldProceed: shouldProceed, connect)
 				return
 			} catch let error as IDeviceSwiftError {
 				guard Self.shouldRetryRSDService(error), attempt < 2,
@@ -45,13 +48,16 @@ extension HeartbeatManager {
 	}
 
 	private func connectRSDServiceOnce(discoveryTimeout: TimeInterval?,
+		shouldProceed: (() -> Bool)? = nil,
 		_ connect: (AdapterHandle, RsdHandshakeHandle) -> UnsafeMutablePointer<IdeviceFfiError>?
 	) throws {
 		rsdConnectionLock.lock()
 		defer { rsdConnectionLock.unlock() }
 		try Task.checkCancellation()
-		try _ensureRSDTunnelLocked(discoveryTimeout: discoveryTimeout)
+		guard shouldProceed?() ?? true else { throw CancellationError() }
+		try _ensureRSDTunnelLocked(discoveryTimeout: discoveryTimeout, shouldProceed: shouldProceed)
 		try Task.checkCancellation()
+		guard shouldProceed?() ?? true else { throw CancellationError() }
 		guard let adapter = rsdAdapter, let handshake = rsdHandshake else {
 			throw IDeviceConnectionError.rsdTunnelUnavailable("The adapter or handshake is missing.")
 		}
@@ -62,8 +68,9 @@ extension HeartbeatManager {
 		}
 	}
 
-	private func _ensureRSDTunnelLocked(discoveryTimeout: TimeInterval? = nil) throws {
+	private func _ensureRSDTunnelLocked(discoveryTimeout: TimeInterval? = nil, shouldProceed: (() -> Bool)? = nil) throws {
 		try Task.checkCancellation()
+		guard shouldProceed?() ?? true else { throw CancellationError() }
 		if rsdAdapter != nil, rsdHandshake != nil {
 			return
 		}
@@ -88,6 +95,7 @@ extension HeartbeatManager {
 
 		func tryPort(_ port: UInt16) throws -> Bool {
 			try Task.checkCancellation()
+			guard shouldProceed?() ?? true else { throw CancellationError() }
 			guard attemptedPorts.insert(port).inserted else { return false }
 
 			address.sin_port = CFSwapInt16HostToBig(port)
@@ -128,7 +136,7 @@ extension HeartbeatManager {
 				failures.append("\(ipAddress):\(port) — The tunnel returned incomplete handles.")
 				return false
 			}
-			guard !Task.isCancelled else {
+			guard !Task.isCancelled, shouldProceed?() ?? true else {
 				rsd_handshake_free(newHandshake)
 				adapter_free(newAdapter)
 				throw CancellationError()
@@ -140,6 +148,8 @@ extension HeartbeatManager {
 			return true
 		}
 		for port in ports { if try tryPort(port) { return } }
+		try Task.checkCancellation()
+		guard shouldProceed?() ?? true else { throw CancellationError() }
 		var discoveryError: Error?
 		_ = RSDPortDiscovery.resolvePorts(timeout: discoveryTimeout ?? 6, stopWhen: { candidates in
 			for port in candidates where !attemptedPorts.contains(port) {

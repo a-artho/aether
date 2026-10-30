@@ -449,6 +449,7 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		peer: String,
 		allowIntermediate: Bool
 	) async throws {
+		try Task.checkCancellation()
 		let (_, peerParsed) = try CIDRValidator.shared.validatePair(
 			tunnelIfaceInput: interface,
 			tunnelPeerInput: peer,
@@ -484,12 +485,8 @@ public final class EmbeddedTunnelManager: ObservableObject {
 		HeartbeatManager.shared.ipAddress = peerParsed.ip
 		_log("Updated in-app tunnel network configuration.", level: .notice)
 
-		#if os(iOS) && !targetEnvironment(macCatalyst)
-		if let manager, manager.connection.status == .connected || manager.connection.status == .connecting {
-			await stop()
-			try await start()
-		}
-		#endif
+		// Restart policy belongs to DeviceConnectionManager. Persisting settings
+		// must never independently restart a superseded/backgrounded connection.
 	}
 
 	public func resetNetworkConfiguration() async throws {

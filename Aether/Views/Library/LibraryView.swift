@@ -640,6 +640,7 @@ struct InstalledAppIconView: View {
 	@State private var loadedIdentity: String?
 	@State private var iconIsLoading = false
 	@State private var iconLoadGeneration = UUID()
+	@State private var iconRefreshGeneration = 0
 
 	var body: some View {
 		Group {
@@ -649,8 +650,12 @@ struct InstalledAppIconView: View {
 				AppIconSkeleton(size: size, isLoading: iconIsLoading)
 			}
 		}
-		.task(id: bundleIdentifier + "|" + cacheVersion) {
+		.task(id: bundleIdentifier + "|" + cacheVersion + "|\(loadsIcon)|\(iconRefreshGeneration)") {
 			await loadIcon()
+		}
+		.onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+			guard loadsIcon, image == nil || loadedIdentity != bundleIdentifier + "|" + cacheVersion else { return }
+			iconRefreshGeneration &+= 1
 		}
 	}
 

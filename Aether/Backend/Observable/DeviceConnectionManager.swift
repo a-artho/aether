@@ -119,6 +119,9 @@ public final class DeviceConnectionManager: ObservableObject {
 	@Published private var connectionPreparation: UUID? {
 		didSet { if connectionPreparation != oldValue { _signalConnectionWorkChanged() } }
 	}
+	@Published private var networkConfigurationWriteID: UUID? {
+		didSet { if networkConfigurationWriteID != oldValue { _signalConnectionWorkChanged() } }
+	}
 
 	public var isConnected: Bool {
 		state == .connected
@@ -133,7 +136,7 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	public var isUpdating: Bool {
-		connectionPreparation != nil || state == .connecting || state == .disconnecting
+		connectionPreparation != nil || networkConfigurationWriteID != nil || state == .connecting || state == .disconnecting
 	}
 
 	private var networkObservation: DeviceNetworkObservation?
@@ -789,6 +792,78 @@ public final class DeviceConnectionManager: ObservableObject {
 	}
 
 	// MARK: - Toggle Connection
+	/// Persist settings under the same ownership as ordinary connection work.
+	/// Each stop/start can be superseded by backgrounding or a mode change.
+	public func updateInAppNetworkConfiguration(interface: String, peer: String, allowIntermediate: Bool) async throws {
+		try Task.checkCancellation()
+		guard tunnelMethod == .inApp, !isUpdating, AppMaintenanceGuard.pairingBlockReason == nil,
+			!selfUpdateHandoffPending, !CellularAssistManager.shared.isBusy else { throw CancellationError() }
+		let restart = EmbeddedTunnelManager.shared.isRunning
+		connectionEpoch &+= 1
+		let epoch = connectionEpoch
+		let preparation = UUID()
+		let writeID = UUID()
+		networkConfigurationWriteID = writeID
+		defer { if networkConfigurationWriteID == writeID { networkConfigurationWriteID = nil } }
+		_cancelReconciliation()
+		_cancelForegroundRecovery()
+		lastVerifiedAt = 0
+		connectionPreparation = preparation
+		do {
+			try await EmbeddedTunnelManager.shared.updateNetworkConfiguration(
+				interface: interface, peer: peer, allowIntermediate: allowIntermediate)
+		} catch {
+			if connectionPreparation == preparation { connectionPreparation = nil }
+			throw error
+		}
+		guard _reconciliationIsCurrent(epoch: epoch), connectionPreparation == preparation,
+			tunnelMethod == .inApp, !selfUpdateHandoffPending else {
+			if connectionPreparation == preparation { connectionPreparation = nil }
+			throw CancellationError()
+		}
+		connectionPreparation = nil
+		networkConfigurationWriteID = nil
+		guard restart, isIDeviceInstallationMode else { return }
+		setConnection(enabled: false, force: true)
+		let stopEpoch = connectionEpoch
+		if let stop = connectionTask { await stop.value }
+		guard _reconciliationIsCurrent(epoch: stopEpoch), tunnelMethod == .inApp, isIDeviceInstallationMode,
+			!selfUpdateHandoffPending,
+			UIApplication.shared.applicationState != .background || !isDisconnectWhenIdleEnabled || hasActiveTunnelDependencies
+		else { throw CancellationError() }
+		setConnection(enabled: true)
+		if let start = connectionTask { await start.value }
+	}
+
+	/// Retire the old identity before waiting off the UI thread for native cleanup.
+	public func refreshAfterPairingRecordChange() {
+		connectionEpoch &+= 1
+		_cancelReconciliation()
+		_cancelForegroundRecovery()
+		appRefreshConnectionTask?.cancel()
+		appRefreshConnectionTask = nil
+		appRefreshConnectionID = nil
+		rsdCleanupTask?.cancel()
+		rsdCleanupTask = nil
+		_syncPairingRecord()
+		_finishTransition(to: .disconnected, diagnostic: hasPairingFile ? .tunnelUnavailable : .pairingMissing)
+		let preparation = UUID()
+		connectionPreparation = preparation
+		preparationTask = Task { [weak self] in
+			guard let self, !Task.isCancelled, self.connectionPreparation == preparation else { return }
+			let cleaned = await self._resetRSDTunnel()
+			guard !Task.isCancelled, self.connectionPreparation == preparation else { return }
+			self.preparationTask = nil
+			self.connectionPreparation = nil
+			guard cleaned else {
+				self._finishTransition(to: .disconnected, diagnostic: .error(.localized("The device connection timed out. Retry connecting.")))
+				return
+			}
+			let epoch = self.connectionEpoch
+			await self.reconcile(force: true)
+			if self._reconciliationIsCurrent(epoch: epoch) { self.connectAutomaticallyIfNeeded() }
+		}
+	}
 
 	public func setConnection(enabled: Bool, force: Bool = false, deadline: TimeInterval? = nil, automatically: Bool = false) {
 		guard !enabled || !selfUpdateHandoffPending else {

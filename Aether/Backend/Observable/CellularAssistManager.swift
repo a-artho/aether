@@ -89,6 +89,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	private var retryTask: Task<Void, Never>?
 	private var transportRecoveryID: UUID?
 	private var callbackRecoveryTask: Task<Void, Never>?
+	private var callbackRecoveryID: UUID?
 	private var callbackRecoveryDeadline: TimeInterval?
 	private var didAttemptRestore = false
 	private var didPresentTerminalPrompt = false
@@ -258,9 +259,17 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 			guard callbackRecoveryTask == nil else { return }
 			let deadline = callbackRecoveryDeadline ?? (ProcessInfo.processInfo.systemUptime + 2)
 			callbackRecoveryDeadline = deadline
+			let recoveryID = UUID()
+			callbackRecoveryID = recoveryID
 			callbackRecoveryTask = Task { [weak self] in
+				defer {
+					if let self, self.callbackRecoveryID == recoveryID {
+						self.callbackRecoveryTask = nil
+						self.callbackRecoveryID = nil
+					}
+				}
 				do { try await Task.sleep(for: .seconds(max(0, deadline - ProcessInfo.processInfo.systemUptime))) } catch { return }
-				guard let self, self.operationID == pending,
+				guard let self, self.callbackRecoveryID == recoveryID, self.operationID == pending,
 					UIApplication.shared.applicationState == .active else { return }
 				if command == .probe {
 					self._finishHelperSetupFailure("The helper did not return a result. Verify it in Cellular Assist settings.")
@@ -287,6 +296,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	}
 
 	public func handleApplicationDidEnterBackground() {
+		callbackRecoveryID = nil
 		callbackRecoveryTask?.cancel()
 		callbackRecoveryTask = nil
 	}
@@ -581,6 +591,7 @@ public final class CellularAssistManager: NSObject, ObservableObject, @preconcur
 	}
 
 	private func _clearActiveOperation() {
+		callbackRecoveryID = nil
 		callbackRecoveryTask?.cancel()
 		callbackRecoveryTask = nil
 		operationID = nil

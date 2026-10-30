@@ -301,7 +301,7 @@ enum FR {
 			return
 		}
 
-		HeartbeatManager.shared.resetRSDTunnel()
+		DeviceConnectionManager.shared.refreshAfterPairingRecordChange()
 	}
 
 	@discardableResult

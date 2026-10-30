@@ -336,12 +336,14 @@ struct TunnelView: View {
 			isSaving = true
 			defer { isSaving = false }
 			do {
-				try await embeddedTunnel.updateNetworkConfiguration(
+				try await connection.updateInAppNetworkConfiguration(
 					interface: draftInterfaceIP,
 					peer: draftPeerIP,
 					allowIntermediate: draftAllowIntermediate
 				)
 				validationError = nil
+			} catch is CancellationError {
+				// A newer lifecycle operation owns the connection now.
 			} catch {
 				validationError = error.localizedDescription
 			}
@@ -353,9 +355,14 @@ struct TunnelView: View {
 			isSaving = true
 			defer { isSaving = false }
 			do {
-				try await embeddedTunnel.resetNetworkConfiguration()
+				try await connection.updateInAppNetworkConfiguration(
+					interface: EmbeddedTunnelManager.defaultInterfaceAddress,
+					peer: EmbeddedTunnelManager.defaultPeerAddress,
+					allowIntermediate: EmbeddedTunnelManager.defaultAllowIntermediate)
 				_syncDraftsFromManager()
 				validationError = nil
+			} catch is CancellationError {
+				_syncDraftsFromManager()
 			} catch {
 				validationError = error.localizedDescription
 			}
