@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AetherPrimaryPreview.imageset/AetherPrimaryPreview.png",
-      "version": "3.0.14",
-      "versionDate": "2026-10-30T14:51:23Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.14/Aether.ipa",
-      "size": 20046272,
-      "versionDescription": "# Aether 3.0.14\n\n- Match local network tunnel packet sizing to pymobiledevice3's dynamic probing and recovery behavior.\n- Preserve individual packet boundaries and retire the fixed-MSS and packet-batching options.\n- Improve tunnel recovery when packet delivery limits change during a transfer.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.15",
+      "versionDate": "2026-10-30T16:23:21Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.15/Aether.ipa",
+      "size": 20048344,
+      "versionDescription": "# Aether 3.0.15\n\n- Add app-row separator controls: default, half opacity, or off.\n- Apply the separator preference to Sources, Imports, Updates, and installed-app rows.\n- Standardize download, installation, and export progress rings at 35 pt.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.15",
+          "date": "2026-10-30T16:23:21Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.15/Aether.ipa",
+          "size": 20048344,
+          "localizedDescription": "# Aether 3.0.15\n\n- Add app-row separator controls: default, half opacity, or off.\n- Apply the separator preference to Sources, Imports, Updates, and installed-app rows.\n- Standardize download, installation, and export progress rings at 35 pt.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.14",
           "date": "2026-10-30T14:51:23Z",
