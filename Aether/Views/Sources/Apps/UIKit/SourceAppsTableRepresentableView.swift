@@ -124,6 +124,7 @@ private final class SourceNavigationTransitionReply {
 // MARK: - Representable
 struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	@AppStorage("Aether.rowHorizontalInset") private var horizontalInset: RowHorizontalInset = .standard
+	@AppStorage("Aether.rowSeparators") private var rowSeparators: AppRowSeparatorStyle = .standard
 	@AppStorage("Aether.showRepoDownloadButtons") private var showsDownloadButtons = true
 	@AppStorage("Aether.userTintColor") private var themeHex = "#848ef9"
 	var sourceContexts: [SourceAppsView.SourceRepositoryContext]
@@ -138,6 +139,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	
 	func makeUIView(context: Context) -> UITableView {
 		let tableView = UITableView(frame: .zero, style: .plain)
+		rowSeparators.apply(to: tableView)
 		// Native plain-table headers remain pinned until the next section replaces them.
 		tableView.backgroundColor = .clear
 		tableView.isOpaque = false
@@ -162,6 +164,7 @@ struct SourceAppsTableRepresentableView: UIViewRepresentable {
 	}
 	
 	func updateUIView(_ tableView: UITableView, context: Context) {
+		rowSeparators.apply(to: tableView)
 		context.coordinator.uiTableView = tableView
 		context.coordinator.onSelect = onSelect
 		

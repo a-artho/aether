@@ -18,7 +18,7 @@ struct ExportProgressButton: View {
 					.foregroundStyle(_tint)
 					.font(.footnote.bold())
 			}
-			.frame(width: 35, height: 35)
+			.frame(width: ActionProgressRingMetrics.diameter, height: ActionProgressRingMetrics.diameter)
 			.frame(width: 44, height: 44, alignment: .trailing)
 			.contentShape(Rectangle())
 		}

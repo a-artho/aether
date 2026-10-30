@@ -5,15 +5,17 @@
 
 import SwiftUI
 
+enum ActionProgressRingMetrics {
+	static let diameter: CGFloat = 35
+}
+
 struct DownloadProgressButton: View {
 	@ObservedObject var download: Download
 	@ObservedObject private var downloadManager = DownloadManager.shared
-	var visualSize: CGFloat = 31
 	var showsTrack = true
 
-	init(download: Download, visualSize: CGFloat = 31, showsTrack: Bool = true) {
+	init(download: Download, showsTrack: Bool = true) {
 		self.download = download
-		self.visualSize = visualSize
 		self.showsTrack = showsTrack
 	}
 
@@ -44,7 +46,7 @@ struct DownloadProgressButton: View {
 						.font(.footnote.bold())
 				}
 			}
-			.frame(width: visualSize, height: visualSize)
+			.frame(width: ActionProgressRingMetrics.diameter, height: ActionProgressRingMetrics.diameter)
 			.frame(width: 44, height: 44, alignment: showsTrack ? .center : .trailing)
 			.contentShape(Rectangle())
 		}

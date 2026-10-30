@@ -6,6 +6,7 @@ import NimbleViews
 /// Small, already-matched update lists render directly; icons load independently.
 struct InstalledAppUpdatesView: View {
 	@AppStorage("Aether.rowHorizontalInset") private var horizontalInset: RowHorizontalInset = .standard
+	@AppStorage("Aether.rowSeparators") private var rowSeparators: AppRowSeparatorStyle = .standard
 	@Environment(\.nbStickySectionHeaders) private var stickySectionHeaders
 	let contexts: [SourceAppCatalogContext]
 	@State private var selectedUpdate: SelectedUpdate?
@@ -176,6 +177,8 @@ struct InstalledAppUpdatesView: View {
 				})
 				.listRowBackground(Color.clear)
 				.listRowInsets(.horizontal, horizontalInset.points)
+				.listRowSeparator(rowSeparators.listVisibility)
+				.listRowSeparatorTint(rowSeparators.listTint)
 		}
 	}
 }

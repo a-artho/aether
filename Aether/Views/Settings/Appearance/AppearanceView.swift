@@ -14,6 +14,7 @@ import UIKit
 struct AppearanceView: View {
 	@AppStorage("Aether.rowHorizontalInset") private var _rowHorizontalInset: RowHorizontalInset = .standard
 	@AppStorage("Aether.rowIconSize") private var _rowIconSize: RowIconSize = .medium
+	@AppStorage("Aether.rowSeparators") private var _rowSeparators: AppRowSeparatorStyle = .standard
 	@AppStorage("Aether.allReposIcon") private var _allReposIcon: AllReposIcon = .globe
 	@AppStorage("Aether.overviewIconStyle") private var _overviewIconStyle: OverviewIconStyle = .glass
 	@AppStorage("Aether.launchTab") private var _launchTab: LaunchTab = .library
@@ -129,6 +130,15 @@ struct AppearanceView: View {
 					}
 				} label: {
 					SettingsRowLabel(.localized("Row Icon Size"), systemImage: "square.resize", backgroundColor: .orange)
+				}
+				.pickerStyle(.menu)
+				.tint(.secondary)
+				Picker(selection: $_rowSeparators) {
+					ForEach(AppRowSeparatorStyle.allCases) { style in
+						Text(style.title).tag(style)
+					}
+				} label: {
+					SettingsRowLabel(.localized("Row Separators"), systemImage: "line.3.horizontal", backgroundColor: .gray)
 				}
 				.pickerStyle(.menu)
 				.tint(.secondary)

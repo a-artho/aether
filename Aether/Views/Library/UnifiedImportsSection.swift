@@ -459,6 +459,7 @@ struct UnifiedLibraryImportRows: View {
 	let groups: [SplitArtifactGroup]
 	let controller: UnifiedImportsController
 	let openSplit: (String) -> Void
+	@AppStorage("Aether.rowSeparators") private var rowSeparators: AppRowSeparatorStyle = .standard
 
 	private var items: [UnifiedLibraryImportItem] {
 		let groupedIDs = Set(groups.flatMap { $0.entries.map(\.id) })
@@ -494,6 +495,8 @@ struct UnifiedLibraryImportRows: View {
 					}
 					SplitArtifactGroupDeleteAction(group: group, controller: controller)
 				}
+				.listRowSeparator(rowSeparators.listVisibility)
+				.listRowSeparatorTint(rowSeparators.listTint)
 			}
 		}
 	}
@@ -611,6 +614,7 @@ private struct UnifiedImportRow: View {
 	@ObservedObject var controller: UnifiedImportsController
 	@ObservedObject private var installations = AppInstallationManager.shared
 	@AppStorage("Aether.rowIconSize") private var rowIconSize: RowIconSize = .medium
+	@AppStorage("Aether.rowSeparators") private var rowSeparators: AppRowSeparatorStyle = .standard
 	@State private var retainedIconURL: URL?
 	@Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
@@ -658,6 +662,8 @@ private struct UnifiedImportRow: View {
 		.contextMenu {
 			UnifiedImportActions(entry: entry, controller: controller)
 		}
+		.listRowSeparator(rowSeparators.listVisibility)
+		.listRowSeparatorTint(rowSeparators.listTint)
 	}
 
 	private var serverPresentation: Binding<Bool> {
@@ -990,7 +996,7 @@ private struct UnifiedImportAccessory: View {
 		if actionButtonSurfaceStyle == .glass, #available(iOS 26.0, *) {
 			Capsule()
 				.fill(.clear)
-				.frame(width: width, height: 35)
+				.frame(width: width, height: ActionProgressRingMetrics.diameter)
 				.glassEffect(actionStage ? .regular.interactive() : .regular, in: Capsule())
 				.overlay {
 					Capsule()
@@ -1007,7 +1013,7 @@ private struct UnifiedImportAccessory: View {
 					Capsule()
 						.stroke(ringTint.opacity(progressStage ? 0.2 : 0), lineWidth: 2.3)
 				}
-				.frame(width: width, height: 35)
+				.frame(width: width, height: ActionProgressRingMetrics.diameter)
 				.opacity(isVisible ? 1 : 0)
 		}
 	}
@@ -1027,7 +1033,7 @@ private struct UnifiedImportAccessory: View {
 			.overlay {
 				GeometryReader { geometry in
 					let slotWidth = geometry.size.width
-					let morphWidth = actionStage ? slotWidth : 35
+					let morphWidth = actionStage ? slotWidth : ActionProgressRingMetrics.diameter
 					let hasActionVisual = actionStage || progressStage
 
 					ZStack(alignment: .trailing) {
@@ -1061,7 +1067,7 @@ private struct UnifiedImportAccessory: View {
 								.frame(width: slotWidth, height: 44)
 								.mask(alignment: .trailing) {
 									Capsule()
-										.frame(width: morphWidth, height: 35)
+										.frame(width: morphWidth, height: ActionProgressRingMetrics.diameter)
 										.frame(width: slotWidth, height: 44, alignment: .trailing)
 								}
 							.frame(width: slotWidth, height: 44, alignment: .trailing)
@@ -1101,7 +1107,7 @@ private struct UnifiedImportAccessory: View {
 		} else if let export = entry.export {
 			ExportProgressButton(export: export).transition(.opacity)
 		} else if let download = entry.download {
-			DownloadProgressButton(download: download, visualSize: 35, showsTrack: false).transition(.opacity)
+			DownloadProgressButton(download: download, showsTrack: false).transition(.opacity)
 		}
 	}
 

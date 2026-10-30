@@ -52,6 +52,7 @@ enum SettingsSearchIndex {
 			("Action Button Style", "buttons pills imports progress ring default glass system adaptive quaternary fill liquid surface"),
 			("All Repos Icon", "app store globe books collection symbol"),
 			("Row Icon Size", "apps repos artwork default medium large 50 54 58"),
+			("Row Separators", "app rows dividers separators default half opacity off hidden"),
 			("Horizontal Inset", "repo app rows details all apps margins padding default medium large"),
 			("Muted Section Headers", "headings gray grey"),
 			("Launch Tab", "startup cold launch start sources library default tab"),

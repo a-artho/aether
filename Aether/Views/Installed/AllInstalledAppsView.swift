@@ -11,6 +11,7 @@ enum InstalledAppsRoute: Hashable {
 @MainActor
 struct AllInstalledAppsView<Placeholder: View>: View {
 	@AppStorage("Aether.rowHorizontalInset") private var horizontalInset: RowHorizontalInset = .standard
+	@AppStorage("Aether.rowSeparators") private var rowSeparators: AppRowSeparatorStyle = .standard
 	@ObservedObject var store: InstalledAppsStore
 	@ObservedObject private var installations = AppInstallationManager.shared
 	let loadsIcons: Bool
@@ -61,8 +62,9 @@ struct AllInstalledAppsView<Placeholder: View>: View {
 					.listRowInsets(.horizontal, horizontalInset.points)
 					.disabled(deletingIDs.contains(app.id))
 					.id(app.id)
-					.listRowSeparator(app.id == apps.first?.id ? .hidden : .visible, edges: .top)
-					.listRowSeparator(app.id == apps.last?.id ? .hidden : .visible, edges: .bottom)
+					.listRowSeparator(rowSeparators == .off || app.id == apps.first?.id ? .hidden : .visible, edges: .top)
+					.listRowSeparator(rowSeparators == .off || app.id == apps.last?.id ? .hidden : .visible, edges: .bottom)
+					.listRowSeparatorTint(rowSeparators.listTint)
 					.swipeActions(edge: .trailing) {
 						// Wait for the device to confirm uninstallation before removing the row.
 						Button(String.localized("Uninstall"), systemImage: "trash") {

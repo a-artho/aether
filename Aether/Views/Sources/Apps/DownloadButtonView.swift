@@ -42,7 +42,7 @@ struct DownloadButtonView: View {
 					Image(systemName: "checkmark")
 						.font(.footnote.bold())
 				}
-				.frame(width: 31, height: 31)
+				.frame(width: ActionProgressRingMetrics.diameter, height: ActionProgressRingMetrics.diameter)
 				.foregroundStyle(style == .navigation ? Color.primary : _themeColor)
 				.frame(width: 44, height: 44)
 				.contentShape(Rectangle())

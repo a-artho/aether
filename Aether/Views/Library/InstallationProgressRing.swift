@@ -11,7 +11,7 @@ struct InstallationProgressRing: View {
 				Circle()
 					.trim(from: 0, to: progress)
 					.stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.3, lineCap: .round))
-					.frame(width: 35, height: 35)
+					.frame(width: ActionProgressRingMetrics.diameter, height: ActionProgressRingMetrics.diameter)
 					.rotationEffect(.degrees(-90))
 					.animation(reduceMotion ? nil : .smooth, value: progress)
 			}
@@ -20,7 +20,7 @@ struct InstallationProgressRing: View {
 				.foregroundStyle(Color.accentColor)
 				.font(.footnote.bold())
 		}
-		.frame(width: 35, height: 35)
+		.frame(width: ActionProgressRingMetrics.diameter, height: ActionProgressRingMetrics.diameter)
 	}
 }
 
