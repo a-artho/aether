@@ -34,7 +34,7 @@ struct Heart{let ipAddress="fixture"}
  enum Command {case off,on,probe};enum State:Equatable {case idle,failed(String),checkingSetup,restoringData,waitingForDataOff}
  enum Purpose {case postInstall};enum Phase:Equatable {case idle,waitingForPostInstallVerification,probing(Purpose)};enum Episode {case consumed}
  static let restoreBlockedKey="Audit.RestoreBlocked";static let restoreKey="Audit.RestoreDebt";static let enabledKey="Audit.CellularEnabled"
- var transportRecoveryID:UUID?;var retryTask:Task<Void,Never>?;var callbackRecoveryTask:Task<Void,Never>?;var callbackRecoveryDeadline:TimeInterval?;var operationID:UUID?;var activeCommand:Command?
+ var transportRecoveryID:UUID?;var retryTask:Task<Void,Never>?;var callbackRecoveryTask:Task<Void,Never>?;var callbackRecoveryID:UUID?;var callbackRecoveryDeadline:TimeInterval?;var operationID:UUID?;var activeCommand:Command?
  var pendingTransportFailureMessage:String?;var helperSetupPhase=Phase.idle
  var didAttemptRestore=false;var automaticRecoveryEpisode=Episode.consumed;var isEnabled=true;var state=State.idle;var restores=0
  var isBusy:Bool {if case .restoringData=state{return true};return false}

@@ -113,7 +113,7 @@ struct ProvisioningProfileInfo: Sendable {}
  static let restoreKey="RegressionOnlyRestoreDebt"
  var helperSetupPhase:Phase = .idle; var state:State = .waitingForDataOff
  var operationID:UUID? = UUID(); var activeCommand:Command? = .off
- var callbackRecoveryTask:Task<Void,Never>?;var callbackRecoveryDeadline:TimeInterval?; var isEnabled=true; var didAttemptRestore=false
+ var callbackRecoveryTask:Task<Void,Never>?;var callbackRecoveryID:UUID?;var callbackRecoveryDeadline:TimeInterval?; var isEnabled=true; var didAttemptRestore=false
  var launched:[Command]=[]
  var isBusy:Bool { state != .idle }
  func _finishHelperSetupFailure(_ message:String) { _clearActiveOperation(); state = .idle }
