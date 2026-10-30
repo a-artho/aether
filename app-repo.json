@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AetherPrimaryPreview.imageset/AetherPrimaryPreview.png",
-      "version": "3.0.13",
-      "versionDate": "2026-10-30T03:01:51Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.13/Aether.ipa",
-      "size": 20041732,
-      "versionDescription": "# Aether 3.0.13\n\n- Reduce avoidable copies and temporary memory retention during AFC uploads and tunnel transport.\n- Make native logging follow the Debug Logs setting, including when it changes during an upload.\n- Add opt-in transport experiments for packet batching, MTU, and send-window tuning; defaults remain unchanged.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.14",
+      "versionDate": "2026-10-30T14:51:23Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.14/Aether.ipa",
+      "size": 20046272,
+      "versionDescription": "# Aether 3.0.14\n\n- Match local network tunnel packet sizing to pymobiledevice3's dynamic probing and recovery behavior.\n- Preserve individual packet boundaries and retire the fixed-MSS and packet-batching options.\n- Improve tunnel recovery when packet delivery limits change during a transfer.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.14",
+          "date": "2026-10-30T14:51:23Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.14/Aether.ipa",
+          "size": 20046272,
+          "localizedDescription": "# Aether 3.0.14\n\n- Match local network tunnel packet sizing to pymobiledevice3's dynamic probing and recovery behavior.\n- Preserve individual packet boundaries and retire the fixed-MSS and packet-batching options.\n- Improve tunnel recovery when packet delivery limits change during a transfer.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.13",
           "date": "2026-10-30T03:01:51Z",
