@@ -17,9 +17,6 @@ def declaration(text, marker):
     while depth:
         depth+=(text[b]=='{')-(text[b]=='}');b+=1
     return text[a:b].replace('private ', '')
-layout_method=declaration((root/'Aether/Views/Library/LibraryView.swift').read_text(),'private func finishInitialLibraryLayout(')
-readiness=declaration(production,'private var initialFetchIsReady:')
-initial_publisher=declaration(production,'private var initialContextChanges:')
 source = r'''
 import Foundation
 import CoreData
@@ -47,35 +44,6 @@ struct UnifiedImportEntry { let signature: String }
  }
 METHOD
 }
-@MainActor final class LayoutProbe {
- let imports=Controller()
- var isRootListVisible=false
- var updates:[Bool]=[]
- var hasLaidOutInitialLibrary=false {didSet{updates.append(suppressesAnimation)}}
- LAYOUT_METHOD
-}
-@objc(LibraryStartupImported) final class Imported:NSManagedObject {
- @nonobjc class func fetchRequest()->NSFetchRequest<Imported>{NSFetchRequest(entityName:"Imported")}
-}
-@objc(LibraryStartupSigned) final class Signed:NSManagedObject {
- @nonobjc class func fetchRequest()->NSFetchRequest<Signed>{NSFetchRequest(entityName:"Signed")}
-}
-@MainActor final class FetchProbe {
- let controller=Controller()
- let context:NSManagedObjectContext
- var imported:[Imported]=[];var signed:[Signed]=[]
- init() {
-  let model=NSManagedObjectModel()
-  model.entities=[("Imported",Imported.self),("Signed",Signed.self)].map { name,type in
-   let entity=NSEntityDescription();entity.name=name;entity.managedObjectClassName=NSStringFromClass(type);return entity
-  }
-  let coordinator=NSPersistentStoreCoordinator(managedObjectModel:model)
-  try! coordinator.addPersistentStore(ofType:NSInMemoryStoreType,configurationName:nil,at:nil)
-  context=NSManagedObjectContext(concurrencyType:.mainQueueConcurrencyType);context.persistentStoreCoordinator=coordinator
- }
- READINESS
- INITIAL_PUBLISHER
-}
 @main struct Checks {
  @MainActor static func main() {
   let restored = Controller()
@@ -93,43 +61,10 @@ METHOD
   precondition(empty.hasLoadedInitialRows, "An empty library is still a completed initial snapshot")
   empty.updateRows([.init(signature: "first-import")])
   precondition(empty.publications == [true, false], "The first actual import into an initially empty library is a live insertion")
-  let fetch=FetchProbe()
-  var finished=false
-  let initialObserver=fetch.initialContextChanges.sink(receiveCompletion:{_ in finished=true},receiveValue:{_ in})
-  precondition(!finished,"Initial hydration listens for context changes")
-  initialObserver.cancel()
-  fetch.controller.updateRows([])
-  let completedObserver=fetch.initialContextChanges.sink(receiveCompletion:{_ in finished=true},receiveValue:{_ in preconditionFailure("Hydrated library retained an initial-only observer")})
-  precondition(finished,"Hydrated libraries release the initial context subscription")
-  withExtendedLifetime(completedObserver) {}
-  precondition(fetch.initialFetchIsReady,"A genuinely empty database is immediately ready")
-  let first=Imported(context:fetch.context), second=Signed(context:fetch.context)
-  try! fetch.context.save()
-  precondition(!fetch.initialFetchIsReady,"Empty fetched arrays cannot complete hydration of a populated database")
-  fetch.imported=[first]
-  precondition(!fetch.initialFetchIsReady,"One fetched entity cannot complete a partially restored library")
-  fetch.signed=[second]
-  precondition(fetch.initialFetchIsReady,"Both fetched arrays must match the stored snapshot")
-  fetch.imported=[];fetch.signed=[]
-  fetch.context.delete(first);fetch.context.delete(second);try! fetch.context.save()
-  precondition(fetch.initialFetchIsReady,"A reset during initial hydration must not wait for records that no longer exist")
-  let layout=LayoutProbe()
-  layout.finishInitialLibraryLayout(hasSize:true)
-  precondition(!layout.hasLaidOutInitialLibrary,"Hidden and unhydrated layouts cannot arm animations")
-  layout.isRootListVisible=true
-  layout.finishInitialLibraryLayout(hasSize:true)
-  precondition(!layout.hasLaidOutInitialLibrary,"A sized list is insufficient until records are hydrated")
-  layout.imports.updateRows([])
-  layout.finishInitialLibraryLayout(hasSize:false)
-  precondition(!layout.hasLaidOutInitialLibrary,"Zero-size layout probes cannot enable animation")
-  layout.finishInitialLibraryLayout(hasSize:true)
-  precondition(layout.hasLaidOutInitialLibrary && layout.updates == [true],"First presented layout arms live animation without animating that state change")
-  layout.finishInitialLibraryLayout(hasSize:true)
-  precondition(layout.updates.count==1,"Later layouts do not repeatedly reset the animation baseline")
   print("Library startup checks passed: restored and empty hydration, duplicate snapshots, live insertion/deletion, transaction isolation")
  }
 }
-'''.replace('LAYOUT_METHOD', layout_method).replace('READINESS', readiness).replace('INITIAL_PUBLISHER', initial_publisher).replace('METHOD', method)
+'''.replace('METHOD', method)
 with tempfile.TemporaryDirectory(prefix='aether-library-startup-') as temporary:
     folder = Path(temporary)
     swift = folder / 'Checks.swift'
@@ -138,13 +73,13 @@ with tempfile.TemporaryDirectory(prefix='aether-library-startup-') as temporary:
     subprocess.run(['swiftc', '-parse-as-library', str(swift), '-o', str(executable)], check=True)
     subprocess.run([str(executable)], check=True)
 
-# Type-check the actual scoped List animation and first-layout probe with SwiftUI.
+# Type-check the actual native List animation boundary with SwiftUI.
 # Native UIKit presentation still requires device/simulator verification.
 view=(root/'Aether/Views/Library/LibraryView.swift').read_text()
 list_start=view.index('\t\tList {',view.index('private func libraryList('))
 list_end=view.index('\n\t\t.navigationBarTitleDisplayMode',list_start)
 list_body=view[list_start:list_end]
-background_start=view.index('\t\t.background {',list_end)
+background_start=view.index('\t\t.animation(',list_end)
 background_end=view.index('\n\t\t.overlay {',background_start)
 background=view[background_start:background_end]
 host=r'''
@@ -154,7 +89,6 @@ struct AetherAmbientBackground:View {var body:some View{Color.clear}}
 struct Host:View {
  @StateObject private var imports=Controller()
  @State private var isRootListVisible=true
- @State private var hasLaidOutInitialLibrary=false
  @Environment(\.accessibilityReduceMotion) private var reduceMotion
  SECTION
  LAYOUT
@@ -168,14 +102,93 @@ struct Host:View {
  LIST
  BACKGROUND
  }
- FINISH
 }
 '''
 host=host.replace('SECTION',declaration(view,'private enum LibrarySection:'))
 host=host.replace('LAYOUT',declaration(view,'private struct LibraryLayout:'))
-host=host.replace('LIST',list_body).replace('BACKGROUND',background).replace('FINISH',layout_method)
+host=host.replace('LIST',list_body).replace('BACKGROUND',background)
 import platform
 with tempfile.TemporaryDirectory(prefix='aether-library-layout-ui-') as temporary:
     folder=Path(temporary);swift=folder/'Host.swift';swift.write_text(host)
     subprocess.run(['swiftc','-parse-as-library','-typecheck','-target',platform.machine()+'-apple-macosx15.0',str(swift)],check=True)
-print('Library scoped animation and geometry-readiness SwiftUI type-check passed')
+print('Library native List animation SwiftUI type-check passed')
+
+# Mount the production data-source body in real SwiftUI/Core Data. Record what
+# its content receives before onChange hydrates the controller, and afterward.
+data_source=production[production.index('struct UnifiedImportsDataSource<'):]
+body=declaration(data_source,'var body: some View')
+initializer=declaration(data_source,'init(controller:')
+runtime=r'''
+import AppKit
+import SwiftUI
+import CoreData
+import Combine
+@objc(StartupRecord) final class Record:NSManagedObject {
+ @NSManaged var name:String?
+}
+typealias UnifiedImportEntry=String
+@MainActor final class UnifiedImportsController:ObservableObject {
+ @Published var rows:[String]=[]
+ @Published var hasLoadedInitialRows=false
+ var visibleRows:[String]{rows}
+ func requestAutoDelete(uuid:String) {}
+ func updateRows(_ names:[String]) {
+  if !hasLoadedInitialRows {
+   var t=Transaction(animation:nil);t.disablesAnimations=true
+   withTransaction(t){rows=names;hasLoadedInitialRows=true}
+  } else {rows=names}
+ }
+}
+enum AppInstallationManager {static let importAutoDeleteNotification=Notification.Name("unused")}
+@MainActor final class Recorder {
+ var snapshots:[[String]]=[]
+ func record(_ rows:[String]) {snapshots.append(rows)}
+}
+@MainActor struct DataSource<Content:View>:View {
+ let content:([UnifiedImportEntry])->Content
+ @ObservedObject var controller:UnifiedImportsController
+ @FetchRequest(sortDescriptors:[NSSortDescriptor(key:"name",ascending:true)]) var fetched:FetchedResults<Record>
+ INIT
+ private var inputs:[NSManagedObjectID]{fetched.map(\.objectID)}
+ private var projectedRows:[String]{fetched.map{$0.name!}}
+ private func publishRows(){controller.updateRows(projectedRows)}
+ BODY
+}
+@main struct RuntimeChecks {
+ @MainActor static func main() throws {
+  NSApplication.shared.setActivationPolicy(.prohibited)
+  let schema=NSManagedObjectModel(),entity=NSEntityDescription()
+  entity.name="Record";entity.managedObjectClassName=NSStringFromClass(Record.self)
+  let name=NSAttributeDescription();name.name="name";name.attributeType = .stringAttributeType
+  entity.properties=[name];schema.entities=[entity]
+  let coordinator=NSPersistentStoreCoordinator(managedObjectModel:schema)
+  try coordinator.addPersistentStore(ofType:NSInMemoryStoreType,configurationName:nil,at:nil)
+  let context=NSManagedObjectContext(concurrencyType:.mainQueueConcurrencyType)
+  context.persistentStoreCoordinator=coordinator
+  for value in ["Aether","Instagram"] {let r=Record(context:context);r.name=value}
+  try context.save()
+  let controller=UnifiedImportsController(),recorder=Recorder()
+  let host=NSHostingView(rootView:DataSource(controller:controller){rows in
+   let _=recorder.record(rows)
+   List {ForEach(rows,id:\.self){Text($0)}}
+  }.environment(\.managedObjectContext,context))
+  host.frame=NSRect(x:0,y:0,width:393,height:852)
+  func settle(){for _ in 0..<12 {host.layoutSubtreeIfNeeded();RunLoop.main.run(until:Date().addingTimeInterval(0.02))}}
+  settle()
+  precondition(recorder.snapshots.first == ["Aether","Instagram"],"First layout must contain restored rows")
+  precondition(recorder.snapshots.allSatisfy{$0 == ["Aether","Instagram"]},"Hydration must not change section membership")
+  precondition(controller.hasLoadedInitialRows)
+  for record in try context.fetch(NSFetchRequest<Record>(entityName:"Record")){context.delete(record)}
+  try context.save();settle()
+  precondition(recorder.snapshots.last == [],"Deleting the last import must remove the section's rows")
+  let added=Record(context:context);added.name="New import";try context.save();settle()
+  precondition(recorder.snapshots.last == ["New import"],"Live imports must still reach Library")
+  print("Library first-render SwiftUI/Core Data runtime checks passed")
+ }
+}
+'''.replace('INIT',initializer).replace('BODY',body)
+with tempfile.TemporaryDirectory(prefix='aether-library-first-render-') as temporary:
+    folder=Path(temporary);swift=folder/'Runtime.swift';swift.write_text(runtime)
+    executable=folder/'checks'
+    subprocess.run(['swiftc','-parse-as-library','-target',platform.machine()+'-apple-macosx15.0',str(swift),'-o',str(executable)],check=True)
+    subprocess.run([str(executable)],check=True)

@@ -26,7 +26,6 @@ struct LibraryView: View {
 	@State private var searchFocused = false
 	@State private var appNavigationPath: [InstalledAppsRoute] = []
 	@State private var isRootListVisible = false
-	@State private var hasLaidOutInitialLibrary = false
 	@State private var updateIgnoreRequest: UpdateIgnoreRequest?
 
 	private struct UpdateIgnoreRequest {
@@ -73,14 +72,16 @@ struct LibraryView: View {
 	}
 
 	var body: some View {
-		let projection = makeLibraryProjection()
-		NavigationStack(path: $appNavigationPath) {
-			rootContent(projection: projection)
+		UnifiedImportsDataSource(controller: imports) { visibleRows in
+			let projection = makeLibraryProjection(visibleRows: visibleRows)
+			NavigationStack(path: $appNavigationPath) {
+				rootContent(projection: projection)
+			}
 		}
 		.modifier(FloatingNavigationAppearance())
 	}
 
-	private func makeLibraryProjection() -> LibraryProjection {
+	private func makeLibraryProjection(visibleRows: [UnifiedImportEntry]) -> LibraryProjection {
 		let sideloadedApps = store.apps.filter {
 			matchesSearch($0.name, $0.bundleIdentifier, $0.version, $0.build)
 		}
@@ -94,7 +95,6 @@ struct LibraryView: View {
 		let appsWithUpdates = sideloadedApps.filter {
 			!visibleUpdateContexts(for: $0.bundleIdentifier).isEmpty
 		}
-		let visibleRows = imports.visibleRows
 		let libraryRows = visibleRows.filter { entry in
 			let app = entry.app ?? entry.operation?.app ?? entry.export?.app
 			return matchesSearch(app?.name, app?.identifier, app?.version,
@@ -175,8 +175,6 @@ struct LibraryView: View {
 			ForEach(projection.sections) { section in
 				librarySectionContent(section, projection: projection)
 			}
-			// Animate live section/row changes, not the List's initial bounds or chrome.
-			.animation(reduceMotion || !hasLaidOutInitialLibrary ? nil : .snappy, value: projection.layout)
 		}
 		.navigationBarTitleDisplayMode(.inline)
 		.navigationDestination(for: InstalledAppsRoute.self) { route in
@@ -214,17 +212,8 @@ struct LibraryView: View {
 			}
 			tabManager.consumeLibraryFocusRequest(request)
 		}
-		.background {
-			AetherAmbientBackground()
-			if isRootListVisible && imports.hasLoadedInitialRows && !hasLaidOutInitialLibrary {
-				Color.clear
-					.onGeometryChange(for: Bool.self) { geometry in
-						geometry.size.width > 0 && geometry.size.height > 0
-					} action: { hasSize in
-						finishInitialLibraryLayout(hasSize: hasSize)
-					}
-			}
-		}
+		.animation(reduceMotion || !imports.hasLoadedInitialRows ? nil : .snappy, value: projection.layout)
+		.background { AetherAmbientBackground() }
 		.overlay {
 			if !searchText.isEmpty && projection.sections.isEmpty {
 				TabPlaceholderView(title: .localized("No Results"), description: .localized("Try another search."), systemImage: "magnifyingglass")
@@ -232,18 +221,10 @@ struct LibraryView: View {
 				_placeholderContent.transition(.opacity)
 			}
 		}
-		.modifier(UnifiedImportsDataSource(controller: imports))
 		.refreshable {
 			guard loadsApps else { return }
 			updates.startRefresh()
 		}
-	}
-
-	private func finishInitialLibraryLayout(hasSize: Bool) {
-		guard hasSize, isRootListVisible, imports.hasLoadedInitialRows, !hasLaidOutInitialLibrary else { return }
-		var transaction = Transaction(animation: nil)
-		transaction.disablesAnimations = true
-		withTransaction(transaction) { hasLaidOutInitialLibrary = true }
 	}
 
 	@ViewBuilder

@@ -278,9 +278,9 @@ final class UnifiedImportsController: ObservableObject {
 	}
 }
 
-/// Observe the catalog on the persistent list, even when it has no sections.
-struct UnifiedImportsDataSource: ViewModifier {
-	@Environment(\.managedObjectContext) private var context
+/// Own the fetch above Library so restored rows are available to its first layout.
+struct UnifiedImportsDataSource<Content: View>: View {
+	let content: ([UnifiedImportEntry]) -> Content
 	@ObservedObject var controller: UnifiedImportsController
 	@ObservedObject private var downloads = DownloadManager.shared
 	@ObservedObject private var installations = AppInstallationManager.shared
@@ -288,6 +288,11 @@ struct UnifiedImportsDataSource: ViewModifier {
 	@ObservedObject private var index = LibraryArtifactIndex.shared
 	@FetchRequest(sortDescriptors: [NSSortDescriptor(keyPath: \Imported.date, ascending: false)]) private var imported: FetchedResults<Imported>
 	@FetchRequest(sortDescriptors: [NSSortDescriptor(keyPath: \Signed.date, ascending: false)]) private var signed: FetchedResults<Signed>
+
+	init(controller: UnifiedImportsController, @ViewBuilder content: @escaping ([UnifiedImportEntry]) -> Content) {
+		self.controller = controller
+		self.content = content
+	}
 
     private struct ArtifactInput: Equatable {
         let uuid: String?
@@ -317,40 +322,22 @@ struct UnifiedImportsDataSource: ViewModifier {
             operations: installations.installationCards.map { "\($0.id)|\($0.appKey)|\($0.app.name ?? "")|\($0.app.version ?? "")" },
             exports: exports.exports.map(\.id), lineage: index.lineage)
     }
-    func body(content: Content) -> some View {
-		content
+    var body: some View {
+		// Use the same merged snapshot for the first render and controller hydration.
+		// Later changes remain controller-owned, including deletion/cancellation masks.
+		let initialRows = controller.hasLoadedInitialRows ? nil : projectedRows
+		content(initialRows ?? controller.visibleRows)
 		.onReceive(NotificationCenter.default.publisher(for: AppInstallationManager.importAutoDeleteNotification)) { notification in
 			if let uuid = notification.object as? String {
 				controller.requestAutoDelete(uuid: uuid)
 			}
 		}
 		.onChange(of: inputs, initial: true) { _, _ in
-            publishRowsIfReady()
+            publishRows()
         }
-		.onReceive(initialContextChanges) { _ in
-			// A reset/deletion can change the expected initial counts before the
-			// fetched arrays change. Once hydrated, ordinary input changes own updates.
-			if !controller.hasLoadedInitialRows { publishRowsIfReady() }
-		}
     }
 
-	private var initialContextChanges: AnyPublisher<Notification, Never> {
-		guard !controller.hasLoadedInitialRows else { return Empty().eraseToAnyPublisher() }
-		return NotificationCenter.default.publisher(for: .NSManagedObjectContextObjectsDidChange, object: context)
-			.receive(on: DispatchQueue.main)
-			.eraseToAnyPublisher()
-	}
-
-	private var initialFetchIsReady: Bool {
-		// @FetchRequest can initially expose empty/partial arrays. Do not mistake
-		// that for a verified empty library and animate restored rows as new imports.
-		let importedCount = (try? context.count(for: Imported.fetchRequest())) ?? imported.count
-		let signedCount = (try? context.count(for: Signed.fetchRequest())) ?? signed.count
-		return imported.count == importedCount && signed.count == signedCount
-	}
-
-	private func publishRowsIfReady() {
-		guard controller.hasLoadedInitialRows || initialFetchIsReady else { return }
+	private func publishRows() {
 		controller.updateRows(projectedRows)
 		let retired = downloads.committedImports.keys.filter { index.lineage.originalDates[$0] == nil }
 		downloads.acknowledgeImports(Set(imported.compactMap(\.uuid)).union(retired))
