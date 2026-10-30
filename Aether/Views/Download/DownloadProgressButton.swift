@@ -5,10 +5,6 @@
 
 import SwiftUI
 
-enum ActionProgressRingMetrics {
-	static let diameter: CGFloat = 35
-}
-
 struct DownloadProgressButton: View {
 	@ObservedObject var download: Download
 	@ObservedObject private var downloadManager = DownloadManager.shared

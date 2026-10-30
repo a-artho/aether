@@ -9,6 +9,10 @@ import SwiftUI
 import AltSourceKit
 import NimbleViews
 
+enum ActionProgressRingMetrics {
+	static let diameter: CGFloat = 35
+}
+
 struct DownloadButtonView: View {
 	enum Style {
 		case compact
