@@ -12,12 +12,19 @@
       "subtitle": "App installer and manager for iOS",
       "localizedDescription": "Install and manage apps from your sources with Aether.",
       "iconURL": "https://raw.githubusercontent.com/a-artho/aether/main/Aether/Resources/Assets.xcassets/AetherPrimaryPreview.imageset/AetherPrimaryPreview.png",
-      "version": "3.0.15",
-      "versionDate": "2026-10-30T16:23:21Z",
-      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.15/Aether.ipa",
-      "size": 20048344,
-      "versionDescription": "# Aether 3.0.15\n\n- Add app-row separator controls: default, half opacity, or off.\n- Apply the separator preference to Sources, Imports, Updates, and installed-app rows.\n- Standardize download, installation, and export progress rings at 35 pt.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
+      "version": "3.0.16",
+      "versionDate": "2026-10-30T19:31:02Z",
+      "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.16/Aether.ipa",
+      "size": 20218308,
+      "versionDescription": "# Aether 3.0.16\n\n- Apply row separator preferences to Library Updates and the Sources repo list.\n- Make half-opacity separators work consistently in repo app lists.\n- Keep library app files protected while install and export packaging reads them.\n- Build pinned OpenSSL 3.5.9 LTS for supported Apple platforms, including its legacy provider.\n- Harden pairing refresh, tunnel reconfiguration, Cellular Assist recovery, and installed app icon requests across app lifecycle changes.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation.",
       "versions": [
+        {
+          "version": "3.0.16",
+          "date": "2026-10-30T19:31:02Z",
+          "downloadURL": "https://github.com/a-artho/aether/releases/download/v3.0.16/Aether.ipa",
+          "size": 20218308,
+          "localizedDescription": "# Aether 3.0.16\n\n- Apply row separator preferences to Library Updates and the Sources repo list.\n- Make half-opacity separators work consistently in repo app lists.\n- Keep library app files protected while install and export packaging reads them.\n- Build pinned OpenSSL 3.5.9 LTS for supported Apple platforms, including its legacy provider.\n- Harden pairing refresh, tunnel reconfiguration, Cellular Assist recovery, and installed app icon requests across app lifecycle changes.\n\nThe release IPA is fully unsigned, including the in-app VPN extension. It contains no ad-hoc signatures or embedded provisioning profiles and must be signed before installation."
+        },
         {
           "version": "3.0.15",
           "date": "2026-10-30T16:23:21Z",
