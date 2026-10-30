@@ -53,6 +53,7 @@ jobs:
 
       - name: Build fresh unsigned iPhone app
         run: |
+          make openssl
           make deps
           xcodebuild -project Aether.xcodeproj -scheme Aether \
             -configuration Release -destination 'generic/platform=iOS' \

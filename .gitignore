@@ -7,3 +7,5 @@ deps
 cert.json
 _build
 build
+Zsign/.openssl-build/
+Zsign/OpenSSL.xcframework/

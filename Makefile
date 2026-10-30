@@ -7,12 +7,15 @@ export DEVELOPER_DIR ?= /Applications/Xcode.app/Contents/Developer
 TMP := $(TMPDIR)/$(NAME)
 CERT_JSON_URL := https://backloop.dev/pack.json
 
-.PHONY: all clean deps native $(PLATFORMS)
+.PHONY: all clean deps native openssl $(PLATFORMS)
 
 all: $(PLATFORMS)
 
 native:
 	./IDeviceKitten/Native/build.sh
+
+openssl:
+	bash Zsign/build-openssl.sh
 
 clean:
 	rm -rf $(TMP)
@@ -29,7 +32,7 @@ deps:
 	jq -r '.info.domains.commonName' cert.json > deps/commonName.txt
 
 
-$(PLATFORMS): deps
+$(PLATFORMS): deps openssl
 	@test -d IDeviceKitten/Native/IDevice.xcframework || $(MAKE) native
 	@if [ "$@" = "iphoneos" ]; then \
 		DEST="generic/platform=iOS"; \
