@@ -105,11 +105,11 @@ assemble_slice() {
   local name="$1" first="$2"
   shift 2
   local directory="$slice_dir/$name"
-  mkdir -p "$directory/Headers"
+  mkdir -p "$directory/Headers/AetherOpenSSL"
   cp -R "$work_dir/$first/install/include/openssl" "$directory/Headers/"
-  cat >"$directory/Headers/module.modulemap" <<'MODULE'
+  cat >"$directory/Headers/AetherOpenSSL/module.modulemap" <<'MODULE'
 module OpenSSL {
-  umbrella "openssl"
+  umbrella "../openssl"
   export *
 }
 MODULE

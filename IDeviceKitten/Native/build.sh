@@ -105,9 +105,10 @@ for target in "${targets[@]}"; do
   cargo_for_target "$target" build --locked --release -p idevice-ffi --target "$target" --features "$native_features"
 done
 headers="$work_dir/headers"
-mkdir -p "$headers"
-cp ffi/idevice.h "$headers/idevice.h"
-cat > "$headers/module.modulemap" <<'MAP'
+rm -rf "$headers"
+mkdir -p "$headers/IDevice"
+cp ffi/idevice.h "$headers/IDevice/idevice.h"
+cat > "$headers/IDevice/module.modulemap" <<'MAP'
 module IDevice {
     header "idevice.h"
     export *
