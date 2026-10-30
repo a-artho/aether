@@ -13,6 +13,7 @@ struct LibraryView: View {
 	@StateObject private var imports = UnifiedImportsController()
 	@AppStorage("Aether.installationMethod") private var installationMethod = 0
 	@AppStorage("Aether.statusUnderPageTitle") private var statusUnderPageTitle = false
+	@AppStorage("Aether.rowSeparators") private var rowSeparators: AppRowSeparatorStyle = .standard
 	@StateObject private var store: InstalledAppsStore
 	@ObservedObject private var installationManager = AppInstallationManager.shared
 	@ObservedObject private var connection = DeviceConnectionManager.shared
@@ -256,6 +257,7 @@ struct LibraryView: View {
 				}
 				.buttonStyle(.plain)
 				.id(app.id)
+				.appRowSeparatorStyle(rowSeparators)
 				.swipeActions(edge: .trailing, allowsFullSwipe: true) {
 					Button(String.localized("Ignore"), systemImage: "bell.slash") {
 						updateIgnoreRequest = UpdateIgnoreRequest(app: app, contexts: availableUpdates)

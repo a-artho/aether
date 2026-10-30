@@ -15,6 +15,7 @@ struct SourcesView: View {
 	@State private var _reportRefreshFailures = false
 	@State private var _isSearchFocused = false
 	@AppStorage("Aether.statusUnderPageTitle") private var _statusUnderPageTitle = false
+	@AppStorage("Aether.rowSeparators") private var _rowSeparators: AppRowSeparatorStyle = .standard
 	@AppStorage("Aether.pageTitlePlacement") private var _pageTitlePlacement: RootPageTitlePlacement = .left
 	// Keep the collection keyboard state outside the pushed destination.
 	@State private var _isCollectionSearchFocused = false
@@ -41,6 +42,7 @@ struct SourcesView: View {
 			}
 			.buttonStyle(.plain)
 			.listRowBackground(Color.clear)
+			.appRowSeparatorStyle(_rowSeparators)
 		}
 	}
 

@@ -20,9 +20,14 @@ enum AppRowSeparatorStyle: Int, CaseIterable, Identifiable {
 
 	@MainActor func apply(to tableView: UITableView) {
 		tableView.separatorStyle = self == .off ? .none : .singleLine
-		tableView.separatorColor = self == .half
-			? UIColor.separator.withAlphaComponent(0.5)
-			: UIColor.separator
+		if self == .half {
+			tableView.separatorColor = UIColor { traits in
+				let separator = UIColor.separator.resolvedColor(with: traits)
+				return separator.withAlphaComponent(separator.cgColor.alpha * 0.5)
+			}
+		} else {
+			tableView.separatorColor = .separator
+		}
 	}
 }
 
