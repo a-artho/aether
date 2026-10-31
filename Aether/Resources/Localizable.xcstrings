@@ -151,6 +151,9 @@
     "Show Download Buttons" : {
       "extractionState" : "manual"
     },
+    "Show Apps Count" : {
+      "extractionState" : "manual"
+    },
     "iOS interrupted background installation" : {
       "extractionState" : "manual"
     },

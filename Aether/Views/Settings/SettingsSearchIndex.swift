@@ -62,6 +62,7 @@ enum SettingsSearchIndex {
 			("Status on Navigation Bar", "updated refresh installed apps subtitle navigation"),
 			("Muted Page Titles", "gray secondary nested navigation title"), ("Dynamic Icons", "app light dark"),
 			("Show Download Buttons", "repo sources chevron"),
+			("Show Apps Count", "repo repository app count number apps beside chevron"),
 			("Description Size", "sources rows description standard big description layout"),
 			("Standard", "sources description layout"), ("Large", "sources rows large description layout"),
 			("Haptics", "click feedback strength")

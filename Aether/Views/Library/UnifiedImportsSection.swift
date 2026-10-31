@@ -6,7 +6,7 @@ import Combine
 import IDeviceSwift
 
 private enum UnifiedImportAnimationMetrics {
-	static let actionMorphDuration: TimeInterval = 0.35
+	static let actionMorphDuration: TimeInterval = 0.5
 }
 
 @MainActor

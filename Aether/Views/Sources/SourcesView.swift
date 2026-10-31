@@ -38,7 +38,8 @@ struct SourcesView: View {
 					.source(objectURI: source.objectID.uriRepresentation().absoluteString)
 				)
 			) {
-				SourcesCellView(source: source, isRefreshing: viewModel.isRefreshing(source))
+				SourcesCellView(source: source, isRefreshing: viewModel.isRefreshing(source),
+					appCount: viewModel.repository(for: source)?.apps.count)
 			}
 			.buttonStyle(.plain)
 			.listRowBackground(Color.clear)

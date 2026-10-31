@@ -39,6 +39,7 @@ struct AppearanceView: View {
 
 	@AppStorage("Aether.showRepoDownloadButtons")
 	private var _showRepoDownloadButtons = true
+	@AppStorage("Aether.showRepoAppsCount") private var _showRepoAppsCount = false
 
 	@AppStorage("Aether.storeCellAppearance")
 	private var _storeCellAppearance: Int = 0
@@ -247,6 +248,9 @@ struct AppearanceView: View {
 			}
 
 			NBSection(.localized("Sources")) {
+				Toggle(isOn: $_showRepoAppsCount) {
+					SettingsRowLabel(.localized("Show Apps Count"), systemImage: "number", backgroundColor: .blue)
+				}
 				Toggle(isOn: $_showRepoDownloadButtons) {
 					SettingsRowLabel(.localized("Show Download Buttons"), systemImage: "icloud.and.arrow.down", backgroundColor: .blue)
 				}
